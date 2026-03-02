@@ -1,0 +1,778 @@
+//go:build integration
+
+// Package tests contains integration tests that run against a live MongClone server.
+// These tests use the official MongoDB Go driver to verify wire protocol compatibility.
+//
+// Run with:
+//   go test -tags integration -v ./tests/ -mongoURI mongodb://localhost:27017
+package tests
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"os"
+	"sort"
+	"testing"
+	"time"
+
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
+)
+
+var (
+	mongoURI = flag.String("mongoURI", "mongodb://localhost:27017", "MongoDB URI to test against")
+)
+
+// testDB returns a unique database name for a test (cleaned up after).
+func testDB(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf("test_%s_%d", t.Name(), time.Now().UnixNano())
+}
+
+func newClient(t *testing.T) *mongo.Client {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := mongo.Connect(options.Client().ApplyURI(*mongoURI))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if err := client.Ping(ctx, nil); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Disconnect(context.Background()) })
+	return client
+}
+
+// ─── Basic CRUD ───────────────────────────────────────────────────────────────
+
+func TestInsertOne(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	ctx := context.Background()
+	res, err := coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"age", 30}})
+	if err != nil {
+		t.Fatalf("InsertOne: %v", err)
+	}
+	if res.InsertedID == nil {
+		t.Error("expected non-nil InsertedID")
+	}
+}
+
+func TestInsertMany(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	ctx := context.Background()
+	docs := []interface{}{
+		bson.D{{"name", "alice"}, {"age", 30}},
+		bson.D{{"name", "bob"}, {"age", 25}},
+		bson.D{{"name", "carol"}, {"age", 35}},
+	}
+	res, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+	if len(res.InsertedIDs) != 3 {
+		t.Errorf("expected 3 IDs, got %d", len(res.InsertedIDs))
+	}
+}
+
+func TestFindAll(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		_, _ = coll.InsertOne(ctx, bson.D{{"n", i}})
+	}
+
+	cursor, err := coll.Find(ctx, bson.D{})
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(results) != 5 {
+		t.Errorf("expected 5 docs, got %d", len(results))
+	}
+}
+
+func TestFindWithFilter(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{"name", "alice"}, {"score", 90}},
+		bson.D{{"name", "bob"}, {"score", 70}},
+		bson.D{{"name", "carol"}, {"score", 85}},
+	}
+	_, _ = coll.InsertMany(ctx, docs)
+
+	// Find where score > 80
+	cursor, err := coll.Find(ctx, bson.D{{"score", bson.D{{"$gt", 80}}}})
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("expected 2 docs with score>80, got %d", len(results))
+	}
+}
+
+func TestFindOne(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 99}})
+
+	var result bson.M
+	err := coll.FindOne(ctx, bson.D{{"name", "alice"}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("FindOne: %v", err)
+	}
+	if result["score"] != int32(99) {
+		t.Errorf("expected score=99, got %v", result["score"])
+	}
+}
+
+func TestUpdateOne(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 90}})
+
+	res, err := coll.UpdateOne(ctx,
+		bson.D{{"name", "alice"}},
+		bson.D{{"$set", bson.D{{"score", 95}}}},
+	)
+	if err != nil {
+		t.Fatalf("UpdateOne: %v", err)
+	}
+	if res.MatchedCount != 1 || res.ModifiedCount != 1 {
+		t.Errorf("expected matched=1 modified=1, got %d/%d", res.MatchedCount, res.ModifiedCount)
+	}
+
+	var result bson.M
+	_ = coll.FindOne(ctx, bson.D{{"name", "alice"}}).Decode(&result)
+	if result["score"] != int32(95) {
+		t.Errorf("expected updated score=95, got %v", result["score"])
+	}
+}
+
+func TestUpdateMany(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"status", "pending"}},
+		bson.D{{"status", "pending"}},
+		bson.D{{"status", "done"}},
+	})
+
+	res, err := coll.UpdateMany(ctx,
+		bson.D{{"status", "pending"}},
+		bson.D{{"$set", bson.D{{"status", "processed"}}}},
+	)
+	if err != nil {
+		t.Fatalf("UpdateMany: %v", err)
+	}
+	if res.ModifiedCount != 2 {
+		t.Errorf("expected 2 modified, got %d", res.ModifiedCount)
+	}
+}
+
+func TestDeleteOne(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"n", 1}}, bson.D{{"n", 2}}, bson.D{{"n", 3}},
+	})
+
+	res, err := coll.DeleteOne(ctx, bson.D{{"n", 2}})
+	if err != nil {
+		t.Fatalf("DeleteOne: %v", err)
+	}
+	if res.DeletedCount != 1 {
+		t.Errorf("expected 1 deleted, got %d", res.DeletedCount)
+	}
+
+	count, _ := coll.CountDocuments(ctx, bson.D{})
+	if count != 2 {
+		t.Errorf("expected 2 remaining, got %d", count)
+	}
+}
+
+func TestDeleteMany(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"tag", "a"}}, bson.D{{"tag", "a"}}, bson.D{{"tag", "b"}},
+	})
+
+	res, err := coll.DeleteMany(ctx, bson.D{{"tag", "a"}})
+	if err != nil {
+		t.Fatalf("DeleteMany: %v", err)
+	}
+	if res.DeletedCount != 2 {
+		t.Errorf("expected 2 deleted, got %d", res.DeletedCount)
+	}
+}
+
+// ─── Upsert ───────────────────────────────────────────────────────────────────
+
+func TestUpsertInsert(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	res, err := coll.UpdateOne(ctx,
+		bson.D{{"name", "alice"}},
+		bson.D{{"$set", bson.D{{"score", 100}}}},
+		options.UpdateOne().SetUpsert(true),
+	)
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if res.UpsertedCount != 1 {
+		t.Errorf("expected upserted=1, got %d", res.UpsertedCount)
+	}
+}
+
+// ─── Indexes ─────────────────────────────────────────────────────────────────
+
+func TestCreateUniqueIndex(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, err := coll.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys:    bson.D{{"email", 1}},
+		Options: options.Index().SetUnique(true),
+	})
+	if err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	_, err = coll.InsertOne(ctx, bson.D{{"email", "a@example.com"}})
+	if err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	_, err = coll.InsertOne(ctx, bson.D{{"email", "a@example.com"}})
+	if err == nil {
+		t.Error("expected duplicate key error, got nil")
+	}
+}
+
+func TestListIndexes(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{"name", 1}},
+	})
+
+	cursor, err := coll.Indexes().List(ctx)
+	if err != nil {
+		t.Fatalf("ListIndexes: %v", err)
+	}
+	var indexes []bson.M
+	if err := cursor.All(ctx, &indexes); err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	// Should have _id_ + name_1
+	if len(indexes) < 2 {
+		t.Errorf("expected >= 2 indexes, got %d", len(indexes))
+	}
+}
+
+// ─── Sort, Skip, Limit ───────────────────────────────────────────────────────
+
+func TestSortSkipLimit(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	for i := 0; i < 10; i++ {
+		_, _ = coll.InsertOne(ctx, bson.D{{"n", i}})
+	}
+
+	opts := options.Find().
+		SetSort(bson.D{{"n", -1}}). // descending
+		SetSkip(2).
+		SetLimit(3)
+
+	cursor, err := coll.Find(ctx, bson.D{}, opts)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	var results []bson.M
+	_ = cursor.All(ctx, &results)
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	// Descending from 9, skip 2 → 9,8 skipped → 7,6,5
+	expected := []int{7, 6, 5}
+	for i, r := range results {
+		if int(r["n"].(int32)) != expected[i] {
+			t.Errorf("result[%d]: expected n=%d, got %v", i, expected[i], r["n"])
+		}
+	}
+}
+
+// ─── Aggregation ─────────────────────────────────────────────────────────────
+
+func TestAggregateMatch(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"dept", "eng"}, {"salary", 100000}},
+		bson.D{{"dept", "eng"}, {"salary", 120000}},
+		bson.D{{"dept", "mkt"}, {"salary", 80000}},
+	})
+
+	pipeline := mongo.Pipeline{
+		{{"$match", bson.D{{"dept", "eng"}}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipeline)
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	var results []bson.M
+	_ = cursor.All(ctx, &results)
+	if len(results) != 2 {
+		t.Errorf("expected 2 eng docs, got %d", len(results))
+	}
+}
+
+func TestAggregateGroup(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"dept", "eng"}, {"salary", 100000}},
+		bson.D{{"dept", "eng"}, {"salary", 120000}},
+		bson.D{{"dept", "mkt"}, {"salary", 80000}},
+	})
+
+	pipeline := mongo.Pipeline{
+		{{"$group", bson.D{
+			{"_id", "$dept"},
+			{"totalSalary", bson.D{{"$sum", "$salary"}}},
+			{"count", bson.D{{"$sum", 1}}},
+		}}},
+		{{"$sort", bson.D{{"_id", 1}}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipeline)
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	var results []bson.M
+	_ = cursor.All(ctx, &results)
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(results))
+	}
+
+	// Find eng group
+	var engResult bson.M
+	for _, r := range results {
+		if r["_id"] == "eng" {
+			engResult = r
+			break
+		}
+	}
+	if engResult == nil {
+		t.Fatal("expected eng group")
+	}
+	if engResult["count"] != int32(2) {
+		t.Errorf("expected eng count=2, got %v", engResult["count"])
+	}
+}
+
+func TestAggregateUnwind(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{
+		{"name", "alice"},
+		{"tags", bson.A{"go", "python", "rust"}},
+	})
+
+	pipeline := mongo.Pipeline{
+		{{"$unwind", "$tags"}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipeline)
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	var results []bson.M
+	_ = cursor.All(ctx, &results)
+	if len(results) != 3 {
+		t.Errorf("expected 3 unwind results, got %d", len(results))
+	}
+}
+
+func TestAggregateLookup(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	// orders collection
+	orders := db.Collection("orders")
+	_, _ = orders.InsertMany(ctx, []interface{}{
+		bson.D{{"_id", 1}, {"userID", 10}, {"amount", 100}},
+		bson.D{{"_id", 2}, {"userID", 11}, {"amount", 200}},
+	})
+
+	// users collection
+	users := db.Collection("users")
+	_, _ = users.InsertMany(ctx, []interface{}{
+		bson.D{{"_id", 10}, {"name", "alice"}},
+		bson.D{{"_id", 11}, {"name", "bob"}},
+	})
+
+	pipeline := mongo.Pipeline{
+		{{"$lookup", bson.D{
+			{"from", "users"},
+			{"localField", "userID"},
+			{"foreignField", "_id"},
+			{"as", "user"},
+		}}},
+	}
+	cursor, err := orders.Aggregate(ctx, pipeline)
+	if err != nil {
+		t.Fatalf("Aggregate lookup: %v", err)
+	}
+	var results []bson.M
+	_ = cursor.All(ctx, &results)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	for _, r := range results {
+		userArr, ok := r["user"].(bson.A)
+		if !ok || len(userArr) == 0 {
+			t.Errorf("expected non-empty user array, got %v", r["user"])
+		}
+	}
+}
+
+// ─── Filter operators ────────────────────────────────────────────────────────
+
+func TestFilterOperators(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"n", 1}, {"tags", bson.A{"a", "b"}}},
+		bson.D{{"n", 2}, {"tags", bson.A{"b", "c"}}},
+		bson.D{{"n", 3}, {"tags", bson.A{"a", "c"}}},
+		bson.D{{"n", 4}},                             // no tags
+	})
+
+	tests := []struct {
+		name   string
+		filter bson.D
+		expect int
+	}{
+		{"$in", bson.D{{"n", bson.D{{"$in", bson.A{1, 3}}}}}, 2},
+		{"$nin", bson.D{{"n", bson.D{{"$nin", bson.A{1, 2}}}}}, 2},
+		{"$exists true", bson.D{{"tags", bson.D{{"$exists", true}}}}, 3},
+		{"$exists false", bson.D{{"tags", bson.D{{"$exists", false}}}}, 1},
+		{"$all", bson.D{{"tags", bson.D{{"$all", bson.A{"a", "b"}}}}}, 1},
+		{"$size", bson.D{{"tags", bson.D{{"$size", 2}}}}, 3},
+		{"$and", bson.D{{"$and", bson.A{
+			bson.D{{"n", bson.D{{"$gte", 2}}}},
+			bson.D{{"n", bson.D{{"$lte", 3}}}},
+		}}}, 2},
+		{"$or", bson.D{{"$or", bson.A{
+			bson.D{{"n", 1}},
+			bson.D{{"n", 4}},
+		}}}, 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count, err := coll.CountDocuments(ctx, tt.filter)
+			if err != nil {
+				t.Fatalf("CountDocuments: %v", err)
+			}
+			if count != int64(tt.expect) {
+				t.Errorf("expected %d, got %d", tt.expect, count)
+			}
+		})
+	}
+}
+
+// ─── Update operators ────────────────────────────────────────────────────────
+
+func TestUpdateOperators(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	id, _ := coll.InsertOne(ctx, bson.D{
+		{"score", 10},
+		{"tags", bson.A{"a", "b"}},
+		{"nested", bson.D{{"x", 1}}},
+	})
+
+	// $inc
+	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id.InsertedID}},
+		bson.D{{"$inc", bson.D{{"score", 5}}}})
+	var r bson.M
+	_ = coll.FindOne(ctx, bson.D{{"_id", id.InsertedID}}).Decode(&r)
+	if r["score"] != int32(15) {
+		t.Errorf("$inc: expected 15, got %v", r["score"])
+	}
+
+	// $push
+	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id.InsertedID}},
+		bson.D{{"$push", bson.D{{"tags", "c"}}}})
+	_ = coll.FindOne(ctx, bson.D{{"_id", id.InsertedID}}).Decode(&r)
+	tags := r["tags"].(bson.A)
+	if len(tags) != 3 {
+		t.Errorf("$push: expected 3 tags, got %d", len(tags))
+	}
+
+	// $set nested
+	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id.InsertedID}},
+		bson.D{{"$set", bson.D{{"nested.x", 99}}}})
+	_ = coll.FindOne(ctx, bson.D{{"_id", id.InsertedID}}).Decode(&r)
+	// In mongo-driver v2, decoding into bson.M returns nested docs as bson.D.
+	nested := r["nested"].(bson.D)
+	nestedMap := make(map[string]interface{})
+	for _, e := range nested {
+		nestedMap[e.Key] = e.Value
+	}
+	if nestedMap["x"] != int32(99) {
+		t.Errorf("$set nested: expected 99, got %v", nestedMap["x"])
+	}
+
+	// $unset — use a fresh map so stale keys from prior Decodes don't linger.
+	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id.InsertedID}},
+		bson.D{{"$unset", bson.D{{"nested", ""}}}})
+	var r2 bson.M
+	_ = coll.FindOne(ctx, bson.D{{"_id", id.InsertedID}}).Decode(&r2)
+	if _, exists := r2["nested"]; exists {
+		t.Error("$unset: expected nested to be removed")
+	}
+}
+
+// ─── Distinct ────────────────────────────────────────────────────────────────
+
+func TestDistinct(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"dept", "eng"}},
+		bson.D{{"dept", "eng"}},
+		bson.D{{"dept", "mkt"}},
+		bson.D{{"dept", "hr"}},
+	})
+
+	distinctResult := coll.Distinct(ctx, "dept", bson.D{})
+	if distinctResult.Err() != nil {
+		t.Fatalf("Distinct: %v", distinctResult.Err())
+	}
+	var results []interface{}
+	if err := distinctResult.Decode(&results); err != nil {
+		t.Fatalf("Distinct decode: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("expected 3 distinct depts, got %d", len(results))
+	}
+}
+
+// ─── ListDatabases / ListCollections ────────────────────────────────────────
+
+func TestListDatabases(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// Create a test database
+	dbName := testDB(t)
+	_, _ = client.Database(dbName).Collection("test").InsertOne(ctx, bson.D{{"x", 1}})
+
+	result, err := client.ListDatabaseNames(ctx, bson.D{})
+	if err != nil {
+		t.Fatalf("ListDatabaseNames: %v", err)
+	}
+
+	found := false
+	for _, name := range result {
+		if name == dbName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected to find database %q in list %v", dbName, result)
+	}
+}
+
+func TestListCollections(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	db := client.Database(testDB(t))
+	_, _ = db.Collection("col1").InsertOne(ctx, bson.D{{"x", 1}})
+	_, _ = db.Collection("col2").InsertOne(ctx, bson.D{{"x", 1}})
+
+	names, err := db.ListCollectionNames(ctx, bson.D{})
+	if err != nil {
+		t.Fatalf("ListCollectionNames: %v", err)
+	}
+
+	sort.Strings(names)
+	if len(names) < 2 {
+		t.Errorf("expected >= 2 collections, got %v", names)
+	}
+}
+
+// ─── Ping / Hello ────────────────────────────────────────────────────────────
+
+func TestPing(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	if err := client.Ping(ctx, nil); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
+func TestServerVersion(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{{"buildInfo", 1}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("buildInfo: %v", err)
+	}
+	if _, ok := result["version"]; !ok {
+		t.Error("expected 'version' field in buildInfo response")
+	}
+}
+
+// ─── Projection ──────────────────────────────────────────────────────────────
+
+func TestProjection(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{
+		{"name", "alice"},
+		{"score", 95},
+		{"internal", "secret"},
+	})
+
+	opts := options.FindOne().SetProjection(bson.D{
+		{"name", 1},
+		{"score", 1},
+		{"_id", 0},
+	})
+	var result bson.M
+	if err := coll.FindOne(ctx, bson.D{}, opts).Decode(&result); err != nil {
+		t.Fatalf("FindOne: %v", err)
+	}
+	if _, ok := result["_id"]; ok {
+		t.Error("expected _id to be excluded")
+	}
+	if _, ok := result["internal"]; ok {
+		t.Error("expected internal to be excluded")
+	}
+	if result["name"] != "alice" {
+		t.Errorf("expected name=alice, got %v", result["name"])
+	}
+}
+
+// ─── Cursor / GetMore ────────────────────────────────────────────────────────
+
+func TestGetMore(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	// Insert 200 docs to force multiple batches
+	docs := make([]interface{}, 200)
+	for i := range docs {
+		docs[i] = bson.D{{"n", i}}
+	}
+	_, _ = coll.InsertMany(ctx, docs)
+
+	cursor, err := coll.Find(ctx, bson.D{}, options.Find().SetBatchSize(50))
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var count int
+	for cursor.Next(ctx) {
+		count++
+	}
+	if err := cursor.Err(); err != nil {
+		t.Fatalf("cursor error: %v", err)
+	}
+	if count != 200 {
+		t.Errorf("expected 200 docs via getMore, got %d", count)
+	}
+}
+
+// ─── findAndModify ───────────────────────────────────────────────────────────
+
+func TestFindOneAndUpdate(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 80}})
+
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	var result bson.M
+	err := coll.FindOneAndUpdate(ctx,
+		bson.D{{"name", "alice"}},
+		bson.D{{"$inc", bson.D{{"score", 10}}}},
+		opts,
+	).Decode(&result)
+	if err != nil {
+		t.Fatalf("FindOneAndUpdate: %v", err)
+	}
+	if result["score"] != int32(90) {
+		t.Errorf("expected score=90, got %v", result["score"])
+	}
+}
+
+func TestMain(m *testing.M) {
+	flag.Parse()
+	os.Exit(m.Run())
+}

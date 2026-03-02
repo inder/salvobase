@@ -1,0 +1,39 @@
+[Unit]
+Description=MongClone - MongoDB-compatible document database
+Documentation=https://github.com/inder/mongoclone
+After=network.target
+
+[Service]
+Type=simple
+User=mongoclone
+Group=mongoclone
+
+ExecStart=/usr/local/bin/mongoclone \
+    --port 27017 \
+    --httpPort 27080 \
+    --bind_ip 127.0.0.1 \
+    --datadir /var/lib/mongoclone \
+    --logLevel info \
+    --logFormat json
+
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/mongoclone
+LimitNOFILE=65536
+LimitNPROC=65536
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mongoclone
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,52 @@
+# MongClone default configuration
+# All values can be overridden via CLI flags or environment variables (MONGOCLONE_ prefix)
+
+server:
+  # MongoDB wire protocol port
+  port: 27017
+  # HTTP/REST API + Prometheus metrics port (set to 0 to disable)
+  httpPort: 27080
+  # Bind address (0.0.0.0 for all interfaces, 127.0.0.1 for localhost only)
+  bindIP: "0.0.0.0"
+  # Maximum number of concurrent connections
+  maxConnections: 1000
+  # Per-connection read/write timeout (0 = no timeout)
+  connectionTimeoutSecs: 0
+
+storage:
+  # Directory for database files (one .db file per database)
+  dataDir: "/var/lib/mongoclone"
+  # Document compression: none, snappy, zstd
+  compression: "snappy"
+  # Sync writes to disk before acknowledging (safer but slower)
+  syncOnWrite: true
+  # Maximum database file size in bytes (0 = unlimited)
+  maxDBSize: 0
+
+auth:
+  # Disable authentication (DANGEROUS in production — only for local dev)
+  noAuth: false
+  # Default admin user (created on first start if auth is enabled)
+  adminUser: "admin"
+  # Admin password (CHANGE THIS — or set via MONGOCLONE_AUTH_ADMIN_PASSWORD env var)
+  adminPassword: ""
+
+logging:
+  # Log level: debug, info, warn, error
+  level: "info"
+  # Log format: json, console
+  format: "json"
+  # Audit log path (empty = disabled). Logs all auth events + DDL operations.
+  auditLog: ""
+
+limits:
+  # Per-database rate limit (requests/second, 0 = unlimited)
+  requestsPerSecond: 0
+  # Maximum BSON document size (bytes) — MongoDB default is 16MB
+  maxDocumentSize: 16777216
+  # Maximum aggregation pipeline memory (bytes, 0 = unlimited)
+  maxAggregationMemory: 104857600  # 100MB
+
+replication:
+  # Not yet implemented — single-node only
+  enabled: false

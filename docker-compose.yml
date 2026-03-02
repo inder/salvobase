@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  mongoclone:
+    build: .
+    container_name: mongoclone
+    ports:
+      - "27017:27017"   # MongoDB wire protocol
+      - "27080:27080"   # HTTP API + Prometheus metrics
+    volumes:
+      - mongoclone-data:/var/lib/mongoclone
+      - ./configs/mongod.yaml:/etc/mongoclone/mongod.yaml:ro
+    environment:
+      # Override config via env vars (MONGOCLONE_ prefix)
+      - MONGOCLONE_AUTH_ADMIN_PASSWORD=${MONGOCLONE_ADMIN_PASSWORD:-changeme}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:27080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # Optional: Prometheus + Grafana for monitoring
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: mongoclone-prometheus
+    profiles: ["monitoring"]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deployments/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: mongoclone-grafana
+    profiles: ["monitoring"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+volumes:
+  mongoclone-data:
+  prometheus-data:
+  grafana-data:
