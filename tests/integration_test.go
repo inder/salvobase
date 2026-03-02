@@ -772,6 +772,238 @@ func TestFindOneAndUpdate(t *testing.T) {
 	}
 }
 
+// ─── ReplaceOne ───────────────────────────────────────────────────────────────
+
+func TestReplaceOne(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	res, _ := coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 42}, {"extra", "keep"}})
+	id := res.InsertedID
+
+	// Replace doc entirely (only _id is preserved).
+	_, err := coll.ReplaceOne(ctx, bson.D{{"_id", id}}, bson.D{{"name", "bob"}, {"score", 99}})
+	if err != nil {
+		t.Fatalf("ReplaceOne: %v", err)
+	}
+
+	var r bson.M
+	_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+	if r["name"] != "bob" {
+		t.Errorf("ReplaceOne: expected name=bob, got %v", r["name"])
+	}
+	if r["score"] != int32(99) {
+		t.Errorf("ReplaceOne: expected score=99, got %v", r["score"])
+	}
+	// "extra" field must be gone after replacement.
+	if _, exists := r["extra"]; exists {
+		t.Error("ReplaceOne: expected 'extra' to be removed after replacement")
+	}
+}
+
+// ─── FindOneAndDelete / FindOneAndReplace ─────────────────────────────────────
+
+func TestFindOneAndDelete(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 10}})
+
+	var deleted bson.M
+	err := coll.FindOneAndDelete(ctx, bson.D{{"name", "alice"}}).Decode(&deleted)
+	if err != nil {
+		t.Fatalf("FindOneAndDelete: %v", err)
+	}
+	if deleted["name"] != "alice" {
+		t.Errorf("FindOneAndDelete: expected name=alice in returned doc, got %v", deleted["name"])
+	}
+
+	// Doc must be gone.
+	err = coll.FindOne(ctx, bson.D{{"name", "alice"}}).Err()
+	if err != mongo.ErrNoDocuments {
+		t.Errorf("FindOneAndDelete: expected doc to be deleted, got err=%v", err)
+	}
+}
+
+func TestFindOneAndReplace(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	res, _ := coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 10}})
+	id := res.InsertedID
+
+	// ReturnDocument(After) should give back the replacement.
+	opts := options.FindOneAndReplace().SetReturnDocument(options.After)
+	var result bson.M
+	err := coll.FindOneAndReplace(ctx,
+		bson.D{{"name", "alice"}},
+		bson.D{{"name", "bob"}, {"score", 99}},
+		opts,
+	).Decode(&result)
+	if err != nil {
+		t.Fatalf("FindOneAndReplace: %v", err)
+	}
+	if result["name"] != "bob" {
+		t.Errorf("FindOneAndReplace: expected name=bob, got %v", result["name"])
+	}
+	if result["_id"] != id {
+		t.Errorf("FindOneAndReplace: _id must be preserved, got %v", result["_id"])
+	}
+}
+
+// ─── BulkWrite ────────────────────────────────────────────────────────────────
+
+func TestBulkWrite(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	// Seed two docs.
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"name", "alice"}, {"score", 10}},
+		bson.D{{"name", "bob"}, {"score", 20}},
+	})
+
+	res, err := coll.BulkWrite(ctx, []mongo.WriteModel{
+		// Insert a new doc.
+		mongo.NewInsertOneModel().SetDocument(bson.D{{"name", "carol"}, {"score", 30}}),
+		// Update alice.
+		mongo.NewUpdateOneModel().
+			SetFilter(bson.D{{"name", "alice"}}).
+			SetUpdate(bson.D{{"$inc", bson.D{{"score", 5}}}}),
+		// Delete bob.
+		mongo.NewDeleteOneModel().SetFilter(bson.D{{"name", "bob"}}),
+	})
+	if err != nil {
+		t.Fatalf("BulkWrite: %v", err)
+	}
+	if res.InsertedCount != 1 {
+		t.Errorf("BulkWrite: expected 1 inserted, got %d", res.InsertedCount)
+	}
+	if res.ModifiedCount != 1 {
+		t.Errorf("BulkWrite: expected 1 modified, got %d", res.ModifiedCount)
+	}
+	if res.DeletedCount != 1 {
+		t.Errorf("BulkWrite: expected 1 deleted, got %d", res.DeletedCount)
+	}
+
+	// Verify alice's score was incremented.
+	var alice bson.M
+	_ = coll.FindOne(ctx, bson.D{{"name", "alice"}}).Decode(&alice)
+	if alice["score"] != int32(15) {
+		t.Errorf("BulkWrite: expected alice score=15, got %v", alice["score"])
+	}
+
+	// Verify bob is deleted.
+	if err := coll.FindOne(ctx, bson.D{{"name", "bob"}}).Err(); err != mongo.ErrNoDocuments {
+		t.Errorf("BulkWrite: expected bob to be deleted, got err=%v", err)
+	}
+
+	// Verify carol was inserted.
+	var carol bson.M
+	if err := coll.FindOne(ctx, bson.D{{"name", "carol"}}).Decode(&carol); err != nil {
+		t.Errorf("BulkWrite: carol not found: %v", err)
+	}
+}
+
+// ─── Array update operators ───────────────────────────────────────────────────
+
+func TestArrayUpdateOperators(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	res, _ := coll.InsertOne(ctx, bson.D{{"tags", bson.A{"a", "b", "c", "b"}}})
+	id := res.InsertedID
+
+	decode := func() bson.A {
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+		return r["tags"].(bson.A)
+	}
+
+	// $pull — remove all "b" elements.
+	_, err := coll.UpdateOne(ctx, bson.D{{"_id", id}},
+		bson.D{{"$pull", bson.D{{"tags", "b"}}}})
+	if err != nil {
+		t.Fatalf("$pull: %v", err)
+	}
+	tags := decode()
+	for _, v := range tags {
+		if v == "b" {
+			t.Error("$pull: 'b' should have been removed")
+		}
+	}
+	if len(tags) != 2 {
+		t.Errorf("$pull: expected 2 elements, got %d: %v", len(tags), tags)
+	}
+
+	// $addToSet — add "x" (new) and "a" (duplicate, no-op).
+	_, err = coll.UpdateOne(ctx, bson.D{{"_id", id}},
+		bson.D{{"$addToSet", bson.D{{"tags", "x"}}}})
+	if err != nil {
+		t.Fatalf("$addToSet new: %v", err)
+	}
+	_, err = coll.UpdateOne(ctx, bson.D{{"_id", id}},
+		bson.D{{"$addToSet", bson.D{{"tags", "a"}}}})
+	if err != nil {
+		t.Fatalf("$addToSet dup: %v", err)
+	}
+	tags = decode()
+	if len(tags) != 3 { // a, c, x
+		t.Errorf("$addToSet: expected 3 elements, got %d: %v", len(tags), tags)
+	}
+
+	// $pop -1 removes first element.
+	_, err = coll.UpdateOne(ctx, bson.D{{"_id", id}},
+		bson.D{{"$pop", bson.D{{"tags", -1}}}})
+	if err != nil {
+		t.Fatalf("$pop: %v", err)
+	}
+	tags = decode()
+	if len(tags) != 2 {
+		t.Errorf("$pop: expected 2 elements, got %d: %v", len(tags), tags)
+	}
+}
+
+// ─── Numeric update operators ($mul, $min, $max) ──────────────────────────────
+
+func TestNumericUpdateOperators(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	res, _ := coll.InsertOne(ctx, bson.D{{"n", 10}})
+	id := res.InsertedID
+
+	decode := func() int32 {
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+		return r["n"].(int32)
+	}
+
+	// $mul: 10 * 3 = 30.
+	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id}}, bson.D{{"$mul", bson.D{{"n", 3}}}})
+	if v := decode(); v != 30 {
+		t.Errorf("$mul: expected 30, got %d", v)
+	}
+
+	// $min: min(30, 5) = 5.
+	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id}}, bson.D{{"$min", bson.D{{"n", 5}}}})
+	if v := decode(); v != 5 {
+		t.Errorf("$min: expected 5, got %d", v)
+	}
+
+	// $max: max(5, 99) = 99.
+	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id}}, bson.D{{"$max", bson.D{{"n", 99}}}})
+	if v := decode(); v != 99 {
+		t.Errorf("$max: expected 99, got %d", v)
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
