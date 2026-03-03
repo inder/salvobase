@@ -909,6 +909,158 @@ func TestBulkWrite(t *testing.T) {
 	}
 }
 
+// ─── $regex filter ───────────────────────────────────────────────────────────
+
+func TestRegexFilter(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"name", "Alice"}},
+		bson.D{{"name", "alice"}},
+		bson.D{{"name", "Bob"}},
+		bson.D{{"name", "alicia"}},
+	})
+
+	// Case-sensitive prefix match: "^alice" matches "alice" and "alicia".
+	count, err := coll.CountDocuments(ctx, bson.D{{"name", bson.D{{"$regex", "^alic"}}}})
+	if err != nil {
+		t.Fatalf("$regex: %v", err)
+	}
+	if count != 2 { // "alice" and "alicia"
+		t.Errorf("$regex: expected 2, got %d", count)
+	}
+
+	// Case-insensitive with $options: "^alic" matches "Alice", "alice", "alicia".
+	count, err = coll.CountDocuments(ctx, bson.D{{"name", bson.D{
+		{"$regex", "^alic"},
+		{"$options", "i"},
+	}}})
+	if err != nil {
+		t.Fatalf("$regex $options: %v", err)
+	}
+	if count != 3 { // "Alice", "alice", "alicia"
+		t.Errorf("$regex $options: expected 3, got %d", count)
+	}
+}
+
+// ─── Aggregation: computed expressions ($project, $addFields, $cond) ─────────
+
+func TestAggregateExpressions(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"a", 10}, {"b", 3}},
+		bson.D{{"a", 6}, {"b", 2}},
+	})
+
+	// $project with $multiply and $add.
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$project", bson.D{
+			{"result", bson.D{{"$add", bson.A{
+				bson.D{{"$multiply", bson.A{"$a", "$b"}}},
+				1,
+			}}}},
+			{"_id", 0},
+		}}},
+		bson.D{{"$sort", bson.D{{"result", 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("Aggregate expr: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	// (6*2)+1=13, (10*3)+1=31
+	if results[0]["result"] != int32(13) {
+		t.Errorf("expr[0]: expected 13, got %v", results[0]["result"])
+	}
+	if results[1]["result"] != int32(31) {
+		t.Errorf("expr[1]: expected 31, got %v", results[1]["result"])
+	}
+}
+
+func TestAggregateAddFields(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{{"price", 100}, {"qty", 3}})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$addFields", bson.D{
+			{"total", bson.D{{"$multiply", bson.A{"$price", "$qty"}}}},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("$addFields: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var result bson.M
+	if cursor.Next(ctx) {
+		_ = cursor.Decode(&result)
+	}
+	if result["total"] != int32(300) {
+		t.Errorf("$addFields: expected total=300, got %v", result["total"])
+	}
+	// Original fields preserved.
+	if result["price"] != int32(100) {
+		t.Errorf("$addFields: expected price=100, got %v", result["price"])
+	}
+}
+
+func TestAggregateCondExpr(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"score", 85}},
+		bson.D{{"score", 45}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$project", bson.D{
+			{"grade", bson.D{{"$cond", bson.D{
+				{"if", bson.D{{"$gte", bson.A{"$score", 60}}}},
+				{"then", "pass"},
+				{"else", "fail"},
+			}}}},
+			{"_id", 0},
+		}}},
+		bson.D{{"$sort", bson.D{{"grade", 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("$cond: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+	// sorted: "fail" < "pass"
+	if results[0]["grade"] != "fail" {
+		t.Errorf("$cond[0]: expected fail, got %v", results[0]["grade"])
+	}
+	if results[1]["grade"] != "pass" {
+		t.Errorf("$cond[1]: expected pass, got %v", results[1]["grade"])
+	}
+}
+
 // ─── Array update operators ───────────────────────────────────────────────────
 
 func TestArrayUpdateOperators(t *testing.T) {

@@ -714,6 +714,7 @@ func evalMultiply(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 	}
 	product := 1.0
 	allInt := true
+	allInt32 := true
 	for _, a := range args {
 		n, ok := toFloat64Interface(a)
 		if !ok {
@@ -722,9 +723,15 @@ func evalMultiply(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 		if _, isDouble := a.(float64); isDouble {
 			allInt = false
 		}
+		if _, isInt32 := a.(int32); !isInt32 {
+			allInt32 = false
+		}
 		product *= n
 	}
 	if allInt {
+		if allInt32 {
+			return int32(product), nil
+		}
 		return int64(product), nil
 	}
 	return product, nil
