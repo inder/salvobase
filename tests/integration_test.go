@@ -1177,6 +1177,124 @@ func TestAggregateFacet(t *testing.T) {
 	}
 }
 
+// ─── $group with null _id (total aggregation) ────────────────────────────────
+
+func TestAggregateGroupNull(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"score", 10}},
+		bson.D{{"score", 20}},
+		bson.D{{"score", 30}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$group", bson.D{
+			{"_id", nil},
+			{"total", bson.D{{"$sum", "$score"}}},
+			{"count", bson.D{{"$sum", 1}}},
+			{"avg", bson.D{{"$avg", "$score"}}},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("$group null: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var result bson.M
+	if !cursor.Next(ctx) {
+		t.Fatal("$group null: expected 1 result")
+	}
+	if err := cursor.Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result["total"] != int32(60) {
+		t.Errorf("total: expected 60, got %v", result["total"])
+	}
+	if result["count"] != int32(3) {
+		t.Errorf("count: expected 3, got %v", result["count"])
+	}
+	if result["avg"] != float64(20) {
+		t.Errorf("avg: expected 20.0, got %v", result["avg"])
+	}
+}
+
+// ─── $out stage ───────────────────────────────────────────────────────────────
+
+func TestAggregateOut(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	coll := db.Collection("source")
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"n", 1}},
+		bson.D{{"n", 2}},
+		bson.D{{"n", 3}},
+	})
+
+	// $out to "dest" collection.
+	_, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$match", bson.D{{"n", bson.D{{"$gte", 2}}}}}},
+		bson.D{{"$out", "dest"}},
+	})
+	if err != nil {
+		t.Fatalf("$out: %v", err)
+	}
+
+	count, err := db.Collection("dest").CountDocuments(ctx, bson.D{})
+	if err != nil {
+		t.Fatalf("dest count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("$out: expected 2 docs in dest, got %d", count)
+	}
+}
+
+// ─── Multi-key sort ───────────────────────────────────────────────────────────
+
+func TestMultiKeySort(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"dept", "eng"}, {"score", 90}},
+		bson.D{{"dept", "eng"}, {"score", 70}},
+		bson.D{{"dept", "mkt"}, {"score", 85}},
+		bson.D{{"dept", "mkt"}, {"score", 95}},
+	})
+
+	// Sort by dept ASC, then score DESC.
+	cursor, err := coll.Find(ctx, bson.D{}, options.Find().SetSort(
+		bson.D{{"dept", 1}, {"score", -1}},
+	))
+	if err != nil {
+		t.Fatalf("Find sort: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var docs []bson.M
+	if err := cursor.All(ctx, &docs); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(docs) != 4 {
+		t.Fatalf("expected 4 docs, got %d", len(docs))
+	}
+
+	// Expected order: eng/90, eng/70, mkt/95, mkt/85
+	expected := []struct{ dept string; score int32 }{
+		{"eng", 90}, {"eng", 70}, {"mkt", 95}, {"mkt", 85},
+	}
+	for i, exp := range expected {
+		if docs[i]["dept"] != exp.dept || docs[i]["score"] != exp.score {
+			t.Errorf("doc[%d]: expected {%s %d}, got {%v %v}", i, exp.dept, exp.score, docs[i]["dept"], docs[i]["score"])
+		}
+	}
+}
+
 // ─── $group with $push accumulator ──────────────────────────────────────────
 
 func TestAggregateGroupPush(t *testing.T) {
