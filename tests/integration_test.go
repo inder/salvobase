@@ -1200,6 +1200,41 @@ func TestAggregateBucket(t *testing.T) {
 	}
 }
 
+// ─── RenameCollection ─────────────────────────────────────────────────────────
+
+func TestRenameCollection(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	// Insert into "old" collection.
+	_, _ = db.Collection("old").InsertMany(ctx, []interface{}{
+		bson.D{{"n", 1}},
+		bson.D{{"n", 2}},
+	})
+
+	// Rename via admin db.
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{"renameCollection", db.Name() + ".old"},
+		{"to", db.Name() + ".new"},
+	}).Err()
+	if err != nil {
+		t.Fatalf("renameCollection: %v", err)
+	}
+
+	// "old" should be gone.
+	count, _ := db.Collection("old").CountDocuments(ctx, bson.D{})
+	if count != 0 {
+		t.Errorf("renameCollection: old should be empty, got %d", count)
+	}
+
+	// "new" should have the docs.
+	count, _ = db.Collection("new").CountDocuments(ctx, bson.D{})
+	if count != 2 {
+		t.Errorf("renameCollection: expected 2 in new, got %d", count)
+	}
+}
+
 // ─── $merge stage ────────────────────────────────────────────────────────────
 
 func TestAggregateMerge(t *testing.T) {
