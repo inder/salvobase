@@ -1943,6 +1943,36 @@ func TestAggregateStringExpressions(t *testing.T) {
 	}
 }
 
+// ─── $currentDate operator ───────────────────────────────────────────────────
+
+func TestCurrentDate(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	before := time.Now().Add(-time.Second)
+	res, _ := coll.InsertOne(ctx, bson.D{{"name", "alice"}})
+
+	_, err := coll.UpdateOne(ctx, bson.D{{"_id", res.InsertedID}},
+		bson.D{{"$currentDate", bson.D{{"updatedAt", true}}}})
+	if err != nil {
+		t.Fatalf("$currentDate: %v", err)
+	}
+
+	var r bson.M
+	_ = coll.FindOne(ctx, bson.D{{"_id", res.InsertedID}}).Decode(&r)
+	// In mongo-driver v2, DateTime decodes as bson.DateTime (int64, millis since epoch).
+	ts, ok := r["updatedAt"].(bson.DateTime)
+	if !ok {
+		t.Fatalf("$currentDate: expected bson.DateTime type, got %T: %v", r["updatedAt"], r["updatedAt"])
+	}
+	after := time.Now().Add(time.Second)
+	t1 := time.UnixMilli(int64(ts)).UTC()
+	if t1.Before(before) || t1.After(after) {
+		t.Errorf("$currentDate: timestamp %v not in expected range [%v, %v]", t1, before, after)
+	}
+}
+
 // ─── Numeric update operators ($mul, $min, $max) ──────────────────────────────
 
 func TestNumericUpdateOperators(t *testing.T) {
