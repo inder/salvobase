@@ -1061,6 +1061,59 @@ func TestAggregateCondExpr(t *testing.T) {
 	}
 }
 
+// ─── Dot-notation and nested document queries ────────────────────────────────
+
+func TestDotNotationFilter(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"profile", bson.D{{"age", 25}, {"city", "NYC"}}}},
+		bson.D{{"profile", bson.D{{"age", 30}, {"city", "LA"}}}},
+		bson.D{{"profile", bson.D{{"age", 25}, {"city", "SF"}}}},
+	})
+
+	// Filter by nested field using dot notation.
+	count, err := coll.CountDocuments(ctx, bson.D{{"profile.age", 25}})
+	if err != nil {
+		t.Fatalf("dot notation filter: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("dot notation: expected 2, got %d", count)
+	}
+
+	// Range filter on nested field.
+	count, err = coll.CountDocuments(ctx, bson.D{{"profile.age", bson.D{{"$gte", 30}}}})
+	if err != nil {
+		t.Fatalf("dot notation $gte: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("dot notation $gte: expected 1, got %d", count)
+	}
+}
+
+func TestElemMatchFilter(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"scores", bson.A{85, 92, 78}}},
+		bson.D{{"scores", bson.A{55, 60, 70}}},
+		bson.D{{"scores", bson.A{90, 95, 88}}},
+	})
+
+	// $elemMatch on a scalar array: find docs with at least one score >= 90.
+	count, err := coll.CountDocuments(ctx, bson.D{{"scores", bson.D{{"$elemMatch", bson.D{{"$gte", 90}}}}}})
+	if err != nil {
+		t.Fatalf("$elemMatch: %v", err)
+	}
+	if count != 2 { // first doc has 92, third has 90 and 95
+		t.Errorf("$elemMatch: expected 2, got %d", count)
+	}
+}
+
 // ─── Array update operators ───────────────────────────────────────────────────
 
 func TestArrayUpdateOperators(t *testing.T) {
