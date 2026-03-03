@@ -1177,6 +1177,70 @@ func TestAggregateFacet(t *testing.T) {
 	}
 }
 
+// ─── Null/missing field filter edge cases ────────────────────────────────────
+
+func TestNullAndMissingFilter(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"name", "alice"}, {"score", nil}},     // score is null
+		bson.D{{"name", "bob"}},                        // score is missing
+		bson.D{{"name", "carol"}, {"score", 42}},       // score is non-null
+	})
+
+	// {score: null} should match both null and missing.
+	count, err := coll.CountDocuments(ctx, bson.D{{"score", nil}})
+	if err != nil {
+		t.Fatalf("null filter: %v", err)
+	}
+	if count != 2 { // alice (null) and bob (missing)
+		t.Errorf("null filter: expected 2, got %d", count)
+	}
+
+	// {score: {$exists: true}} should only match alice (has the field, even if null).
+	count, err = coll.CountDocuments(ctx, bson.D{{"score", bson.D{{"$exists", true}}}})
+	if err != nil {
+		t.Fatalf("$exists true: %v", err)
+	}
+	if count != 2 { // alice (null) and carol (42)
+		t.Errorf("$exists true: expected 2, got %d", count)
+	}
+
+	// {score: {$exists: false}} should only match bob (missing field).
+	count, err = coll.CountDocuments(ctx, bson.D{{"score", bson.D{{"$exists", false}}}})
+	if err != nil {
+		t.Fatalf("$exists false: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("$exists false: expected 1, got %d", count)
+	}
+}
+
+// ─── Array field equality (element-wise matching) ─────────────────────────────
+
+func TestArrayFieldEquality(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"tags", bson.A{"a", "b", "c"}}},
+		bson.D{{"tags", bson.A{"x", "y"}}},
+		bson.D{{"tags", "a"}}, // scalar "a", not array
+	})
+
+	// {tags: "a"} should match any doc where "a" is in the tags array (or tags == "a").
+	count, err := coll.CountDocuments(ctx, bson.D{{"tags", "a"}})
+	if err != nil {
+		t.Fatalf("array equality: %v", err)
+	}
+	if count != 2 { // first doc (array containing "a") and third doc (scalar "a")
+		t.Errorf("array equality: expected 2, got %d", count)
+	}
+}
+
 // ─── $group with null _id (total aggregation) ────────────────────────────────
 
 func TestAggregateGroupNull(t *testing.T) {
