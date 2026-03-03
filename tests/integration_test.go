@@ -1513,6 +1513,121 @@ func TestArrayUpdateOperators(t *testing.T) {
 	}
 }
 
+// ─── Nested field projection ──────────────────────────────────────────────────
+
+func TestNestedProjection(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{
+		{"name", "alice"},
+		{"profile", bson.D{
+			{"age", 30},
+			{"city", "NYC"},
+			{"secret", "hidden"},
+		}},
+	})
+
+	// Include only profile.age (dot-notation inclusion).
+	var r bson.M
+	err := coll.FindOne(ctx, bson.D{},
+		options.FindOne().SetProjection(bson.D{
+			{"name", 1},
+			{"profile.age", 1},
+		}),
+	).Decode(&r)
+	if err != nil {
+		t.Fatalf("nested projection: %v", err)
+	}
+
+	if r["name"] != "alice" {
+		t.Errorf("nested proj: expected name=alice, got %v", r["name"])
+	}
+
+	profile := r["profile"].(bson.D)
+	pm := make(map[string]interface{})
+	for _, e := range profile {
+		pm[e.Key] = e.Value
+	}
+
+	if pm["age"] != int32(30) {
+		t.Errorf("nested proj: expected age=30, got %v", pm["age"])
+	}
+	// "city" and "secret" should NOT be in the projection.
+	if _, ok := pm["city"]; ok {
+		t.Error("nested proj: city should not be projected")
+	}
+	if _, ok := pm["secret"]; ok {
+		t.Error("nested proj: secret should not be projected")
+	}
+}
+
+// ─── $push with $each and $sort ──────────────────────────────────────────────
+
+func TestPushEachSort(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	res, _ := coll.InsertOne(ctx, bson.D{{"scores", bson.A{5, 3}}})
+	id := res.InsertedID
+
+	// Push multiple values and keep the array sorted descending.
+	_, err := coll.UpdateOne(ctx, bson.D{{"_id", id}},
+		bson.D{{"$push", bson.D{{"scores", bson.D{
+			{"$each", bson.A{8, 1, 6}},
+			{"$sort", -1},
+		}}}}})
+	if err != nil {
+		t.Fatalf("$push $each $sort: %v", err)
+	}
+
+	var r bson.M
+	_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+	arr := r["scores"].(bson.A)
+	if len(arr) != 5 {
+		t.Fatalf("$push $each: expected 5 elements, got %d: %v", len(arr), arr)
+	}
+	// Should be [8, 6, 5, 3, 1] (descending).
+	expected := []int32{8, 6, 5, 3, 1}
+	for i, v := range arr {
+		if v.(int32) != expected[i] {
+			t.Errorf("$push $sort[%d]: expected %d, got %v", i, expected[i], v)
+		}
+	}
+}
+
+// ─── $rename update operator ──────────────────────────────────────────────────
+
+func TestRenameOperator(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	res, _ := coll.InsertOne(ctx, bson.D{{"oldName", "value"}, {"keep", true}})
+	id := res.InsertedID
+
+	_, err := coll.UpdateOne(ctx, bson.D{{"_id", id}},
+		bson.D{{"$rename", bson.D{{"oldName", "newName"}}}})
+	if err != nil {
+		t.Fatalf("$rename: %v", err)
+	}
+
+	var r bson.M
+	_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+
+	if _, exists := r["oldName"]; exists {
+		t.Error("$rename: oldName should not exist after rename")
+	}
+	if r["newName"] != "value" {
+		t.Errorf("$rename: expected newName=value, got %v", r["newName"])
+	}
+	if r["keep"] != true {
+		t.Errorf("$rename: unrelated field 'keep' should be unchanged")
+	}
+}
+
 // ─── $pull with query conditions ─────────────────────────────────────────────
 
 func TestPullWithCondition(t *testing.T) {
