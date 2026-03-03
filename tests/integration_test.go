@@ -1114,6 +1114,92 @@ func TestElemMatchFilter(t *testing.T) {
 	}
 }
 
+// ─── $sortByCount and $bucket stages ─────────────────────────────────────────
+
+func TestAggregateSortByCount(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"tag", "go"}},
+		bson.D{{"tag", "go"}},
+		bson.D{{"tag", "go"}},
+		bson.D{{"tag", "rust"}},
+		bson.D{{"tag", "rust"}},
+		bson.D{{"tag", "python"}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$sortByCount", "$tag"}},
+	})
+	if err != nil {
+		t.Fatalf("$sortByCount: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("$sortByCount: expected 3 groups, got %d", len(results))
+	}
+	// First result should be "go" with count 3.
+	if results[0]["_id"] != "go" {
+		t.Errorf("$sortByCount[0]: expected go, got %v", results[0]["_id"])
+	}
+	if results[0]["count"] != int32(3) {
+		t.Errorf("$sortByCount[0]: expected count=3, got %v", results[0]["count"])
+	}
+}
+
+func TestAggregateBucket(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"score", 15}},
+		bson.D{{"score", 42}},
+		bson.D{{"score", 78}},
+		bson.D{{"score", 91}},
+		bson.D{{"score", 55}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$bucket", bson.D{
+			{"groupBy", "$score"},
+			{"boundaries", bson.A{0, 50, 75, 100}},
+			{"default", "other"},
+		}}},
+		bson.D{{"$sort", bson.D{{"_id", 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("$bucket: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	// Buckets: [0,50)=2 docs(15,42), [50,75)=2 docs(55), [75,100)=1 doc(78,91→wait)
+	// Actually: 15→[0,50), 42→[0,50), 55→[50,75), 78→[75,100), 91→[75,100)
+	if len(results) != 3 {
+		t.Fatalf("$bucket: expected 3 buckets, got %d: %v", len(results), results)
+	}
+	if results[0]["count"] != int32(2) {
+		t.Errorf("bucket[0-50]: expected 2, got %v", results[0]["count"])
+	}
+	if results[1]["count"] != int32(1) {
+		t.Errorf("bucket[50-75]: expected 1, got %v", results[1]["count"])
+	}
+	if results[2]["count"] != int32(2) {
+		t.Errorf("bucket[75-100]: expected 2, got %v", results[2]["count"])
+	}
+}
+
 // ─── $replaceRoot and $count stages ──────────────────────────────────────────
 
 func TestAggregateReplaceRoot(t *testing.T) {
