@@ -258,11 +258,72 @@ func (c *bboltCollection) FindOne(filter bson.Raw, opts FindOptions) (bson.Raw, 
 	return batch[0], nil
 }
 
+// extractIDEquality returns the equality value for a simple {_id: <val>} filter.
+// Returns (idVal, true) if the filter is a simple _id equality, (zero, false) otherwise.
+func extractIDEquality(filter bson.Raw) (bson.RawValue, bool) {
+	if len(filter) == 0 {
+		return bson.RawValue{}, false
+	}
+	elems, err := filter.Elements()
+	if err != nil || len(elems) != 1 {
+		return bson.RawValue{}, false
+	}
+	e := elems[0]
+	if e.Key() != "_id" {
+		return bson.RawValue{}, false
+	}
+	v := e.Value()
+	// Reject if value is an operator document (e.g. {$in: [...]})
+	if v.Type == bson.TypeEmbeddedDocument {
+		subElems, err := v.Document().Elements()
+		if err == nil && len(subElems) > 0 && len(subElems[0].Key()) > 0 && subElems[0].Key()[0] == '$' {
+			return bson.RawValue{}, false
+		}
+	}
+	return v, true
+}
+
 // scanFilter does a full collection scan and applies filter + projection.
+// When the filter is a simple {_id: value} equality, it uses a direct key
+// lookup instead of scanning the entire collection.
 func (c *bboltCollection) scanFilter(filter bson.Raw, projection bson.Raw) ([]bson.Raw, error) {
 	boltDB, err := c.engine.getDB(c.db)
 	if err != nil {
 		return nil, err
+	}
+
+	// Fast path: direct _id key lookup.
+	if idVal, ok := extractIDEquality(filter); ok {
+		key := encodeIDValue(idVal)
+		var docs []bson.Raw
+		if err := boltDB.View(func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(collBucket(c.coll)))
+			if b == nil {
+				return nil
+			}
+			v := b.Get(key)
+			if v == nil {
+				return nil
+			}
+			raw, err := c.engine.decompress(v)
+			if err != nil {
+				return err
+			}
+			doc := bson.Raw(raw)
+			if len(projection) > 0 {
+				doc, err = query.Project(doc, projection)
+				if err != nil {
+					return err
+				}
+			}
+			cp := make([]byte, len(doc))
+			copy(cp, doc)
+			docs = append(docs, bson.Raw(cp))
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		return docs, nil
 	}
 
 	var docs []bson.Raw
