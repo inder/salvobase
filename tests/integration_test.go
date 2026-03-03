@@ -1114,6 +1114,113 @@ func TestElemMatchFilter(t *testing.T) {
 	}
 }
 
+// ─── $replaceRoot and $count stages ──────────────────────────────────────────
+
+func TestAggregateReplaceRoot(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"user", bson.D{{"name", "alice"}, {"age", 25}}}},
+		bson.D{{"user", bson.D{{"name", "bob"}, {"age", 30}}}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$replaceRoot", bson.D{{"newRoot", "$user"}}}},
+		bson.D{{"$sort", bson.D{{"name", 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("$replaceRoot: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2, got %d", len(results))
+	}
+	if results[0]["name"] != "alice" {
+		t.Errorf("replaceRoot[0]: expected alice, got %v", results[0]["name"])
+	}
+	if results[1]["age"] != int32(30) {
+		t.Errorf("replaceRoot[1]: expected age=30, got %v", results[1]["age"])
+	}
+	// Original _id should not be present (it was inside the user subdoc which had none).
+}
+
+func TestAggregateCountStage(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"active", true}},
+		bson.D{{"active", false}},
+		bson.D{{"active", true}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$match", bson.D{{"active", true}}}},
+		bson.D{{"$count", "numActive"}},
+	})
+	if err != nil {
+		t.Fatalf("$count: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var result bson.M
+	if !cursor.Next(ctx) {
+		t.Fatal("$count: expected 1 result")
+	}
+	_ = cursor.Decode(&result)
+	if result["numActive"] != int32(2) {
+		t.Errorf("$count: expected 2, got %v", result["numActive"])
+	}
+}
+
+// ─── $unionWith stage ─────────────────────────────────────────────────────────
+
+func TestAggregateUnionWith(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	_, _ = db.Collection("colA").InsertMany(ctx, []interface{}{
+		bson.D{{"name", "alice"}},
+		bson.D{{"name", "bob"}},
+	})
+	_, _ = db.Collection("colB").InsertMany(ctx, []interface{}{
+		bson.D{{"name", "carol"}},
+	})
+
+	cursor, err := db.Collection("colA").Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$unionWith", bson.D{{"coll", "colB"}}}},
+		bson.D{{"$sort", bson.D{{"name", 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("$unionWith: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("$unionWith: expected 3, got %d", len(results))
+	}
+	names := []string{results[0]["name"].(string), results[1]["name"].(string), results[2]["name"].(string)}
+	expected := []string{"alice", "bob", "carol"}
+	for i, n := range names {
+		if n != expected[i] {
+			t.Errorf("$unionWith[%d]: expected %s, got %s", i, expected[i], n)
+		}
+	}
+}
+
 // ─── $switch and $ifNull expressions ─────────────────────────────────────────
 
 func TestAggregateSwitchAndIfNull(t *testing.T) {
