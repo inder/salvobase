@@ -2138,6 +2138,630 @@ func TestNumericUpdateOperators(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Array expression operators
+// ---------------------------------------------------------------------------
+
+func TestAggregateArrayExpressions(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"arr", bson.A{10, 20, 30, 40, 50}}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"first", bson.D{{"$arrayElemAt", bson.A{"$arr", 0}}}},
+			{"last", bson.D{{"$arrayElemAt", bson.A{"$arr", -1}}}},
+			{"sz", bson.D{{"$size", "$arr"}}},
+			{"sliced", bson.D{{"$slice", bson.A{"$arr", 1, 3}}}},
+			{"reversed", bson.D{{"$reverseArray", "$arr"}}},
+			{"concat", bson.D{{"$concatArrays", bson.A{"$arr", bson.A{60, 70}}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	r := results[0]
+
+	if r["first"] != int32(10) {
+		t.Errorf("$arrayElemAt[0]: expected 10, got %v (%T)", r["first"], r["first"])
+	}
+	if r["last"] != int32(50) {
+		t.Errorf("$arrayElemAt[-1]: expected 50, got %v (%T)", r["last"], r["last"])
+	}
+	if r["sz"] != int32(5) {
+		t.Errorf("$size: expected 5, got %v", r["sz"])
+	}
+	sliced, ok := r["sliced"].(bson.A)
+	if !ok || len(sliced) != 3 || sliced[0] != int32(20) {
+		t.Errorf("$slice: expected [20,30,40], got %v", r["sliced"])
+	}
+	rev, ok := r["reversed"].(bson.A)
+	if !ok || len(rev) != 5 || rev[0] != int32(50) {
+		t.Errorf("$reverseArray: expected [50,40,30,20,10], got %v", r["reversed"])
+	}
+	cat, ok := r["concat"].(bson.A)
+	if !ok || len(cat) != 7 {
+		t.Errorf("$concatArrays: expected 7 elements, got %v", r["concat"])
+	}
+}
+
+func TestAggregateMapFilter(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"nums", bson.A{1, 2, 3, 4, 5}}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			// $map: multiply each by 2
+			{"doubled", bson.D{{"$map", bson.D{
+				{"input", "$nums"},
+				{"as", "n"},
+				{"in", bson.D{{"$multiply", bson.A{"$$n", 2}}}},
+			}}}},
+			// $filter: keep only > 2
+			{"gt2", bson.D{{"$filter", bson.D{
+				{"input", "$nums"},
+				{"as", "n"},
+				{"cond", bson.D{{"$gt", bson.A{"$$n", 2}}}},
+			}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	r := results[0]
+
+	doubled, ok := r["doubled"].(bson.A)
+	if !ok || len(doubled) != 5 || doubled[0] != int32(2) || doubled[4] != int32(10) {
+		t.Errorf("$map/doubled: expected [2,4,6,8,10], got %v", r["doubled"])
+	}
+	gt2, ok := r["gt2"].(bson.A)
+	if !ok || len(gt2) != 3 || gt2[0] != int32(3) {
+		t.Errorf("$filter/gt2: expected [3,4,5], got %v", r["gt2"])
+	}
+}
+
+func TestAggregateReduce(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"nums", bson.A{1, 2, 3, 4, 5}}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"sum", bson.D{{"$reduce", bson.D{
+				{"input", "$nums"},
+				{"initialValue", 0},
+				{"in", bson.D{{"$add", bson.A{"$$value", "$$this"}}}},
+			}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	sum := results[0]["sum"]
+	if sum != int32(15) {
+		t.Errorf("$reduce sum: expected 15, got %v (%T)", sum, sum)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Math expression operators
+// ---------------------------------------------------------------------------
+
+func TestAggregateMathExpressions(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"x", int32(7)}, {"y", int32(3)}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"absneg", bson.D{{"$abs", -5}}},
+			{"ceil_v", bson.D{{"$ceil", 4.3}}},
+			{"floor_v", bson.D{{"$floor", 4.9}}},
+			{"mod_v", bson.D{{"$mod", bson.A{"$x", "$y"}}}},
+			{"pow_v", bson.D{{"$pow", bson.A{2, 10}}}},
+			{"sqrt_v", bson.D{{"$sqrt", 9}}},
+			{"sub_v", bson.D{{"$subtract", bson.A{"$x", "$y"}}}},
+			{"div_v", bson.D{{"$divide", bson.A{10.0, 4.0}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	r := results[0]
+
+	if r["absneg"] != int32(5) && r["absneg"] != int64(5) && r["absneg"] != float64(5) {
+		t.Errorf("$abs: expected 5, got %v (%T)", r["absneg"], r["absneg"])
+	}
+	if r["ceil_v"] != float64(5) {
+		t.Errorf("$ceil: expected 5.0, got %v (%T)", r["ceil_v"], r["ceil_v"])
+	}
+	if r["floor_v"] != float64(4) {
+		t.Errorf("$floor: expected 4.0, got %v (%T)", r["floor_v"], r["floor_v"])
+	}
+	if r["mod_v"] != int32(1) && r["mod_v"] != int64(1) && r["mod_v"] != float64(1) {
+		t.Errorf("$mod: expected 1, got %v (%T)", r["mod_v"], r["mod_v"])
+	}
+	if r["pow_v"] != float64(1024) {
+		t.Errorf("$pow: expected 1024.0, got %v (%T)", r["pow_v"], r["pow_v"])
+	}
+	if r["sqrt_v"] != float64(3) {
+		t.Errorf("$sqrt: expected 3.0, got %v (%T)", r["sqrt_v"], r["sqrt_v"])
+	}
+	if r["sub_v"] != int32(4) {
+		t.Errorf("$subtract: expected 4, got %v (%T)", r["sub_v"], r["sub_v"])
+	}
+	if r["div_v"] != float64(2.5) {
+		t.Errorf("$divide: expected 2.5, got %v (%T)", r["div_v"], r["div_v"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// String expression operators
+// ---------------------------------------------------------------------------
+
+func TestAggregateMoreStringExpressions(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"name", "  Hello World  "}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"up", bson.D{{"$toUpper", "$name"}}},
+			{"trimmed", bson.D{{"$trim", bson.D{{"input", "$name"}}}}},
+			{"split_v", bson.D{{"$split", bson.A{"$name", " "}}}},
+			{"strlen", bson.D{{"$strLenBytes", "$name"}}},
+			{"sub_v", bson.D{{"$substr", bson.A{"$name", 2, 5}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	r := results[0]
+
+	if r["up"] != "  HELLO WORLD  " {
+		t.Errorf("$toUpper: expected '  HELLO WORLD  ', got %q", r["up"])
+	}
+	if r["trimmed"] != "Hello World" {
+		t.Errorf("$trim: expected 'Hello World', got %q", r["trimmed"])
+	}
+	// $split on "  Hello World  " by " " — depends on how many spaces; just check it's an array
+	if _, ok := r["split_v"].(bson.A); !ok {
+		t.Errorf("$split: expected array, got %T", r["split_v"])
+	}
+	if r["strlen"] != int32(15) && r["strlen"] != int64(15) {
+		t.Errorf("$strLenBytes: expected 15, got %v", r["strlen"])
+	}
+	if r["sub_v"] != "Hello" {
+		t.Errorf("$substr: expected 'Hello', got %q", r["sub_v"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Date expression operators
+// ---------------------------------------------------------------------------
+
+func TestAggregateDateExpressions(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	// 2024-03-15 10:30:45 UTC
+	ts := time.Date(2024, 3, 15, 10, 30, 45, 0, time.UTC)
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"ts", ts}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"yr", bson.D{{"$year", "$ts"}}},
+			{"mo", bson.D{{"$month", "$ts"}}},
+			{"dy", bson.D{{"$dayOfMonth", "$ts"}}},
+			{"hr", bson.D{{"$hour", "$ts"}}},
+			{"mn", bson.D{{"$minute", "$ts"}}},
+			{"sc", bson.D{{"$second", "$ts"}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	r := results[0]
+
+	check := func(field string, expected int32) {
+		v := r[field]
+		if v != expected {
+			t.Errorf("%s: expected %d, got %v (%T)", field, expected, v, v)
+		}
+	}
+	check("yr", 2024)
+	check("mo", 3)
+	check("dy", 15)
+	check("hr", 10)
+	check("mn", 30)
+	check("sc", 45)
+}
+
+// ---------------------------------------------------------------------------
+// Type conversion expressions
+// ---------------------------------------------------------------------------
+
+func TestAggregateTypeConversions(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"n", int32(42)}, {"s", "100"}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"nstr", bson.D{{"$toString", "$n"}}},
+			{"sint", bson.D{{"$toInt", "$s"}}},
+			{"slong", bson.D{{"$toLong", "$s"}}},
+			{"sdbl", bson.D{{"$toDouble", "$s"}}},
+			{"tp", bson.D{{"$type", "$n"}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	r := results[0]
+
+	if r["nstr"] != "42" {
+		t.Errorf("$toString: expected '42', got %v", r["nstr"])
+	}
+	if r["sint"] != int32(100) {
+		t.Errorf("$toInt: expected 100, got %v (%T)", r["sint"], r["sint"])
+	}
+	if r["slong"] != int64(100) {
+		t.Errorf("$toLong: expected 100 (int64), got %v (%T)", r["slong"], r["slong"])
+	}
+	if r["sdbl"] != float64(100) {
+		t.Errorf("$toDouble: expected 100.0, got %v (%T)", r["sdbl"], r["sdbl"])
+	}
+	if r["tp"] != "int" {
+		t.Errorf("$type: expected 'int', got %v", r["tp"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// $mergeObjects, $objectToArray, $arrayToObject
+// ---------------------------------------------------------------------------
+
+func TestAggregateMergeObjects(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{
+		{"_id", 1},
+		{"a", bson.D{{"x", 1}}},
+		{"b", bson.D{{"y", 2}}},
+	})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"merged", bson.D{{"$mergeObjects", bson.A{"$a", "$b"}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	merged, ok := results[0]["merged"].(bson.M)
+	if !ok {
+		merged2, ok2 := results[0]["merged"].(bson.D)
+		if !ok2 {
+			t.Fatalf("$mergeObjects: expected doc, got %T", results[0]["merged"])
+		}
+		_ = merged2
+		return
+	}
+	if merged["x"] != int32(1) || merged["y"] != int32(2) {
+		t.Errorf("$mergeObjects: expected {x:1,y:2}, got %v", merged)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// $isArray, $in (expression), comparison expressions
+// ---------------------------------------------------------------------------
+
+func TestAggregateLogicalExpressions(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"arr", bson.A{1, 2, 3}}, {"x", int32(5)}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"isArr", bson.D{{"$isArray", "$arr"}}},
+			{"notArr", bson.D{{"$isArray", "$x"}}},
+			{"inArr", bson.D{{"$in", bson.A{2, "$arr"}}}},
+			{"gtval", bson.D{{"$gt", bson.A{"$x", 3}}}},
+			{"ltval", bson.D{{"$lt", bson.A{"$x", 3}}}},
+			{"eqval", bson.D{{"$eq", bson.A{"$x", 5}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	r := results[0]
+
+	if r["isArr"] != true {
+		t.Errorf("$isArray(arr): expected true, got %v", r["isArr"])
+	}
+	if r["notArr"] != false {
+		t.Errorf("$isArray(x): expected false, got %v", r["notArr"])
+	}
+	if r["inArr"] != true {
+		t.Errorf("$in: expected true, got %v", r["inArr"])
+	}
+	if r["gtval"] != true {
+		t.Errorf("$gt: expected true, got %v", r["gtval"])
+	}
+	if r["ltval"] != false {
+		t.Errorf("$lt: expected false, got %v", r["ltval"])
+	}
+	if r["eqval"] != true {
+		t.Errorf("$eq: expected true, got %v", r["eqval"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// $range, $indexOfArray
+// ---------------------------------------------------------------------------
+
+func TestAggregateRangeAndIndexOf(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"arr", bson.A{"a", "b", "c", "b"}}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"rng", bson.D{{"$range", bson.A{0, 5}}}},
+			{"idx", bson.D{{"$indexOfArray", bson.A{"$arr", "b"}}}},
+			{"idx2", bson.D{{"$indexOfArray", bson.A{"$arr", "z"}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	r := results[0]
+
+	rng, ok := r["rng"].(bson.A)
+	if !ok || len(rng) != 5 || rng[0] != int32(0) || rng[4] != int32(4) {
+		t.Errorf("$range: expected [0,1,2,3,4], got %v", r["rng"])
+	}
+	if r["idx"] != int32(1) {
+		t.Errorf("$indexOfArray('b'): expected 1, got %v (%T)", r["idx"], r["idx"])
+	}
+	if r["idx2"] != int32(-1) {
+		t.Errorf("$indexOfArray('z'): expected -1, got %v (%T)", r["idx2"], r["idx2"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// $let expression
+// ---------------------------------------------------------------------------
+
+func TestAggregateLetExpression(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"price", int32(10)}, {"qty", int32(3)}})
+
+	pipe := mongo.Pipeline{
+		{{"$match", bson.D{{"_id", 1}}}},
+		{{"$project", bson.D{
+			{"total", bson.D{{"$let", bson.D{
+				{"vars", bson.D{{"p", "$price"}, {"q", "$qty"}}},
+				{"in", bson.D{{"$multiply", bson.A{"$$p", "$$q"}}}},
+			}}}},
+		}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result")
+	}
+	if results[0]["total"] != int32(30) {
+		t.Errorf("$let: expected 30, got %v (%T)", results[0]["total"], results[0]["total"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// $countDocuments / estimatedDocumentCount
+// ---------------------------------------------------------------------------
+
+func TestCountDocuments(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	docs := []interface{}{
+		bson.D{{"x", 1}},
+		bson.D{{"x", 2}},
+		bson.D{{"x", 3}},
+	}
+	coll.InsertMany(ctx, docs)
+
+	total, err := coll.CountDocuments(ctx, bson.D{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 {
+		t.Errorf("CountDocuments: expected 3, got %d", total)
+	}
+
+	filtered, err := coll.CountDocuments(ctx, bson.D{{"x", bson.D{{"$gt", 1}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filtered != 2 {
+		t.Errorf("CountDocuments filtered: expected 2, got %d", filtered)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// $regexMatch expression in aggregation
+// ---------------------------------------------------------------------------
+
+func TestAggregateRegexMatch(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertMany(ctx, []interface{}{
+		bson.D{{"_id", 1}, {"name", "alice"}},
+		bson.D{{"_id", 2}, {"name", "bob"}},
+		bson.D{{"_id", 3}, {"name", "charlie"}},
+	})
+
+	pipe := mongo.Pipeline{
+		{{"$project", bson.D{
+			{"name", 1},
+			{"matches", bson.D{{"$regexMatch", bson.D{
+				{"input", "$name"},
+				{"regex", "^[ab]"},
+			}}}},
+		}}},
+		{{"$match", bson.D{{"matches", true}}}},
+		{{"$sort", bson.D{{"_id", 1}}}},
+	}
+	cursor, err := coll.Aggregate(ctx, pipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 2 {
+		t.Errorf("$regexMatch: expected 2 matches (alice, bob), got %d: %v", len(results), results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// $type filter operator
+// ---------------------------------------------------------------------------
+
+func TestTypeFilter(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertMany(ctx, []interface{}{
+		bson.D{{"_id", 1}, {"v", int32(42)}},
+		bson.D{{"_id", 2}, {"v", "hello"}},
+		bson.D{{"_id", 3}, {"v", 3.14}},
+		bson.D{{"_id", 4}, {"v", true}},
+	})
+
+	// Find docs where v is a string (type 2)
+	cursor, err := coll.Find(ctx, bson.D{{"v", bson.D{{"$type", 2}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results []bson.M
+	cursor.All(ctx, &results)
+	if len(results) != 1 {
+		t.Errorf("$type filter: expected 1 string doc, got %d", len(results))
+	}
+
+	// Find docs where v is a number by type alias
+	cursor2, err := coll.Find(ctx, bson.D{{"v", bson.D{{"$type", "int"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var results2 []bson.M
+	cursor2.All(ctx, &results2)
+	if len(results2) != 1 {
+		t.Errorf("$type filter 'int': expected 1 doc, got %d", len(results2))
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

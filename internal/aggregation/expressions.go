@@ -175,6 +175,12 @@ func evalSystemVar(v string, doc bson.Raw) (interface{}, error) {
 	case "$$KEEP":
 		return "$$KEEP", nil
 	}
+	// User-defined variables ($$varName) are stored as literal BSON fields
+	// with key "$$varName" in the augmented doc by appendField.
+	raw, err := doc.LookupErr(v)
+	if err == nil {
+		return evalRawValue(raw, doc)
+	}
 	return nil, nil
 }
 
@@ -606,6 +612,8 @@ func toTime(v interface{}) (time.Time, bool) {
 	switch t := v.(type) {
 	case time.Time:
 		return t, true
+	case bson.DateTime:
+		return time.UnixMilli(int64(t)).UTC(), true
 	case bson.RawValue:
 		switch t.Type {
 		case bson.TypeDateTime:
@@ -614,12 +622,6 @@ func toTime(v interface{}) (time.Time, bool) {
 			tsT, _ := t.Timestamp()
 			return time.Unix(int64(tsT), 0).UTC(), true
 		}
-	case int64:
-		return time.UnixMilli(t).UTC(), true
-	case int32:
-		return time.UnixMilli(int64(t)).UTC(), true
-	case float64:
-		return time.UnixMilli(int64(t)).UTC(), true
 	}
 	return time.Time{}, false
 }
@@ -699,10 +701,15 @@ func evalSubtract(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 		return nil, nil
 	}
 	result := a - b
-	if _, isDouble := args[0].(float64); !isDouble {
-		if _, isDouble2 := args[1].(float64); !isDouble2 {
-			return int64(result), nil
+	_, isDouble0 := args[0].(float64)
+	_, isDouble1 := args[1].(float64)
+	if !isDouble0 && !isDouble1 {
+		_, isInt32_0 := args[0].(int32)
+		_, isInt32_1 := args[1].(int32)
+		if isInt32_0 && isInt32_1 {
+			return int32(result), nil
 		}
+		return int64(result), nil
 	}
 	return result, nil
 }
@@ -2409,6 +2416,13 @@ func convertToType(val interface{}, toType string) (interface{}, error) {
 	case "double":
 		n, ok := toFloat64Interface(val)
 		if !ok {
+			if s, ok2 := val.(string); ok2 {
+				f, err := strconv.ParseFloat(s, 64)
+				if err != nil {
+					return nil, fmt.Errorf("$convert: cannot convert %q to double", s)
+				}
+				return f, nil
+			}
 			return nil, fmt.Errorf("$convert: cannot convert to double")
 		}
 		return n, nil
