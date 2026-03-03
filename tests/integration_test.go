@@ -1114,6 +1114,69 @@ func TestElemMatchFilter(t *testing.T) {
 	}
 }
 
+// ─── $facet stage ─────────────────────────────────────────────────────────────
+
+func TestAggregateFacet(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"dept", "eng"}, {"salary", 90000}},
+		bson.D{{"dept", "mkt"}, {"salary", 70000}},
+		bson.D{{"dept", "eng"}, {"salary", 110000}},
+		bson.D{{"dept", "hr"}, {"salary", 60000}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$facet", bson.D{
+			{"byDept", bson.A{
+				bson.D{{"$group", bson.D{{"_id", "$dept"}, {"count", bson.D{{"$sum", 1}}}}}},
+				bson.D{{"$sort", bson.D{{"_id", 1}}}},
+			}},
+			{"salaryStats", bson.A{
+				bson.D{{"$group", bson.D{
+					{"_id", nil},
+					{"avgSalary", bson.D{{"$avg", "$salary"}}},
+					{"maxSalary", bson.D{{"$max", "$salary"}}},
+				}}},
+			}},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("$facet: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var result bson.M
+	if !cursor.Next(ctx) {
+		t.Fatal("$facet: expected 1 result doc")
+	}
+	if err := cursor.Decode(&result); err != nil {
+		t.Fatalf("$facet decode: %v", err)
+	}
+
+	byDept := result["byDept"].(bson.A)
+	if len(byDept) != 3 { // eng, hr, mkt
+		t.Errorf("$facet byDept: expected 3 groups, got %d", len(byDept))
+	}
+
+	salaryStats := result["salaryStats"].(bson.A)
+	if len(salaryStats) != 1 {
+		t.Fatalf("$facet salaryStats: expected 1, got %d", len(salaryStats))
+	}
+	stat := salaryStats[0].(bson.D)
+	statMap := make(map[string]interface{})
+	for _, e := range stat {
+		statMap[e.Key] = e.Value
+	}
+	// avg = (90000+70000+110000+60000)/4 = 82500
+	avg, _ := statMap["avgSalary"].(float64)
+	if avg != 82500 {
+		t.Errorf("$facet avgSalary: expected 82500, got %v", avg)
+	}
+}
+
 // ─── $group with $push accumulator ──────────────────────────────────────────
 
 func TestAggregateGroupPush(t *testing.T) {
