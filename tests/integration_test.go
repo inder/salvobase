@@ -1200,6 +1200,65 @@ func TestAggregateBucket(t *testing.T) {
 	}
 }
 
+// ─── $merge stage ────────────────────────────────────────────────────────────
+
+func TestAggregateMerge(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	// Seed "source" collection.
+	src := db.Collection("source")
+	_, _ = src.InsertMany(ctx, []interface{}{
+		bson.D{{"_id", "a"}, {"val", 10}},
+		bson.D{{"_id", "b"}, {"val", 20}},
+	})
+
+	// Seed "target" with one overlapping doc.
+	tgt := db.Collection("target")
+	_, _ = tgt.InsertMany(ctx, []interface{}{
+		bson.D{{"_id", "a"}, {"val", 999}, {"extra", "keep"}},
+		bson.D{{"_id", "c"}, {"val", 30}},
+	})
+
+	// $merge: update matching docs (by _id), insert new ones.
+	_, err := src.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$merge", bson.D{
+			{"into", "target"},
+			{"on", "_id"},
+			{"whenMatched", "merge"},
+			{"whenNotMatched", "insert"},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("$merge: %v", err)
+	}
+
+	// "a" should have val=10 now (merged from source), extra="keep" preserved.
+	var a bson.M
+	_ = tgt.FindOne(ctx, bson.D{{"_id", "a"}}).Decode(&a)
+	if a["val"] != int32(10) {
+		t.Errorf("$merge a.val: expected 10, got %v", a["val"])
+	}
+
+	// "b" should have been inserted.
+	count, _ := tgt.CountDocuments(ctx, bson.D{{"_id", "b"}})
+	if count != 1 {
+		t.Errorf("$merge: expected 'b' to be inserted, count=%d", count)
+	}
+
+	// "c" should still exist (not touched by merge).
+	count, _ = tgt.CountDocuments(ctx, bson.D{{"_id", "c"}})
+	if count != 1 {
+		t.Errorf("$merge: 'c' should still exist, count=%d", count)
+	}
+
+	total, _ := tgt.CountDocuments(ctx, bson.D{})
+	if total != 3 {
+		t.Errorf("$merge: expected 3 total docs, got %d", total)
+	}
+}
+
 // ─── $replaceRoot and $count stages ──────────────────────────────────────────
 
 func TestAggregateReplaceRoot(t *testing.T) {
