@@ -1513,6 +1513,66 @@ func TestArrayUpdateOperators(t *testing.T) {
 	}
 }
 
+// ─── $pull with query conditions ─────────────────────────────────────────────
+
+func TestPullWithCondition(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	res, _ := coll.InsertOne(ctx, bson.D{{"scores", bson.A{10, 25, 5, 30, 15}}})
+	id := res.InsertedID
+
+	// $pull all values greater than 20.
+	_, err := coll.UpdateOne(ctx, bson.D{{"_id", id}},
+		bson.D{{"$pull", bson.D{{"scores", bson.D{{"$gt", 20}}}}}})
+	if err != nil {
+		t.Fatalf("$pull with $gt: %v", err)
+	}
+
+	var r bson.M
+	_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+	remaining := r["scores"].(bson.A)
+	for _, v := range remaining {
+		if v.(int32) > 20 {
+			t.Errorf("$pull $gt: value %v should have been removed", v)
+		}
+	}
+	if len(remaining) != 3 { // 10, 5, 15 remain
+		t.Errorf("$pull $gt: expected 3 remaining, got %d: %v", len(remaining), remaining)
+	}
+}
+
+// ─── String aggregation expressions ($concat, $toLower, $toUpper) ─────────────
+
+func TestAggregateStringExpressions(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{{"first", "John"}, {"last", "DOE"}})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$project", bson.D{
+			{"fullName", bson.D{{"$concat", bson.A{"$first", " ", bson.D{{"$toLower", "$last"}}}}}},
+			{"_id", 0},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("string expr: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var result bson.M
+	if !cursor.Next(ctx) {
+		t.Fatal("string expr: no result")
+	}
+	_ = cursor.Decode(&result)
+	if result["fullName"] != "John doe" {
+		t.Errorf("string expr: expected 'John doe', got %v", result["fullName"])
+	}
+}
+
 // ─── Numeric update operators ($mul, $min, $max) ──────────────────────────────
 
 func TestNumericUpdateOperators(t *testing.T) {
