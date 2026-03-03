@@ -1114,6 +1114,68 @@ func TestElemMatchFilter(t *testing.T) {
 	}
 }
 
+// ─── $switch and $ifNull expressions ─────────────────────────────────────────
+
+func TestAggregateSwitchAndIfNull(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"score", 95}, {"bonus", nil}},
+		bson.D{{"score", 72}, {"bonus", 100}},
+		bson.D{{"score", 45}}, // bonus missing
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$project", bson.D{
+			// $switch: grade based on score
+			{"grade", bson.D{{"$switch", bson.D{
+				{"branches", bson.A{
+					bson.D{{"case", bson.D{{"$gte", bson.A{"$score", 90}}}}, {"then", "A"}},
+					bson.D{{"case", bson.D{{"$gte", bson.A{"$score", 70}}}}, {"then", "B"}},
+				}},
+				{"default", "C"},
+			}}}},
+			// $ifNull: use bonus if present, else 0
+			{"effectiveBonus", bson.D{{"$ifNull", bson.A{"$bonus", 0}}}},
+			{"_id", 0},
+		}}},
+		bson.D{{"$sort", bson.D{{"grade", 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("$switch $ifNull: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3, got %d", len(results))
+	}
+	// Sorted by grade: A, B, C
+	if results[0]["grade"] != "A" {
+		t.Errorf("grade[0]: expected A, got %v", results[0]["grade"])
+	}
+	if results[1]["grade"] != "B" {
+		t.Errorf("grade[1]: expected B, got %v", results[1]["grade"])
+	}
+	if results[2]["grade"] != "C" {
+		t.Errorf("grade[2]: expected C, got %v", results[2]["grade"])
+	}
+
+	// Bonus for A-grade doc (bonus=nil → ifNull → 0).
+	if results[0]["effectiveBonus"] != int32(0) {
+		t.Errorf("ifNull nil bonus: expected 0, got %v", results[0]["effectiveBonus"])
+	}
+	// B-grade doc has bonus=100.
+	if results[1]["effectiveBonus"] != int32(100) {
+		t.Errorf("ifNull 100 bonus: expected 100, got %v", results[1]["effectiveBonus"])
+	}
+}
+
 // ─── $facet stage ─────────────────────────────────────────────────────────────
 
 func TestAggregateFacet(t *testing.T) {
