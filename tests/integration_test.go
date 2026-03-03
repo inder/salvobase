@@ -1114,6 +1114,100 @@ func TestElemMatchFilter(t *testing.T) {
 	}
 }
 
+// ─── $group with $push accumulator ──────────────────────────────────────────
+
+func TestAggregateGroupPush(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"dept", "eng"}, {"name", "alice"}},
+		bson.D{{"dept", "eng"}, {"name", "bob"}},
+		bson.D{{"dept", "mkt"}, {"name", "carol"}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{"$group", bson.D{
+			{"_id", "$dept"},
+			{"members", bson.D{{"$push", "$name"}}},
+			{"count", bson.D{{"$sum", 1}}},
+		}}},
+		bson.D{{"$sort", bson.D{{"_id", 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("$group $push: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(results))
+	}
+	// eng group
+	if results[0]["_id"] != "eng" {
+		t.Errorf("group[0] _id: expected eng, got %v", results[0]["_id"])
+	}
+	members := results[0]["members"].(bson.A)
+	if len(members) != 2 {
+		t.Errorf("eng members: expected 2, got %d", len(members))
+	}
+	if results[0]["count"] != int32(2) {
+		t.Errorf("eng count: expected 2, got %v", results[0]["count"])
+	}
+	// mkt group
+	if results[1]["count"] != int32(1) {
+		t.Errorf("mkt count: expected 1, got %v", results[1]["count"])
+	}
+}
+
+// ─── $setOnInsert with upsert ─────────────────────────────────────────────────
+
+func TestSetOnInsert(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	// Upsert: doc doesn't exist → $setOnInsert fields should be set.
+	_, err := coll.UpdateOne(ctx,
+		bson.D{{"key", "k1"}},
+		bson.D{
+			{"$set", bson.D{{"val", 1}}},
+			{"$setOnInsert", bson.D{{"created", true}}},
+		},
+		options.UpdateOne().SetUpsert(true),
+	)
+	if err != nil {
+		t.Fatalf("upsert $setOnInsert: %v", err)
+	}
+
+	var r bson.M
+	_ = coll.FindOne(ctx, bson.D{{"key", "k1"}}).Decode(&r)
+	if r["created"] != true {
+		t.Errorf("$setOnInsert: expected created=true on insert, got %v", r["created"])
+	}
+
+	// Update existing doc: $setOnInsert should NOT fire.
+	_, _ = coll.UpdateOne(ctx,
+		bson.D{{"key", "k1"}},
+		bson.D{
+			{"$set", bson.D{{"val", 2}}},
+			{"$setOnInsert", bson.D{{"created", false}}},
+		},
+		options.UpdateOne().SetUpsert(true),
+	)
+
+	var r2 bson.M
+	_ = coll.FindOne(ctx, bson.D{{"key", "k1"}}).Decode(&r2)
+	// "created" should still be true — $setOnInsert doesn't fire on update.
+	if r2["created"] != true {
+		t.Errorf("$setOnInsert: expected created=true (no change on update), got %v", r2["created"])
+	}
+}
+
 // ─── Array update operators ───────────────────────────────────────────────────
 
 func TestArrayUpdateOperators(t *testing.T) {
