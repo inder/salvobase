@@ -6,8 +6,8 @@ import (
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/inder/mongoclone/internal/auth"
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/auth"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // handleSASLStart handles the "saslStart" command.

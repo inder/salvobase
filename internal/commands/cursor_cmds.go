@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // handleGetMore handles the "getMore" command.
@@ -159,13 +159,13 @@ func handleStartSession(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 }
 
 // handleCommitTransaction handles the "commitTransaction" command.
-// Stub — MongClone is single-node with auto-commit semantics.
+// Stub — Salvobase is single-node with auto-commit semantics.
 func handleCommitTransaction(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
 // handleAbortTransaction handles the "abortTransaction" command.
-// Stub — MongClone is single-node with auto-commit semantics.
+// Stub — Salvobase is single-node with auto-commit semantics.
 func handleAbortTransaction(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }

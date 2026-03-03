@@ -828,7 +828,7 @@ func (e *BBoltEngine) ServerStats() (ServerStats, error) {
 	return ServerStats{
 		Host:         hostname,
 		Version:      "7.0.0",
-		Process:      "mongoclone",
+		Process:      "salvobase",
 		PID:          e.pid,
 		Uptime:       uptime,
 		UptimeMillis: time.Since(e.startTime).Milliseconds(),

@@ -10,7 +10,7 @@ import (
 
 	"github.com/xdg-go/scram"
 
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // Manager handles SCRAM-SHA-256 authentication conversations.

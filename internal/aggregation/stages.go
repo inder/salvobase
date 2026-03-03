@@ -8,8 +8,8 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/inder/mongoclone/internal/query"
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/query"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // Stage is the interface for aggregation pipeline stages.

@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"github.com/inder/mongoclone/internal/server"
+	"github.com/inder/salvobase/internal/server"
 )
 
 var (
@@ -28,9 +28,9 @@ func rootCmd() *cobra.Command {
 	var cfg server.Config
 
 	cmd := &cobra.Command{
-		Use:   "mongoclone",
-		Short: "MongClone — MongoDB-compatible document database",
-		Long: `MongClone is a MongoDB-compatible document database server.
+		Use:   "salvobase",
+		Short: "Salvobase — MongoDB-compatible document database",
+		Long: `Salvobase is a MongoDB-compatible document database server.
 It implements the MongoDB Wire Protocol and is compatible with existing
 MongoDB drivers (Go, Python, Node.js, Java, etc.).
 
@@ -90,7 +90,7 @@ func run(cfg server.Config) error {
 	}
 	defer log.Sync() //nolint:errcheck
 
-	log.Info("starting mongoclone",
+	log.Info("starting salvobase",
 		zap.String("version", cfg.Version),
 		zap.String("buildTime", cfg.BuildTime),
 		zap.Int("port", cfg.Port),
@@ -151,7 +151,7 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print version information",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("mongoclone %s (built %s)\n", version, buildTime)
+			fmt.Printf("salvobase %s (built %s)\n", version, buildTime)
 		},
 	}
 }

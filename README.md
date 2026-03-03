@@ -1,4 +1,4 @@
-# MongClone
+# Salvobase
 
 A MongoDB-compatible document database server written in Go.
 
@@ -7,7 +7,7 @@ A MongoDB-compatible document database server written in Go.
 
 ## What it is
 
-MongClone implements the MongoDB Wire Protocol and is compatible with existing MongoDB drivers (Go, Python, Node.js, Java, etc.). You point your driver at `mongodb://localhost:27017` and it works.
+Salvobase implements the MongoDB Wire Protocol and is compatible with existing MongoDB drivers (Go, Python, Node.js, Java, etc.). You point your driver at `mongodb://localhost:27017` and it works.
 
 **Production-ready for:** multi-tenant SaaS, embedded databases, test fixtures, air-gapped deployments where MongoDB licensing is a concern, and anywhere you want a MongoDB-compatible database without the MongoDB overhead.
 
@@ -21,7 +21,7 @@ make build
 make dev
 
 # Or with Docker
-docker-compose up mongoclone
+docker-compose up salvobase
 
 # Connect with mongosh
 mongosh mongodb://localhost:27017
@@ -32,7 +32,7 @@ client, _ := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"
 
 ## Improvements Over MongoDB Community
 
-| Feature | MongoDB Community | MongClone |
+| Feature | MongoDB Community | Salvobase |
 |---------|------------------|-----------|
 | Prometheus metrics | Requires separate exporter | **Built-in** at `:27080/metrics` |
 | HTTP/JSON REST API | Atlas Data API (paid) | **Built-in** at `:27080/api/v1/` |
@@ -83,15 +83,15 @@ commands.Dispatcher.Dispatch(ctx, cmd)
 
 ```bash
 # CLI flags
-mongoclone --port 27017 --datadir ./data --noauth --logLevel debug
+salvobase --port 27017 --datadir ./data --noauth --logLevel debug
 
 # Environment variables
 MONGOCLONE_PORT=27017
-MONGOCLONE_DATADIR=/var/lib/mongoclone
+MONGOCLONE_DATADIR=/var/lib/salvobase
 MONGOCLONE_NOAUTH=false
 
 # Config file
-mongoclone --config /etc/mongoclone/mongod.yaml
+salvobase --config /etc/salvobase/mongod.yaml
 ```
 
 See `configs/mongod.yaml` for all options.
@@ -100,10 +100,10 @@ See `configs/mongod.yaml` for all options.
 
 ```bash
 # Create admin user
-./bin/mongoclone admin create-user admin supersecret
+./bin/salvobase admin create-user admin supersecret
 
 # Start with auth
-./bin/mongoclone --datadir ./data --port 27017
+./bin/salvobase --datadir ./data --port 27017
 
 # Connect
 mongosh "mongodb://admin:supersecret@localhost:27017/admin"
@@ -128,14 +128,14 @@ curl -X POST http://localhost:27080/api/v1/db/mydb/collection/users/find \
 
 ```bash
 # Docker
-docker-compose up -d mongoclone
+docker-compose up -d salvobase
 
 # Systemd
-cp deployments/mongoclone.service /etc/systemd/system/
-systemctl enable --now mongoclone
+cp deployments/salvobase.service /etc/systemd/system/
+systemctl enable --now salvobase
 
 # Backup: just copy the data directory
-rsync -av /var/lib/mongoclone/ /backup/mongoclone/
+rsync -av /var/lib/salvobase/ /backup/salvobase/
 ```
 
 ## Limitations
@@ -151,4 +151,4 @@ rsync -av /var/lib/mongoclone/ /backup/mongoclone/
 
 Apache 2.0. See [LICENSE](LICENSE).
 
-Unlike MongoDB Community (SSPL), MongClone can be used in commercial products, SaaS, and embedded systems without any licensing restrictions.
+Unlike MongoDB Community (SSPL), Salvobase can be used in commercial products, SaaS, and embedded systems without any licensing restrictions.

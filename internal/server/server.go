@@ -13,9 +13,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/inder/mongoclone/internal/auth"
-	"github.com/inder/mongoclone/internal/commands"
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/auth"
+	"github.com/inder/salvobase/internal/commands"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // Config holds all server configuration options.
@@ -40,7 +40,7 @@ type Config struct {
 	BuildTime      string
 }
 
-// Server is the main MongClone server.
+// Server is the main Salvobase server.
 type Server struct {
 	cfg        Config
 	engine     storage.Engine

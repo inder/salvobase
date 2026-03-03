@@ -1,11 +1,11 @@
-# MongClone Architecture
+# Salvobase Architecture
 
 A MongoDB-compatible document database server written in Go.
 
 ## Module
 
 ```
-github.com/inder/mongoclone
+github.com/inder/salvobase
 ```
 
 ## Package Layout
@@ -424,7 +424,7 @@ package aggregation
 
 import (
     "go.mongodb.org/mongo-driver/v2/bson"
-    "github.com/inder/mongoclone/internal/storage"
+    "github.com/inder/salvobase/internal/storage"
 )
 
 // Pipeline executes a MongoDB aggregation pipeline against a collection.
@@ -447,7 +447,7 @@ package auth
 
 import (
     "go.mongodb.org/mongo-driver/v2/bson"
-    "github.com/inder/mongoclone/internal/storage"
+    "github.com/inder/salvobase/internal/storage"
 )
 
 // Manager handles SCRAM-SHA-256 authentication.
@@ -477,8 +477,8 @@ package commands
 
 import (
     "go.mongodb.org/mongo-driver/v2/bson"
-    "github.com/inder/mongoclone/internal/storage"
-    "github.com/inder/mongoclone/internal/auth"
+    "github.com/inder/salvobase/internal/storage"
+    "github.com/inder/salvobase/internal/auth"
     "go.uber.org/zap"
 )
 
@@ -527,9 +527,9 @@ package server
 import (
     "net"
     "go.uber.org/zap"
-    "github.com/inder/mongoclone/internal/storage"
-    "github.com/inder/mongoclone/internal/auth"
-    "github.com/inder/mongoclone/internal/commands"
+    "github.com/inder/salvobase/internal/storage"
+    "github.com/inder/salvobase/internal/auth"
+    "github.com/inder/salvobase/internal/commands"
 )
 
 // Config holds all server configuration.
@@ -666,7 +666,7 @@ Bucket "_users"
 5. **Transparent compression** — Snappy/Zstd for stored documents (configurable per server)
 6. **Better explain** — cost estimates and stage-level timing exposed in explain output
 7. **Millisecond TTL precision** — TTL index cleanup runs every second (not MongoDB's 60s)
-8. **Connection-level DB isolation** — `x-mongoclone-tenant-db` header locks a connection to a DB
+8. **Connection-level DB isolation** — `x-salvobase-tenant-db` header locks a connection to a DB
 9. **Zero-downtime config reload** — SIGHUP reloads config without restart
 
 ## Version Constants

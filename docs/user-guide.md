@@ -1,12 +1,12 @@
-# MongClone User Guide
+# Salvobase User Guide
 
-> **MongClone** is a MongoDB-compatible document database server written in Go.
+> **Salvobase** is a MongoDB-compatible document database server written in Go.
 > It speaks the MongoDB wire protocol, which means you can point your existing
 > drivers, tools, and applications at it without changing a line of application code.
 
 **License:** Apache 2.0
 **Wire Protocol Compatibility:** MongoDB 7.0 (max wire version 21)
-**Module:** `github.com/inder/mongoclone`
+**Module:** `github.com/inder/salvobase`
 
 ---
 
@@ -54,23 +54,23 @@
 
 ## 1. Introduction
 
-MongClone implements the MongoDB binary wire protocol (OP_MSG and legacy OP_QUERY/OP_REPLY) so existing MongoDB drivers for Go, Python, Node.js, Java, Ruby, and every other language connect to it out of the box. It stores data using [bbolt](https://github.com/etcd-io/bbolt), an embedded B-tree key/value store, with one `.db` file per database on disk.
+Salvobase implements the MongoDB binary wire protocol (OP_MSG and legacy OP_QUERY/OP_REPLY) so existing MongoDB drivers for Go, Python, Node.js, Java, Ruby, and every other language connect to it out of the box. It stores data using [bbolt](https://github.com/etcd-io/bbolt), an embedded B-tree key/value store, with one `.db` file per database on disk.
 
-### What MongClone is
+### What Salvobase is
 
 - A single-binary, zero-dependency database server
 - Wire-compatible with MongoDB 7.0 (advertises max wire version 21)
 - Suitable for development environments, embedded use, multi-tenant SaaS backends, and any workload that doesn't require replication or sharding
 - Embeddable as a Go library
 
-### What MongClone is not (yet)
+### What Salvobase is not (yet)
 
 - A replica set or sharded cluster — it is a single-node store
 - A replacement for MongoDB Atlas in workloads requiring change streams, vector search, or full-text search at scale
 
 ### MongoDB Compatibility Guarantees
 
-MongClone passes commands through the same driver API as MongoDB Community, and response documents follow the MongoDB wire protocol shape. The following are verified compatible:
+Salvobase passes commands through the same driver API as MongoDB Community, and response documents follow the MongoDB wire protocol shape. The following are verified compatible:
 
 - All MongoDB drivers (Go driver v2, PyMongo, Node.js driver, etc.)
 - `mongosh` interactive shell
@@ -89,10 +89,10 @@ MongClone passes commands through the same driver API as MongoDB Community, and 
 ### Build from Source
 
 ```bash
-git clone https://github.com/inder/mongoclone.git
-cd mongoclone
+git clone https://github.com/inder/salvobase.git
+cd salvobase
 make build
-# Binary is at ./bin/mongoclone
+# Binary is at ./bin/salvobase
 ```
 
 ### Start the Server
@@ -109,9 +109,9 @@ make dev
 **Production mode:**
 
 ```bash
-./bin/mongoclone \
+./bin/salvobase \
   --port 27017 \
-  --datadir /var/lib/mongoclone \
+  --datadir /var/lib/salvobase \
   --logLevel info \
   --logFormat json
 ```
@@ -162,7 +162,7 @@ server:
 
 storage:
   # One .db file per database is created here
-  dataDir: "/var/lib/mongoclone"
+  dataDir: "/var/lib/salvobase"
   # Document compression: none | snappy | zstd
   compression: "snappy"
   # Sync writes to disk before acknowledging (safer but ~30% slower)
@@ -250,7 +250,7 @@ docker run -d \
   -v /host/data:/data \
   -p 27017:27017 \
   -p 27080:27080 \
-  mongoclone:latest
+  salvobase:latest
 ```
 
 ### Zero-Downtime Config Reload
@@ -258,14 +258,14 @@ docker run -d \
 Send `SIGHUP` to the running process to trigger a config reload without restarting:
 
 ```bash
-kill -HUP $(pidof mongoclone)
+kill -HUP $(pidof salvobase)
 ```
 
 ---
 
 ## 4. Authentication
 
-MongClone uses **SCRAM-SHA-256** exclusively — the same mechanism MongoDB uses by default since version 4.0. Passwords are never stored in plaintext; they are stored as SCRAM derived keys (StoredKey + ServerKey + salt).
+Salvobase uses **SCRAM-SHA-256** exclusively — the same mechanism MongoDB uses by default since version 4.0. Passwords are never stored in plaintext; they are stored as SCRAM derived keys (StoredKey + ServerKey + salt).
 
 > If you start with `--noauth`, the server logs a loud warning. Never run without auth in any networked environment.
 
@@ -274,7 +274,7 @@ MongClone uses **SCRAM-SHA-256** exclusively — the same mechanism MongoDB uses
 **Method 1: CLI command (before starting the server)**
 
 ```bash
-./bin/mongoclone admin create-user admin yourpassword
+./bin/salvobase admin create-user admin yourpassword
 ```
 
 This creates the user directly in the data files without requiring a running server.
@@ -282,7 +282,7 @@ This creates the user directly in the data files without requiring a running ser
 **Method 2: Environment variable on first boot**
 
 ```bash
-MONGOCLONE_AUTH_ADMIN_PASSWORD=yourpassword ./bin/mongoclone --datadir /var/lib/mongoclone
+MONGOCLONE_AUTH_ADMIN_PASSWORD=yourpassword ./bin/salvobase --datadir /var/lib/salvobase
 ```
 
 If the `admin` user does not exist on startup and `adminPassword` is non-empty, the server creates it automatically with the `root` role on the `admin` database.
@@ -343,7 +343,7 @@ await client.connect();
 
 ### 4.3 SCRAM-SHA-256 Details
 
-The authentication handshake follows RFC 5802. MongClone:
+The authentication handshake follows RFC 5802. Salvobase:
 
 - Derives credentials using PBKDF2-SHA-256 with 15,000 iterations and a 16-byte random salt
 - Stores only `StoredKey` (H(ClientKey)) and `ServerKey` (HMAC(SaltedPassword, "Server Key")) — never the raw password or `SaltedPassword`
@@ -748,7 +748,7 @@ db.users.createIndex({ email: 1 }, { unique: true })
 // Named index
 db.products.createIndex({ name: 1 }, { name: "products_name_asc" })
 
-// Background creation (non-blocking — always the case in MongClone)
+// Background creation (non-blocking — always the case in Salvobase)
 db.logs.createIndex({ timestamp: -1 }, { background: true })
 ```
 
@@ -772,7 +772,7 @@ db.users.createIndex({ username: 1 }, { unique: true })
 
 #### TTL Index
 
-Automatically deletes documents after a specified number of seconds. MongClone runs TTL cleanup every second (vs. MongoDB's 60-second cycle), giving near-millisecond precision.
+Automatically deletes documents after a specified number of seconds. Salvobase runs TTL cleanup every second (vs. MongoDB's 60-second cycle), giving near-millisecond precision.
 
 ```javascript
 // Delete sessions 24 hours after their createdAt date
@@ -1102,21 +1102,21 @@ db.bigCollection.aggregate(
 
 ## 8. Multi-Tenancy
 
-MongClone provides database-level isolation out of the box — each tenant gets their own database, and each database is its own `.db` file on disk with no data interleaving.
+Salvobase provides database-level isolation out of the box — each tenant gets their own database, and each database is its own `.db` file on disk with no data interleaving.
 
 ### Per-Tenant Rate Limiting
 
 Set a per-database requests-per-second limit with `--rateLimit`:
 
 ```bash
-./bin/mongoclone --rateLimit 500
+./bin/salvobase --rateLimit 500
 ```
 
 This applies to all databases. When a database exceeds the limit, requests receive a `429 Too Many Requests` style error.
 
 ### Connection-Level DB Isolation
 
-The `x-mongoclone-tenant-db` connection header locks a connection to a specific database. This prevents a tenant from issuing commands against another tenant's database even if they accidentally omit the `use db` switch. Pass it in your driver's connection options as an application metadata field.
+The `x-salvobase-tenant-db` connection header locks a connection to a specific database. This prevents a tenant from issuing commands against another tenant's database even if they accidentally omit the `use db` switch. Pass it in your driver's connection options as an application metadata field.
 
 ### Tenant Provisioning Pattern
 
@@ -1209,7 +1209,7 @@ db.runCommand({ connectionStatus: 1 })
 
 ### 10.1 Prometheus Metrics
 
-MongClone exposes Prometheus metrics at `http://<host>:<httpPort>/metrics`. No separate exporter needed.
+Salvobase exposes Prometheus metrics at `http://<host>:<httpPort>/metrics`. No separate exporter needed.
 
 ```bash
 curl http://localhost:27080/metrics
@@ -1219,20 +1219,20 @@ Key metrics exposed:
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `mongoclone_connections_current` | Gauge | Current open connections |
-| `mongoclone_connections_total` | Counter | Total connections ever created |
-| `mongoclone_ops_total` | Counter | Operations by type (insert/query/update/delete/getmore/command) |
-| `mongoclone_op_duration_seconds` | Histogram | Operation latency by command |
-| `mongoclone_documents_total` | Gauge | Document count per collection |
-| `mongoclone_storage_bytes` | Gauge | Storage size per database |
-| `mongoclone_cursor_count` | Gauge | Open server-side cursors |
-| `mongoclone_auth_failures_total` | Counter | Authentication failure count |
+| `salvobase_connections_current` | Gauge | Current open connections |
+| `salvobase_connections_total` | Counter | Total connections ever created |
+| `salvobase_ops_total` | Counter | Operations by type (insert/query/update/delete/getmore/command) |
+| `salvobase_op_duration_seconds` | Histogram | Operation latency by command |
+| `salvobase_documents_total` | Gauge | Document count per collection |
+| `salvobase_storage_bytes` | Gauge | Storage size per database |
+| `salvobase_cursor_count` | Gauge | Open server-side cursors |
+| `salvobase_auth_failures_total` | Counter | Authentication failure count |
 
 **Prometheus scrape config:**
 
 ```yaml
 scrape_configs:
-  - job_name: 'mongoclone'
+  - job_name: 'salvobase'
     static_configs:
       - targets: ['localhost:27080']
     metrics_path: /metrics
@@ -1267,7 +1267,7 @@ Returns uptime, connection stats, operation counters, and memory usage.
 
 ## 11. REST API
 
-MongClone exposes an optional HTTP/JSON REST API alongside the wire protocol on the same `httpPort`. This is useful for quick testing, shell scripts, and environments where a MongoDB driver is inconvenient.
+Salvobase exposes an optional HTTP/JSON REST API alongside the wire protocol on the same `httpPort`. This is useful for quick testing, shell scripts, and environments where a MongoDB driver is inconvenient.
 
 **Base URL:** `http://<host>:<httpPort>/api/v1/`
 
@@ -1323,26 +1323,26 @@ curl -X POST http://localhost:27080/api/v1/mydb/_cmd \
 
 ### 12.1 systemd Service
 
-Create `/etc/systemd/system/mongoclone.service`:
+Create `/etc/systemd/system/salvobase.service`:
 
 ```ini
 [Unit]
-Description=MongClone document database
+Description=Salvobase document database
 After=network.target
-Documentation=https://github.com/inder/mongoclone
+Documentation=https://github.com/inder/salvobase
 
 [Service]
 Type=simple
-User=mongoclone
-Group=mongoclone
-ExecStart=/usr/local/bin/mongoclone \
+User=salvobase
+Group=salvobase
+ExecStart=/usr/local/bin/salvobase \
     --port 27017 \
     --httpPort 27080 \
     --bind_ip 127.0.0.1 \
-    --datadir /var/lib/mongoclone \
+    --datadir /var/lib/salvobase \
     --logLevel info \
     --logFormat json \
-    --auditLog /var/log/mongoclone/audit.log
+    --auditLog /var/log/salvobase/audit.log
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
@@ -1355,7 +1355,7 @@ LimitNPROC=32000
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectSystem=full
-ReadWritePaths=/var/lib/mongoclone /var/log/mongoclone
+ReadWritePaths=/var/lib/salvobase /var/log/salvobase
 
 [Install]
 WantedBy=multi-user.target
@@ -1363,18 +1363,18 @@ WantedBy=multi-user.target
 
 ```bash
 # Create user and directories
-useradd --system --no-create-home --shell /bin/false mongoclone
-mkdir -p /var/lib/mongoclone /var/log/mongoclone
-chown mongoclone:mongoclone /var/lib/mongoclone /var/log/mongoclone
+useradd --system --no-create-home --shell /bin/false salvobase
+mkdir -p /var/lib/salvobase /var/log/salvobase
+chown salvobase:salvobase /var/lib/salvobase /var/log/salvobase
 
 # Install binary
-install -o root -g root -m 0755 ./bin/mongoclone /usr/local/bin/mongoclone
+install -o root -g root -m 0755 ./bin/salvobase /usr/local/bin/salvobase
 
 # Enable and start
 systemctl daemon-reload
-systemctl enable mongoclone
-systemctl start mongoclone
-systemctl status mongoclone
+systemctl enable salvobase
+systemctl start salvobase
+systemctl status salvobase
 ```
 
 ### 12.2 Resource Limits
@@ -1388,10 +1388,10 @@ systemctl status mongoclone
 
 ### 12.3 Data Directory
 
-MongClone creates one `.db` file per database in `dataDir`:
+Salvobase creates one `.db` file per database in `dataDir`:
 
 ```
-/var/lib/mongoclone/
+/var/lib/salvobase/
   admin.db          # admin database (users, auth)
   myapp.db          # your application database
   tenant_acme.db    # tenant database
@@ -1402,19 +1402,19 @@ Permissions: the process user needs read+write on the directory. Do not place th
 
 ### 12.4 Backup Strategy
 
-MongClone databases are bbolt files. To take a consistent backup:
+Salvobase databases are bbolt files. To take a consistent backup:
 
 ```bash
 # 1. The simplest approach — copy the .db files
 #    bbolt supports concurrent reads while the server is running.
 #    The copy is consistent as long as you copy each file atomically (cp does this).
 
-cp -a /var/lib/mongoclone/ /backup/mongoclone-$(date +%Y%m%d-%H%M%S)/
+cp -a /var/lib/salvobase/ /backup/salvobase-$(date +%Y%m%d-%H%M%S)/
 
 # 2. For point-in-time backups, stop writes first (optional but ensures full consistency):
-kill -SIGTERM $(pidof mongoclone)   # graceful shutdown flushes all pages
-cp -a /var/lib/mongoclone/ /backup/mongoclone-$(date +%Y%m%d-%H%M%S)/
-systemctl start mongoclone
+kill -SIGTERM $(pidof salvobase)   # graceful shutdown flushes all pages
+cp -a /var/lib/salvobase/ /backup/salvobase-$(date +%Y%m%d-%H%M%S)/
+systemctl start salvobase
 ```
 
 > bbolt uses copy-on-write transactions, so a file copy taken during normal operation captures the last fully committed transaction. This is safe for read operations; for a fully consistent multi-database backup, a brief shutdown is recommended.
@@ -1422,9 +1422,9 @@ systemctl start mongoclone
 **Restore:**
 
 ```bash
-systemctl stop mongoclone
-cp -a /backup/mongoclone-20240101-120000/ /var/lib/mongoclone/
-systemctl start mongoclone
+systemctl stop salvobase
+cp -a /backup/salvobase-20240101-120000/ /var/lib/salvobase/
+systemctl start salvobase
 ```
 
 ### 12.5 TLS
@@ -1436,14 +1436,14 @@ openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt \
   -days 365 -nodes -subj "/CN=localhost"
 ```
 
-Start MongClone with TLS:
+Start Salvobase with TLS:
 
 ```bash
-./bin/mongoclone \
+./bin/salvobase \
   --port 27017 \
   --tls \
-  --tlsCert /etc/mongoclone/tls/server.crt \
-  --tlsKey /etc/mongoclone/tls/server.key
+  --tlsCert /etc/salvobase/tls/server.crt \
+  --tlsKey /etc/salvobase/tls/server.key
 ```
 
 Connect with TLS:
@@ -1496,22 +1496,22 @@ In production, use a certificate from a trusted CA and remove `InsecureSkipVerif
 
 ### Wire Protocol Version
 
-MongClone advertises `maxWireVersion: 21` (MongoDB 7.0). Any driver that supports MongoDB 3.6 or later will work correctly.
+Salvobase advertises `maxWireVersion: 21` (MongoDB 7.0). Any driver that supports MongoDB 3.6 or later will work correctly.
 
 ---
 
 ## 14. Improvements Over MongoDB Community
 
-MongClone ships with nine capabilities that require MongoDB Enterprise or third-party add-ons with MongoDB Community:
+Salvobase ships with nine capabilities that require MongoDB Enterprise or third-party add-ons with MongoDB Community:
 
 ### 1. Native Prometheus Metrics
 
 No exporter, no sidecar. `GET /metrics` is live the moment the server starts.
 
 ```bash
-curl http://localhost:27080/metrics | grep mongoclone_ops
-# mongoclone_ops_total{type="insert"} 1234
-# mongoclone_ops_total{type="query"} 5678
+curl http://localhost:27080/metrics | grep salvobase_ops
+# salvobase_ops_total{type="insert"} 1234
+# salvobase_ops_total{type="query"} 5678
 ```
 
 Plug straight into any Prometheus + Grafana stack. Histograms for per-command latency are included.
@@ -1530,7 +1530,7 @@ Built-in request-rate throttling per database. No API gateway or proxy needed. C
 
 ### 4. Built-in Audit Logging
 
-Set `--auditLog /var/log/mongoclone/audit.log` and every authentication event, user management operation, and DDL command is written as a structured JSON log line. MongoDB audit logging requires Enterprise.
+Set `--auditLog /var/log/salvobase/audit.log` and every authentication event, user management operation, and DDL command is written as a structured JSON log line. MongoDB audit logging requires Enterprise.
 
 Example audit log entry:
 
@@ -1553,7 +1553,7 @@ Configure with `--compression snappy|zstd|none`.
 
 ### 6. Better explain Output
 
-`explain()` includes cost estimates and per-stage timing. MongoDB Community's explain is notoriously difficult to interpret; MongClone annotates each stage with:
+`explain()` includes cost estimates and per-stage timing. MongoDB Community's explain is notoriously difficult to interpret; Salvobase annotates each stage with:
 
 - `docsExamined` — documents scanned
 - `keysExamined` — index keys examined
@@ -1570,12 +1570,12 @@ The TTL cleanup goroutine runs every second, not every 60 seconds. If you set `e
 
 ### 8. Connection-Level DB Isolation
 
-Pass `x-mongoclone-tenant-db: <dbname>` as an application metadata header in your driver's connection string and the connection is locked to that database. Prevents accidental cross-tenant data access without additional proxy infrastructure.
+Pass `x-salvobase-tenant-db: <dbname>` as an application metadata header in your driver's connection string and the connection is locked to that database. Prevents accidental cross-tenant data access without additional proxy infrastructure.
 
 ### 9. Zero-Downtime Config Reload
 
 ```bash
-kill -HUP $(pidof mongoclone)
+kill -HUP $(pidof salvobase)
 ```
 
 Reloads configuration (log levels, rate limits, etc.) without restarting or dropping connections. MongoDB requires a restart to change most server parameters.
@@ -1590,7 +1590,7 @@ Reloads configuration (log levels, rate limits, etc.) without restarting or drop
 Error: connect ECONNREFUSED 127.0.0.1:27017
 ```
 
-- Is the server running? `systemctl status mongoclone` or `ps aux | grep mongoclone`
+- Is the server running? `systemctl status salvobase` or `ps aux | grep salvobase`
 - Is it bound to the right interface? Check `--bind_ip`. If set to `127.0.0.1`, you can only connect from localhost.
 - Is the port correct? Default is 27017.
 
@@ -1602,12 +1602,12 @@ MongoServerError: Authentication failed.
 
 - Verify you're connecting to the right `authSource` (usually `admin`)
 - Check the username and password — they are case-sensitive
-- Make sure the user was created before connecting: `./bin/mongoclone admin create-user <user> <pass>`
+- Make sure the user was created before connecting: `./bin/salvobase admin create-user <user> <pass>`
 - If you started with `--noauth` and then enabled auth, users created during noauth mode may not have SCRAM credentials
 
 ### `$where is not supported`
 
-MongClone intentionally rejects `$where` for security. Replace JavaScript predicates with the appropriate query operators:
+Salvobase intentionally rejects `$where` for security. Replace JavaScript predicates with the appropriate query operators:
 
 ```javascript
 // Instead of: db.users.find({ $where: "this.age > 25" })
@@ -1641,7 +1641,7 @@ failed to create server: failed to open database: timeout
 ```
 
 - Another process (possibly a crashed instance) holds a lock on the `.db` file
-- bbolt uses OS-level file locks. Check: `lsof /var/lib/mongoclone/*.db`
+- bbolt uses OS-level file locks. Check: `lsof /var/lib/salvobase/*.db`
 - Kill the stale process or remove the lock if the process is dead
 
 ### TLS Handshake Failed
@@ -1654,10 +1654,10 @@ In development, add `tlsAllowInvalidCertificates=true` to your connection URI. I
 
 ### Log Analysis
 
-MongClone logs are structured JSON (default) or human-readable console format. Pipe to `jq` for easy parsing:
+Salvobase logs are structured JSON (default) or human-readable console format. Pipe to `jq` for easy parsing:
 
 ```bash
-journalctl -u mongoclone -f | jq 'select(.level == "error")'
+journalctl -u salvobase -f | jq 'select(.level == "error")'
 ```
 
 Common log fields: `level`, `ts`, `msg`, `connID`, `db`, `cmd`, `durationMs`, `error`.

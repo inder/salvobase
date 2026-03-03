@@ -1,4 +1,4 @@
-module github.com/inder/mongoclone/tests
+module github.com/inder/salvobase/tests
 
 go 1.22.0
 

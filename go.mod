@@ -1,4 +1,4 @@
-module github.com/inder/mongoclone
+module github.com/inder/salvobase
 
 go 1.22.0
 

@@ -1,6 +1,6 @@
 //go:build integration
 
-// Package tests contains integration tests that run against a live MongClone server.
+// Package tests contains integration tests that run against a live Salvobase server.
 // These tests use the official MongoDB Go driver to verify wire protocol compatibility.
 //
 // Run with:

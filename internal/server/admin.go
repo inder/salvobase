@@ -5,12 +5,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/inder/mongoclone/internal/auth"
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/auth"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // CreateAdminUser creates an admin user directly in the storage layer.
-// Used by the "mongoclone admin create-user" CLI subcommand.
+// Used by the "salvobase admin create-user" CLI subcommand.
 // This bypasses the running server and writes directly to the database files.
 func CreateAdminUser(dataDir, username, password string) error {
 	engine, err := storage.NewBBoltEngine(dataDir, "none", true)

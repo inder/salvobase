@@ -8,7 +8,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/inder/mongoclone/internal/query"
+	"github.com/inder/salvobase/internal/query"
 )
 
 // bboltCollection is a handle to a single collection backed by bbolt.

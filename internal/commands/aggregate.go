@@ -5,8 +5,8 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/inder/mongoclone/internal/aggregation"
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/aggregation"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // handleAggregate handles the "aggregate" command.

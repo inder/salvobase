@@ -7,8 +7,8 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/inder/mongoclone/internal/storage"
-	"github.com/inder/mongoclone/internal/wire"
+	"github.com/inder/salvobase/internal/storage"
+	"github.com/inder/salvobase/internal/wire"
 )
 
 // serverStartTime records when this process started.
@@ -58,8 +58,8 @@ func handleHello(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 // handleBuildInfo handles the "buildInfo"/"buildinfo" command.
 func handleBuildInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return marshalResponse(bson.D{
-		{"version", "7.0.0-mongoclone"},
-		{"gitVersion", "mongoclone-dev"},
+		{"version", "7.0.0-salvobase"},
+		{"gitVersion", "salvobase-dev"},
 		{"modules", bson.A{}},
 		{"allocator", "system"},
 		{"javascriptEngine", "none"},
@@ -90,8 +90,8 @@ func handleServerStatus(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 
 	return marshalResponse(bson.D{
 		{"host", stats.Host},
-		{"version", "7.0.0-mongoclone"},
-		{"process", "mongoclone"},
+		{"version", "7.0.0-salvobase"},
+		{"process", "salvobase"},
 		{"pid", stats.PID},
 		{"uptime", uptime},
 		{"uptimeMillis", uptime * 1000},
@@ -278,8 +278,8 @@ func handleExplain(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 			{"rejectedPlans", bson.A{}},
 		}},
 		{"serverInfo", bson.D{
-			{"host", "mongoclone"},
-			{"version", "7.0.0-mongoclone"},
+			{"host", "salvobase"},
+			{"version", "7.0.0-salvobase"},
 		}},
 		{"command", innerCmd},
 		{"ok", float64(1)},

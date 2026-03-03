@@ -12,50 +12,50 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.uber.org/zap"
 
-	"github.com/inder/mongoclone/internal/commands"
+	"github.com/inder/salvobase/internal/commands"
 )
 
 // ─── Prometheus metrics ───────────────────────────────────────────────────────
 
 var (
 	metricConnections = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "mongoclone_connections_active",
+		Name: "salvobase_connections_active",
 		Help: "Number of active client connections",
 	})
 
 	metricOpsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "mongoclone_operations_total",
+		Name: "salvobase_operations_total",
 		Help: "Total number of operations by type",
 	}, []string{"op"})
 
 	metricCommandDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "mongoclone_command_duration_seconds",
+		Name:    "salvobase_command_duration_seconds",
 		Help:    "Command execution duration",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"command"})
 
 	metricDocumentsInserted = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "mongoclone_documents_inserted_total",
+		Name: "salvobase_documents_inserted_total",
 		Help: "Documents inserted",
 	}, []string{"db", "collection"})
 
 	metricDocumentsQueried = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "mongoclone_documents_queried_total",
+		Name: "salvobase_documents_queried_total",
 		Help: "Documents returned by queries",
 	}, []string{"db", "collection"})
 
 	metricErrors = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "mongoclone_errors_total",
+		Name: "salvobase_errors_total",
 		Help: "Total command errors by type",
 	}, []string{"command"})
 
 	metricBytesSent = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "mongoclone_bytes_sent_total",
+		Name: "salvobase_bytes_sent_total",
 		Help: "Total bytes sent to clients",
 	})
 
 	metricBytesReceived = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "mongoclone_bytes_received_total",
+		Name: "salvobase_bytes_received_total",
 		Help: "Total bytes received from clients",
 	})
 )

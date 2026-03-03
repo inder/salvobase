@@ -8,7 +8,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // applyStage executes a single aggregation pipeline stage against docs.

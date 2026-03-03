@@ -12,8 +12,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.uber.org/zap"
 
-	"github.com/inder/mongoclone/internal/commands"
-	"github.com/inder/mongoclone/internal/wire"
+	"github.com/inder/salvobase/internal/commands"
+	"github.com/inder/salvobase/internal/wire"
 )
 
 // requestIDCounter generates monotonically increasing request IDs for responses.

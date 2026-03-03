@@ -1,9 +1,9 @@
-# MongClone Developer Guide
+# Salvobase Developer Guide
 
 > This guide is for contributors, embedders, and anyone who wants to understand
 > the internals, extend the system, or plug in a custom storage backend.
 
-**Module:** `github.com/inder/mongoclone`
+**Module:** `github.com/inder/salvobase`
 **Go version:** 1.22+
 **License:** Apache 2.0
 
@@ -55,7 +55,7 @@
 
 ## 1. Architecture Overview
 
-MongClone is structured as a set of independent internal packages that communicate through well-defined interfaces. The server binary (`cmd/mongod`) wires them together.
+Salvobase is structured as a set of independent internal packages that communicate through well-defined interfaces. The server binary (`cmd/mongod`) wires them together.
 
 ### 1.1 Package Layout
 
@@ -187,15 +187,15 @@ A complete round trip from client to storage and back:
 ### Clone and Build
 
 ```bash
-git clone https://github.com/inder/mongoclone.git
-cd mongoclone
+git clone https://github.com/inder/salvobase.git
+cd salvobase
 
 # Download dependencies
 go mod download
 
 # Build the binary
 make build
-# Outputs: ./bin/mongoclone
+# Outputs: ./bin/salvobase
 
 # Run in dev mode (no auth, debug logging, ./data directory)
 make dev
@@ -240,7 +240,7 @@ The binary version and build time are injected at build time via ldflags:
 ```bash
 go build \
   -ldflags "-X main.version=$(git describe --tags --always) -X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  -o bin/mongoclone ./cmd/mongod
+  -o bin/salvobase ./cmd/mongod
 ```
 
 These values appear in `buildInfo` command responses and server startup logs.
@@ -643,7 +643,7 @@ bbolt is an embedded, pure-Go B-tree key/value store (a fork of BoltDB). It prov
 - **Memory-mapped I/O** — the OS page cache handles buffering
 - **Nested buckets** — arbitrary hierarchy within a single file
 
-MongClone creates **one bbolt file per database**:
+Salvobase creates **one bbolt file per database**:
 
 ```
 <dataDir>/admin.db
@@ -773,7 +773,7 @@ DocumentSeq section (kind=1):
 
 This is more efficient than embedding all documents in the Body BSON because it avoids a double-copy through the BSON encoder.
 
-**MongClone's handling:**
+**Salvobase's handling:**
 
 `readOpMsg` populates `OpMsgMessage.Body` from the first kind-0 section and appends kind-1 sections to `OpMsgMessage.Sequences`. The command dispatcher accesses them as:
 
@@ -840,9 +840,9 @@ Offset  Size  Field
 
 When the `MsgFlagChecksumPresent` bit (bit 0) is set in OP_MSG `flagBits`, the last 4 bytes of the message are a CRC-32C checksum of the preceding bytes.
 
-MongClone **reads but does not validate** the checksum (the MongoDB spec calls it optional). The parser accounts for the checksum by reducing the available section bytes by 4, then drains the 4 CRC bytes from the underlying reader to keep the connection synchronized.
+Salvobase **reads but does not validate** the checksum (the MongoDB spec calls it optional). The parser accounts for the checksum by reducing the available section bytes by 4, then drains the 4 CRC bytes from the underlying reader to keep the connection synchronized.
 
-Responses from MongClone set `flagBits = 0` (no checksum). This is valid and accepted by all drivers.
+Responses from Salvobase set `flagBits = 0` (no checksum). This is valid and accepted by all drivers.
 
 ---
 
@@ -912,7 +912,7 @@ Missing fields return `bson.RawValue{Type: bson.TypeUndefined}`.
 
 ## 7. BSON Handling
 
-MongClone uses `go.mongodb.org/mongo-driver/v2/bson` throughout.
+Salvobase uses `go.mongodb.org/mongo-driver/v2/bson` throughout.
 
 ### 7.1 `bson.Raw` vs `bson.D`
 
@@ -1079,8 +1079,8 @@ package commands_test
 import (
     "testing"
     "go.mongodb.org/mongo-driver/v2/bson"
-    "github.com/inder/mongoclone/internal/commands"
-    "github.com/inder/mongoclone/internal/storage"
+    "github.com/inder/salvobase/internal/commands"
+    "github.com/inder/salvobase/internal/storage"
 )
 
 func TestHandleCopyDB(t *testing.T) {
@@ -1350,7 +1350,7 @@ package query_test
 
 import (
     "testing"
-    "github.com/inder/mongoclone/internal/query"
+    "github.com/inder/salvobase/internal/query"
     "go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -1385,7 +1385,7 @@ package wire_test
 import (
     "bytes"
     "testing"
-    "github.com/inder/mongoclone/internal/wire"
+    "github.com/inder/salvobase/internal/wire"
     "go.mongodb.org/mongo-driver/v2/bson"
 )
 
@@ -1423,7 +1423,7 @@ go test -bench=. -benchmem ./internal/query/...
 
 ### 12.2 Integration Tests
 
-Integration tests are tagged with `//go:build integration` and require a running MongClone instance. They use the official Go MongoDB driver to exercise the full stack.
+Integration tests are tagged with `//go:build integration` and require a running Salvobase instance. They use the official Go MongoDB driver to exercise the full stack.
 
 **Setup:**
 
@@ -1478,7 +1478,7 @@ func TestInsertAndFind(t *testing.T) {
 **Run integration tests:**
 
 ```bash
-# Start MongClone in the background
+# Start Salvobase in the background
 make dev &
 sleep 1
 
@@ -1523,7 +1523,7 @@ Index scans are significantly faster than collection scans for selective queries
 - The query filter references the first field of a compound index
 - A `hint` is specified
 
-Without index hints, MongClone currently uses the first applicable index it finds. There is no cost-based optimizer — if you need a specific index, use `.hint()`.
+Without index hints, Salvobase currently uses the first applicable index it finds. There is no cost-based optimizer — if you need a specific index, use `.hint()`.
 
 ### Connection Overhead
 
@@ -1543,14 +1543,14 @@ Each connection spawns a goroutine (~2KB stack initially, grows on demand). With
 
 ### Why `$where` is Disabled
 
-`$where` executes arbitrary JavaScript via an interpreter. MongClone intentionally returns:
+`$where` executes arbitrary JavaScript via an interpreter. Salvobase intentionally returns:
 
 ```
 {"ok": 0, "errmsg": "$where is not supported for security reasons", "code": 2}
 ```
 
 Reasons:
-1. MongClone has no embedded JavaScript engine
+1. Salvobase has no embedded JavaScript engine
 2. `$where` has been a source of injection vulnerabilities historically
 3. Every legitimate `$where` use case can be replaced with native operators
 
@@ -1564,7 +1564,7 @@ If you're migrating from MongoDB and have `$where` in your queries, convert them
 
 ### Audit Logging
 
-When `auditLog` is configured, MongClone writes structured JSON records for:
+When `auditLog` is configured, Salvobase writes structured JSON records for:
 - Authentication attempts (success and failure)
 - `createUser`, `updateUser`, `dropUser`
 - `createCollection`, `drop`, `dropDatabase`

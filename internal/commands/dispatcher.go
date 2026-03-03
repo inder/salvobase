@@ -10,8 +10,8 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.uber.org/zap"
 
-	"github.com/inder/mongoclone/internal/auth"
-	"github.com/inder/mongoclone/internal/storage"
+	"github.com/inder/salvobase/internal/auth"
+	"github.com/inder/salvobase/internal/storage"
 )
 
 // Context is the execution context for a command.
