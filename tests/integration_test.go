@@ -1061,6 +1061,42 @@ func TestAggregateCondExpr(t *testing.T) {
 	}
 }
 
+// ─── $nor and $not filter operators ──────────────────────────────────────────
+
+func TestNorAndNotFilters(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{"n", 1}, {"active", true}},
+		bson.D{{"n", 2}, {"active", false}},
+		bson.D{{"n", 3}, {"active", true}},
+		bson.D{{"n", 4}}, // active missing
+	})
+
+	// $nor: docs where n is NOT 1 AND NOT 3 → docs 2 and 4.
+	count, err := coll.CountDocuments(ctx, bson.D{{"$nor", bson.A{
+		bson.D{{"n", 1}},
+		bson.D{{"n", 3}},
+	}}})
+	if err != nil {
+		t.Fatalf("$nor: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("$nor: expected 2, got %d", count)
+	}
+
+	// $not: docs where active is NOT true → docs 2 (false) and 4 (missing).
+	count, err = coll.CountDocuments(ctx, bson.D{{"active", bson.D{{"$not", bson.D{{"$eq", true}}}}}})
+	if err != nil {
+		t.Fatalf("$not: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("$not: expected 2, got %d", count)
+	}
+}
+
 // ─── Dot-notation and nested document queries ────────────────────────────────
 
 func TestDotNotationFilter(t *testing.T) {
