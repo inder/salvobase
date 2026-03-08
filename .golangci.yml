@@ -20,8 +20,6 @@ linters:
 linters-settings:
   errcheck:
     check-type-assertions: true
-  govet:
-    check-shadowing: false
   misspell:
     locale: US
 

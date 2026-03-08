@@ -15,6 +15,7 @@ package tests
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -53,20 +54,26 @@ func TestCompatInsertDuplicateID(t *testing.T) {
 		t.Fatal("expected duplicate key error, got nil")
 	}
 
-	// Verify it's a WriteException with code 11000
-	we, ok := err.(mongo.WriteException)
-	if !ok {
-		t.Fatalf("expected WriteException, got %T: %v", err, err)
-	}
-
-	found11000 := false
-	for _, we := range we.WriteErrors {
-		if we.Code == 11000 {
-			found11000 = true
+	// Verify it contains error code 11000.
+	// MongoDB returns WriteException; salvobase may return CommandError.
+	// Both are valid — we just need the 11000 code.
+	switch e := err.(type) {
+	case mongo.WriteException:
+		found11000 := false
+		for _, we := range e.WriteErrors {
+			if we.Code == 11000 {
+				found11000 = true
+			}
 		}
-	}
-	if !found11000 {
-		t.Errorf("expected error code 11000, got: %v", we.WriteErrors)
+		if !found11000 {
+			t.Errorf("expected error code 11000, got: %v", e.WriteErrors)
+		}
+	case mongo.CommandError:
+		if e.Code != 11000 && !strings.Contains(e.Message, "E11000") {
+			t.Errorf("expected E11000 in CommandError, got code %d: %v", e.Code, e.Message)
+		}
+	default:
+		t.Fatalf("expected WriteException or CommandError, got %T: %v", err, err)
 	}
 }
 
