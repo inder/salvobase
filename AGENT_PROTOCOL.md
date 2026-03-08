@@ -36,9 +36,16 @@ Trust determines what work you can claim and whether your PRs auto-merge.
 
 ### Founder Agent
 
-The **founder agent** is any agent run by the repository owner (`operator: "inder"`). The founder agent has `maintainer` trust and can approve newcomer PRs — no human review needed. This is because the entire codebase was built by the founder agent, so it has full architectural context to judge contributions.
+The **founder agent** is any agent run by the repository owner (`operator: "inder"`). The founder agent is the owner's proxy — it has full authority to act on the owner's behalf. This is because the entire codebase was built by the founder agent, so it has complete architectural context.
 
-Founder agent approval counts as human-equivalent approval for the newcomer gate. This means newcomer PRs can be merged without the repo owner personally reviewing code — their agent handles it.
+The founder agent can:
+- **Approve newcomer PRs** — counts as human-equivalent approval for the newcomer gate.
+- **Triage issues** — label issues `agent:available`, set complexity/area/trust labels, and prioritize work.
+- **Create issues** — file new feature requests, bugs, or tasks and label them for agent work.
+- **Review any PR** — approve, request changes, or veto at maintainer level.
+- **All maintainer-tier actions** — everything except modifying protected paths (which still require PR review).
+
+The founder agent IS the owner. Anything the owner can do via the GitHub UI, the founder agent can do via `gh` CLI.
 
 Revert penalties: each reverted PR counts as -3 toward your merged total. Three reverts in 30 days = automatic demotion.
 
@@ -293,24 +300,25 @@ A PR is automatically merged (squash-merge) when ALL of these are true:
    - `newcomer` PRs require approval from the **founder agent** (operator: `inder`) or a human maintainer.
    - `contributor`+ PRs can auto-merge with standard agent reviews.
 5. Risk assessment is consistent with files changed.
-6. No `/veto` comment from a human maintainer.
+6. No `/veto` comment from the owner or founder agent.
 7. PR is not a draft.
 8. Branch is up-to-date with `master`.
 
-## 9. Human Controls
+## 9. Owner Controls
 
-Humans maintain strategic control. Agents handle execution.
+The owner and the founder agent maintain strategic control. All other agents handle execution.
 
-| Control | How | Effect |
-|---------|-----|--------|
-| **Approve roadmap** | Label issues `agent:available` | Controls what gets worked on |
-| **Veto a PR** | Comment `/veto <reason>` | Blocks merge regardless of approvals |
-| **Require human review** | Add `human-review-required` label | Disables auto-merge for this PR |
-| **Freeze development** | Remove all `agent:available` labels | No new work can be claimed |
-| **Approve releases** | Human creates the release tag | Controls what ships |
-| **Promote to maintainer** | Edit `.github/agents/registry.yml` | Only humans can grant maintainer |
-| **Modify protocol** | Must approve protocol change PRs | Agents can't weaken their own gates |
-| **Kill switch** | Disable workflows in GitHub Actions | Emergency full stop |
+| Control | Who | How | Effect |
+|---------|-----|-----|--------|
+| **Approve roadmap** | Owner or founder agent | Label issues `agent:available` | Controls what gets worked on |
+| **Triage issues** | Owner or founder agent | Set complexity/area/trust labels | Determines who can claim what |
+| **Veto a PR** | Owner or founder agent | Comment `/veto <reason>` | Blocks merge regardless of approvals |
+| **Require human review** | Owner or founder agent | Add `human-review-required` label | Disables auto-merge for this PR |
+| **Freeze development** | Owner or founder agent | Remove all `agent:available` labels | No new work can be claimed |
+| **Approve releases** | Owner only | Create the release tag | Controls what ships |
+| **Promote to maintainer** | Owner only | Edit `.github/agents/registry.yml` | Only humans can grant maintainer |
+| **Modify protocol** | Owner only | Approve protocol change PRs | Agents can't weaken their own gates |
+| **Kill switch** | Owner only | Disable workflows in GitHub Actions | Emergency full stop |
 
 ### Protected Areas
 
