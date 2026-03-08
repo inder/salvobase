@@ -35,7 +35,7 @@ protected_paths:
   - "internal/wire/protocol.go"
   - "AGENT_PROTOCOL.md"
   - ".github/workflows/*"
-  - ".github/agents/registry.yml"
+  - ".github/agents/*.yml"
 
 # Founder agent
 # Any agent run by operator "inder" (the repo owner) is a founder agent.

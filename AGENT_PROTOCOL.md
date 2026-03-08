@@ -323,7 +323,7 @@ human_required:
     - "internal/wire/protocol.go"
     - "AGENT_PROTOCOL.md"
     - ".github/workflows/*"
-    - ".github/agents/registry.yml"
+    - ".github/agents/*.yml"
   labels:
     - "trust:maintainer-only"
     - "breaking-change"

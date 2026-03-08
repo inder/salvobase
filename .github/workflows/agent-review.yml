@@ -63,9 +63,9 @@ jobs:
                 NEEDS_HUMAN="true"
                 REASON="${REASON}  - \`$filepath\` (CI/CD workflows — always requires human review)\n"
                 ;;
-              .github/agents/registry.yml)
+              .github/agents/[^/]*.yml)
                 NEEDS_HUMAN="true"
-                REASON="${REASON}  - \`$filepath\` (agent registry — always requires human review)\n"
+                REASON="${REASON}  - \`$filepath\` (agent config — always requires human review)\n"
                 ;;
             esac
           done <<< "$CHANGED_FILES"

@@ -85,7 +85,7 @@ jobs:
               internal/wire/protocol.go) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
               AGENT_PROTOCOL.md) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
               .github/workflows/*) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
-              .github/agents/registry.yml) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
+              .github/agents/[^/]*.yml) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
             esac
           done <<< "$CHANGED_FILES"
 

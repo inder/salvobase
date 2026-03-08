@@ -1,0 +1,442 @@
+# MongoDB Feature Spec Reference for Salvobase
+#
+# This file defines the MongoDB features that salvobase SHOULD implement.
+# The spec-gap-analyzer workflow compares this against the actual codebase
+# and auto-creates issues for any gaps.
+#
+# Categories:
+#   - commands: Wire protocol commands (registered in dispatcher.go)
+#   - query_operators: Query filter operators (used in filter.go)
+#   - update_operators: Update operators (used in update.go)
+#   - aggregation_stages: Pipeline stages (used in stages.go)
+#
+# Future: aggregation_expressions (see issue #25 for tracking)
+#
+# Each entry has:
+#   name: The operator/command name (as it appears in code)
+#   area: Which salvobase area this maps to
+#   complexity: xs/s/m/l/xl
+#   trust: newcomer-ok / contributor+ / trusted+ / maintainer-only
+#   priority: critical / high / medium / low
+#   mongo_doc: MongoDB documentation URL
+#   notes: Why this matters or special considerations
+#
+# Exclusions (intentionally not in this spec):
+#   - Replication commands (replSetInitiate, etc.) — single-node design
+#   - Sharding commands (enableSharding, etc.) — not in scope
+#   - $where (security risk, intentionally blocked)
+#   - mapReduce (deprecated in MongoDB 5.0+)
+#   - eval (removed in MongoDB 4.2+)
+
+version: "0.1"
+
+# How to mark something as "out of scope" vs "not yet implemented":
+# - If it's in this file: it SHOULD be implemented → gap analyzer files issues
+# - If it's NOT in this file: it's out of scope → no issue filed
+# - To permanently exclude something, don't add it here
+
+# ============================================================================
+# COMMANDS — registered in internal/commands/dispatcher.go
+# ============================================================================
+commands:
+  # --- Already implemented (for validation) ---
+  - name: "find"
+    status: "implemented"
+  - name: "insert"
+    status: "implemented"
+  - name: "update"
+    status: "implemented"
+  - name: "delete"
+    status: "implemented"
+  - name: "findandmodify"
+    status: "implemented"
+  - name: "count"
+    status: "implemented"
+  - name: "distinct"
+    status: "implemented"
+  - name: "aggregate"
+    status: "implemented"
+  - name: "create"
+    status: "implemented"
+  - name: "drop"
+    status: "implemented"
+  - name: "dropdatabase"
+    status: "implemented"
+  - name: "listdatabases"
+    status: "implemented"
+  - name: "listcollections"
+    status: "implemented"
+  - name: "renamecollection"
+    status: "implemented"
+  - name: "createindexes"
+    status: "implemented"
+  - name: "dropindexes"
+    status: "implemented"
+  - name: "listindexes"
+    status: "implemented"
+  - name: "ping"
+    status: "implemented"
+  - name: "hello"
+    status: "implemented"
+  - name: "buildinfo"
+    status: "implemented"
+  - name: "serverstatus"
+    status: "implemented"
+  - name: "dbstats"
+    status: "implemented"
+  - name: "collstats"
+    status: "implemented"
+  - name: "whatsmyuri"
+    status: "implemented"
+  - name: "getlasterror"
+    status: "implemented"
+  - name: "connectionstatus"
+    status: "implemented"
+  - name: "explain"
+    status: "implemented"
+  - name: "getmore"
+    status: "implemented"
+  - name: "killcursors"
+    status: "implemented"
+  - name: "saslstart"
+    status: "implemented"
+  - name: "saslcontinue"
+    status: "implemented"
+  - name: "createuser"
+    status: "implemented"
+  - name: "dropuser"
+    status: "implemented"
+  - name: "updateuser"
+    status: "implemented"
+  - name: "usersinfo"
+    status: "implemented"
+  - name: "grantrolestouser"
+    status: "implemented"
+  - name: "revokerolesfromuser"
+    status: "implemented"
+
+  # --- Not yet implemented (gap analyzer will file issues for these) ---
+  - name: "validate"
+    status: "missing"
+    area: "commands"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/validate/"
+    notes: "Validates a collection's data and indexes. Useful for debugging storage corruption."
+
+  - name: "compact"
+    status: "missing"
+    area: "storage"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/compact/"
+    notes: "Reclaims disk space. bbolt has its own compaction but this is the MongoDB-compatible interface."
+
+  - name: "currentop"
+    status: "missing"
+    area: "server"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/currentOp/"
+    notes: "Shows in-progress operations. Critical for debugging slow queries."
+
+  - name: "killop"
+    status: "missing"
+    area: "server"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/killOp/"
+    notes: "Terminates a running operation. Companion to currentOp."
+
+  - name: "getparameter"
+    status: "missing"
+    area: "commands"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/getParameter/"
+    notes: "Dynamic config inspection. Already tracked as issue #13."
+
+  - name: "setparameter"
+    status: "missing"
+    area: "commands"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/setParameter/"
+    notes: "Dynamic config changes. Already tracked as issue #13."
+
+  - name: "rolesinfo"
+    status: "missing"
+    area: "auth"
+    complexity: "s"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/rolesInfo/"
+    notes: "Lists role details. Completes the auth management surface."
+
+  - name: "createrole"
+    status: "missing"
+    area: "auth"
+    complexity: "m"
+    trust: "trusted+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/createRole/"
+    notes: "Custom role creation. Auth-sensitive — requires human review."
+
+  - name: "droprole"
+    status: "missing"
+    area: "auth"
+    complexity: "s"
+    trust: "trusted+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/dropRole/"
+    notes: "Custom role deletion. Auth-sensitive."
+
+  - name: "reindex"
+    status: "missing"
+    area: "storage"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/reIndex/"
+    notes: "Rebuilds all indexes on a collection. Simple with current bbolt design."
+
+  - name: "shutdown"
+    status: "missing"
+    area: "server"
+    complexity: "s"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/shutdown/"
+    notes: "Graceful server shutdown via wire protocol. Currently only signal-based."
+
+  - name: "hostinfo"
+    status: "missing"
+    area: "commands"
+    complexity: "xs"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/hostInfo/"
+    notes: "Returns system info (OS, CPU, memory). Simple diagnostic command."
+
+  - name: "getcmdlineopts"
+    status: "missing"
+    area: "commands"
+    complexity: "xs"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/getCmdLineOpts/"
+    notes: "Returns command line options. Diagnostic, easy to implement."
+
+  - name: "datasize"
+    status: "missing"
+    area: "storage"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/command/dataSize/"
+    notes: "Estimates data size for a range. Useful for capacity planning."
+
+# ============================================================================
+# QUERY OPERATORS — used in internal/query/filter.go
+# ============================================================================
+query_operators:
+  # Implemented
+  - { name: "$eq", status: "implemented" }
+  - { name: "$ne", status: "implemented" }
+  - { name: "$gt", status: "implemented" }
+  - { name: "$gte", status: "implemented" }
+  - { name: "$lt", status: "implemented" }
+  - { name: "$lte", status: "implemented" }
+  - { name: "$in", status: "implemented" }
+  - { name: "$nin", status: "implemented" }
+  - { name: "$and", status: "implemented" }
+  - { name: "$or", status: "implemented" }
+  - { name: "$nor", status: "implemented" }
+  - { name: "$not", status: "implemented" }
+  - { name: "$exists", status: "implemented" }
+  - { name: "$regex", status: "implemented" }
+  - { name: "$mod", status: "implemented" }
+
+  # Stubbed (return "not implemented")
+  - name: "$type"
+    status: "stubbed"
+    area: "query"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/query/type/"
+    notes: "Already tracked as issue #8. Returns not implemented error."
+
+  - name: "$all"
+    status: "stubbed"
+    area: "query"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/query/all/"
+    notes: "Already tracked as issue #17."
+
+  - name: "$elemMatch"
+    status: "stubbed"
+    area: "query"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/query/elemMatch/"
+    notes: "Already tracked as issue #7."
+
+  - name: "$size"
+    status: "stubbed"
+    area: "query"
+    complexity: "xs"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/query/size/"
+    notes: "Already tracked as issue #20."
+
+  - name: "$expr"
+    status: "stubbed"
+    area: "query"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "high"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/query/expr/"
+    notes: "Already tracked as issue #6."
+
+  - name: "$text"
+    status: "stubbed"
+    area: "query"
+    complexity: "l"
+    trust: "trusted+"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/query/text/"
+    notes: "Full-text search. Requires text index support first."
+
+  # Geospatial — out of scope for now (listed here for future reference)
+  # $near, $geoWithin, $geoIntersects, $nearSphere — tracked in filter.go but returns error
+
+# ============================================================================
+# UPDATE OPERATORS — used in internal/query/update.go
+# ============================================================================
+update_operators:
+  # All implemented
+  - { name: "$set", status: "implemented" }
+  - { name: "$unset", status: "implemented" }
+  - { name: "$rename", status: "implemented" }
+  - { name: "$inc", status: "implemented" }
+  - { name: "$mul", status: "implemented" }
+  - { name: "$min", status: "implemented" }
+  - { name: "$max", status: "implemented" }
+  - { name: "$currentDate", status: "implemented" }
+  - { name: "$setOnInsert", status: "implemented" }
+  - { name: "$push", status: "implemented" }
+  - { name: "$addToSet", status: "implemented" }
+  - { name: "$pop", status: "implemented" }
+  - { name: "$pull", status: "implemented" }
+  - { name: "$pullAll", status: "implemented" }
+  - { name: "$bit", status: "implemented" }
+
+# ============================================================================
+# AGGREGATION STAGES — used in internal/aggregation/stages.go
+# ============================================================================
+aggregation_stages:
+  # Implemented
+  - { name: "$match", status: "implemented" }
+  - { name: "$project", status: "implemented" }
+  - { name: "$group", status: "implemented" }
+  - { name: "$sort", status: "implemented" }
+  - { name: "$limit", status: "implemented" }
+  - { name: "$skip", status: "implemented" }
+  - { name: "$unwind", status: "implemented" }
+  - { name: "$addFields", status: "implemented" }
+  - { name: "$set", status: "implemented" }
+  - { name: "$unset", status: "implemented" }
+  - { name: "$replaceRoot", status: "implemented" }
+  - { name: "$replaceWith", status: "implemented" }
+  - { name: "$count", status: "implemented" }
+  - { name: "$out", status: "implemented" }
+  - { name: "$facet", status: "implemented" }
+  - { name: "$bucket", status: "implemented" }
+  - { name: "$bucketAuto", status: "implemented" }
+  - { name: "$sortByCount", status: "implemented" }
+  - { name: "$sample", status: "implemented" }
+  - { name: "$redact", status: "implemented" }
+
+  # Stubbed (return "not implemented")
+  - name: "$lookup"
+    status: "stubbed"
+    area: "aggregation"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "high"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/lookup/"
+    notes: "Join stage — returns not implemented error. High priority for real workloads."
+
+  - name: "$merge"
+    status: "stubbed"
+    area: "aggregation"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/merge/"
+    notes: "Merge results into collection. More flexible than $out."
+
+  - name: "$unionWith"
+    status: "stubbed"
+    area: "aggregation"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/unionWith/"
+    notes: "Already tracked as issue #18."
+
+  - name: "$densify"
+    status: "stubbed"
+    area: "aggregation"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/densify/"
+    notes: "Fill gaps in time series data."
+
+  - name: "$fill"
+    status: "stubbed"
+    area: "aggregation"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/fill/"
+    notes: "Fill missing values in documents."
+
+  - name: "$graphLookup"
+    status: "stubbed"
+    area: "aggregation"
+    complexity: "l"
+    trust: "trusted+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/graphLookup/"
+    notes: "Recursive graph traversal. Complex but useful for hierarchy queries."
+
+  - name: "$geoNear"
+    status: "stubbed"
+    area: "aggregation"
+    complexity: "l"
+    trust: "trusted+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/geoNear/"
+    notes: "Geospatial proximity sort. Requires geo index support."
+
+  - name: "$search"
+    status: "stubbed"
+    area: "aggregation"
+    complexity: "xl"
+    trust: "maintainer-only"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/atlas/atlas-search/"
+    notes: "Atlas Search equivalent. Major feature, probably needs a separate search engine."
