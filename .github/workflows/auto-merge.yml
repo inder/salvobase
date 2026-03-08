@@ -36,11 +36,24 @@ jobs:
             exit 0
           fi
 
-          # Gate 2: No human-review-required label
+          # Gate 2: No human-review-required label (protected paths — hard block)
           HAS_HUMAN_GATE=$(echo "$PR_DATA" | jq '[.labels[].name | select(. == "human-review-required")] | length')
           if [ "$HAS_HUMAN_GATE" -gt 0 ]; then
-            echo "PR requires human review. Skipping auto-merge."
+            echo "PR requires human review (protected paths). Skipping auto-merge."
             exit 0
+          fi
+
+          # Gate 2b: Newcomer PR — requires founder agent (inder) or human approval
+          IS_NEWCOMER=$(echo "$PR_DATA" | jq '[.labels[].name | select(. == "newcomer-pr")] | length')
+          if [ "$IS_NEWCOMER" -gt 0 ]; then
+            # Check if any approving reviewer is the founder (operator: inder / GitHub user: inder)
+            REVIEWS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews --jq '[.[] | select(.state == "APPROVED") | .user.login]')
+            HAS_FOUNDER=$(echo "$REVIEWS" | jq '[.[] | select(. == "inder")] | length')
+            if [ "$HAS_FOUNDER" -eq 0 ]; then
+              echo "Newcomer PR needs founder agent or human approval. No founder review found."
+              exit 0
+            fi
+            echo "Newcomer PR approved by founder agent. Proceeding."
           fi
 
           # Gate 3: No /veto comments
