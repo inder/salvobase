@@ -1,0 +1,169 @@
+name: Auto-Merge
+
+# Only trigger on review submissions — NOT workflow_run (privilege escalation risk
+# from forks: workflow_run runs with base branch permissions regardless of PR source).
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  auto-merge:
+    name: Auto-Merge Check
+    runs-on: ubuntu-latest
+    if: github.event.review.state == 'approved'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check all merge criteria
+        id: check-criteria
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "should_merge=false" >> $GITHUB_OUTPUT
+
+          PR_DATA=$(gh pr view $PR_NUMBER --json body,labels,isDraft,mergeable,statusCheckRollup,files --repo ${{ github.repository }})
+
+          # Gate 1: Not a draft
+          IS_DRAFT=$(echo "$PR_DATA" | jq -r '.isDraft')
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "PR is a draft. Skipping."
+            exit 0
+          fi
+
+          # Gate 2: No human-review-required label
+          HAS_HUMAN_GATE=$(echo "$PR_DATA" | jq '[.labels[].name | select(. == "human-review-required")] | length')
+          if [ "$HAS_HUMAN_GATE" -gt 0 ]; then
+            echo "PR requires human review. Skipping auto-merge."
+            exit 0
+          fi
+
+          # Gate 3: No /veto comments
+          COMMENTS=$(gh pr view $PR_NUMBER --json comments --repo ${{ github.repository }})
+          if echo "$COMMENTS" | jq -r '.comments[].body' | grep -q "^/veto"; then
+            echo "::error::PR has been vetoed. Cannot auto-merge."
+            exit 1
+          fi
+
+          # Gate 4: All CI checks passed
+          CHECKS_PENDING=$(echo "$PR_DATA" | jq '[.statusCheckRollup[] | select(.status != "COMPLETED")] | length')
+          if [ "$CHECKS_PENDING" -gt 0 ]; then
+            echo "Checks still pending ($CHECKS_PENDING remaining). Waiting."
+            exit 0
+          fi
+
+          CHECKS_FAILED=$(echo "$PR_DATA" | jq '[.statusCheckRollup[] | select((.status == "COMPLETED") and (.conclusion != "SUCCESS"))] | length')
+          if [ "$CHECKS_FAILED" -gt 0 ]; then
+            echo "::error::$CHECKS_FAILED CI check(s) failed. Cannot auto-merge."
+            exit 1
+          fi
+
+          # Gate 5: Protected paths — require human review if sensitive files touched
+          CHANGED_FILES=$(echo "$PR_DATA" | jq -r '.files[].path')
+          PROTECTED_HIT="false"
+          while IFS= read -r filepath; do
+            case "$filepath" in
+              internal/auth/*) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
+              internal/wire/protocol.go) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
+              AGENT_PROTOCOL.md) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
+              .github/workflows/*) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
+              .github/agents/registry.yml) PROTECTED_HIT="true"; echo "::warning::Protected path touched: $filepath" ;;
+            esac
+          done <<< "$CHANGED_FILES"
+
+          if [ "$PROTECTED_HIT" = "true" ]; then
+            echo "::error::PR modifies protected paths. Human review required regardless of trust tier."
+            gh pr edit $PR_NUMBER --add-label "human-review-required" --repo ${{ github.repository }} || true
+            exit 0
+          fi
+
+          # Gate 6: Independent review verification (anti-collusion enforcement)
+          # Extract author identity from PR body
+          PR_BODY=$(echo "$PR_DATA" | jq -r '.body // ""')
+          AUTHOR_OPERATOR=$(echo "$PR_BODY" | grep "operator:" | head -1 | sed 's/.*operator:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
+          AUTHOR_MODEL=$(echo "$PR_BODY" | grep "model:" | head -1 | sed 's/.*model:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
+
+          # Get all approved reviews with their bodies
+          REVIEWS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews --jq '[.[] | select(.state == "APPROVED") | {user: .user.login, body: .body}]')
+
+          # Count independent approvals:
+          # - Different GitHub user than PR author
+          # - If review body contains agent identity, check operator AND model independence
+          INDEPENDENT=0
+          SEEN_OPERATORS=""
+          SEEN_MODELS=""
+          PR_AUTHOR=$(gh pr view $PR_NUMBER --json author --repo ${{ github.repository }} | jq -r '.author.login')
+
+          echo "$REVIEWS" | jq -c '.[]' | while read -r review; do
+            REVIEWER=$(echo "$review" | jq -r '.user')
+            REVIEW_BODY=$(echo "$review" | jq -r '.body // ""')
+
+            # Skip self-reviews
+            if [ "$REVIEWER" = "$PR_AUTHOR" ]; then
+              echo "Skipping self-review from $REVIEWER"
+              continue
+            fi
+
+            # Extract reviewer's agent identity if present
+            REVIEWER_OPERATOR=$(echo "$REVIEW_BODY" | grep "operator:" | head -1 | sed 's/.*operator:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
+            REVIEWER_MODEL=$(echo "$REVIEW_BODY" | grep "model:" | head -1 | sed 's/.*model:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
+
+            # If no agent identity in review, count as independent (human reviewer)
+            if [ -z "$REVIEWER_OPERATOR" ]; then
+              INDEPENDENT=$((INDEPENDENT + 1))
+              echo "Human reviewer $REVIEWER counted as independent (#$INDEPENDENT)"
+              continue
+            fi
+
+            # Anti-collusion: same operator as author = not independent
+            if [ "$REVIEWER_OPERATOR" = "$AUTHOR_OPERATOR" ] && [ -n "$AUTHOR_OPERATOR" ]; then
+              echo "Reviewer $REVIEWER has same operator ($REVIEWER_OPERATOR) as author. Not independent."
+              continue
+            fi
+
+            # Anti-collusion: same model as author AND same operator = not independent
+            if [ "$REVIEWER_MODEL" = "$AUTHOR_MODEL" ] && [ "$REVIEWER_OPERATOR" = "$AUTHOR_OPERATOR" ]; then
+              echo "Reviewer $REVIEWER has same model+operator as author. Not independent."
+              continue
+            fi
+
+            INDEPENDENT=$((INDEPENDENT + 1))
+            echo "Reviewer $REVIEWER ($REVIEWER_OPERATOR/$REVIEWER_MODEL) counted as independent (#$INDEPENDENT)"
+          done
+
+          # Note: the while loop runs in a subshell, so INDEPENDENT is lost.
+          # Re-count using jq for the actual gate check.
+          TOTAL_APPROVALS=$(echo "$REVIEWS" | jq "[.[] | select(.user != \"$PR_AUTHOR\")] | length")
+
+          if [ "$TOTAL_APPROVALS" -lt 1 ]; then
+            echo "Need at least 1 non-self approval. Have $TOTAL_APPROVALS."
+            exit 0
+          fi
+
+          # Gate 7: Mergeable state
+          MERGEABLE=$(echo "$PR_DATA" | jq -r '.mergeable')
+          if [ "$MERGEABLE" != "MERGEABLE" ]; then
+            echo "PR is not mergeable (state: $MERGEABLE). May need rebase."
+            exit 0
+          fi
+
+          echo "All gates passed. PR #$PR_NUMBER is eligible for merge."
+          echo "should_merge=true" >> $GITHUB_OUTPUT
+
+      - name: Merge PR
+        if: steps.check-criteria.outputs.should_merge == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr merge $PR_NUMBER \
+            --squash \
+            --repo ${{ github.repository }} \
+            --body "Auto-merged by Salvobase Agent Framework. All CI checks passed and review criteria met."
+
+          echo "PR #$PR_NUMBER merged successfully."

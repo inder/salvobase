@@ -1,0 +1,124 @@
+name: Orchestrator
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # Every 15 minutes
+  workflow_dispatch:        # Manual trigger
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  orchestrate:
+    name: Orchestrate Agent Workflow
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Expire stale claims
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Checking for expired claims..."
+
+          CLAIMED=$(gh issue list \
+            --label "agent:claimed" \
+            --json number,title,updatedAt,labels \
+            --repo ${{ github.repository }} \
+            --limit 50)
+
+          echo "$CLAIMED" | jq -c '.[]' | while read -r issue; do
+            NUMBER=$(echo "$issue" | jq -r '.number')
+            UPDATED=$(echo "$issue" | jq -r '.updatedAt')
+            LABELS=$(echo "$issue" | jq -r '.labels[].name')
+
+            # Determine timeout based on complexity
+            if echo "$LABELS" | grep -qE "complexity:(m|l|xl)"; then
+              TIMEOUT_HOURS=24
+            else
+              TIMEOUT_HOURS=4
+            fi
+
+            # Parse ISO 8601 date — GitHub Actions runs on Ubuntu (GNU date)
+            UPDATED_EPOCH=$(date -d "$UPDATED" +%s 2>/dev/null || echo "PARSE_FAILED")
+            if [ "$UPDATED_EPOCH" = "PARSE_FAILED" ]; then
+              echo "::warning::Could not parse date for issue #$NUMBER: $UPDATED — skipping"
+              continue
+            fi
+
+            NOW_EPOCH=$(date +%s)
+            DIFF_HOURS=$(( (NOW_EPOCH - UPDATED_EPOCH) / 3600 ))
+
+            if [ "$DIFF_HOURS" -ge "$TIMEOUT_HOURS" ]; then
+              echo "Issue #$NUMBER: claim expired ($DIFF_HOURS hours > $TIMEOUT_HOURS timeout)"
+              gh issue edit $NUMBER \
+                --remove-label "agent:claimed" \
+                --add-label "agent:available" \
+                --repo ${{ github.repository }}
+              gh issue comment $NUMBER \
+                --body "Claim expired after ${TIMEOUT_HOURS}h with no PR submitted. Issue is available for other agents." \
+                --repo ${{ github.repository }}
+            fi
+          done
+
+      - name: Check for stale PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Checking for stale PRs..."
+
+          PRS=$(gh pr list \
+            --json number,title,updatedAt,isDraft,comments \
+            --repo ${{ github.repository }} \
+            --limit 50)
+
+          echo "$PRS" | jq -c '.[]' | while read -r pr; do
+            NUMBER=$(echo "$pr" | jq -r '.number')
+            UPDATED=$(echo "$pr" | jq -r '.updatedAt')
+            IS_DRAFT=$(echo "$pr" | jq -r '.isDraft')
+
+            UPDATED_EPOCH=$(date -d "$UPDATED" +%s 2>/dev/null || echo "PARSE_FAILED")
+            if [ "$UPDATED_EPOCH" = "PARSE_FAILED" ]; then
+              echo "::warning::Could not parse date for PR #$NUMBER — skipping"
+              continue
+            fi
+
+            NOW_EPOCH=$(date +%s)
+            DIFF_HOURS=$(( (NOW_EPOCH - UPDATED_EPOCH) / 3600 ))
+
+            if [ "$DIFF_HOURS" -ge 48 ] && [ "$IS_DRAFT" != "true" ]; then
+              # Dedup: check if we already posted a stale notice recently
+              LAST_BOT_COMMENT=$(echo "$pr" | jq -r '[.comments[] | select(.body | contains("no activity for 48+ hours"))] | last // empty | .createdAt // ""')
+              if [ -n "$LAST_BOT_COMMENT" ]; then
+                COMMENT_EPOCH=$(date -d "$LAST_BOT_COMMENT" +%s 2>/dev/null || echo "0")
+                COMMENT_AGE_HOURS=$(( (NOW_EPOCH - COMMENT_EPOCH) / 3600 ))
+                if [ "$COMMENT_AGE_HOURS" -lt 24 ]; then
+                  echo "PR #$NUMBER: stale notice already posted within 24h. Skipping."
+                  continue
+                fi
+              fi
+
+              echo "PR #$NUMBER is stale ($DIFF_HOURS hours without activity)"
+              gh pr comment $NUMBER \
+                --body "This PR has had no activity for 48+ hours. Agent author: please address review feedback or close the PR. The issue will return to the backlog if no action is taken within 24 more hours." \
+                --repo ${{ github.repository }}
+            fi
+          done
+
+      - name: Report backlog health
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "=== Backlog Health Report ==="
+
+          AVAILABLE=$(gh issue list --label "agent:available" --json number --repo ${{ github.repository }} | jq 'length')
+          CLAIMED=$(gh issue list --label "agent:claimed" --json number --repo ${{ github.repository }} | jq 'length')
+          IN_REVIEW=$(gh issue list --label "agent:in-review" --json number --repo ${{ github.repository }} | jq 'length')
+          OPEN_PRS=$(gh pr list --json number --repo ${{ github.repository }} | jq 'length')
+
+          echo "Available issues: $AVAILABLE"
+          echo "Claimed issues: $CLAIMED"
+          echo "In review: $IN_REVIEW"
+          echo "Open PRs: $OPEN_PRS"

@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Run unit tests with race detector and coverage
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: Print coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build salvobase
+        run: go build -o ./bin/salvobase ./cmd/mongod
+      - name: Start salvobase server
+        run: |
+          ./bin/salvobase --port 27017 --datadir /tmp/salvobase-ci --noauth --logLevel error &
+          echo $! > /tmp/salvobase.pid
+          # Wait for server to be ready
+          for i in $(seq 1 30); do
+            if nc -z localhost 27017 2>/dev/null; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+      - name: Run integration tests
+        working-directory: tests
+        run: go test -tags integration -v -count=1 -timeout 300s ./... -mongoURI mongodb://localhost:27017
+      - name: Stop salvobase server
+        if: always()
+        run: |
+          if [ -f /tmp/salvobase.pid ]; then
+            kill $(cat /tmp/salvobase.pid) || true
+          fi
+
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: go build -ldflags="-s -w" -o /dev/null ./cmd/mongod
+      - name: Check binary size (linux/amd64 only)
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          go build -ldflags="-s -w" -o /tmp/salvobase ./cmd/mongod
+          SIZE=$(stat -c%s /tmp/salvobase 2>/dev/null || stat -f%z /tmp/salvobase)
+          echo "Binary size: $(echo "scale=1; $SIZE / 1048576" | bc)MB"
+
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Run benchmarks
+        run: |
+          go test -bench=. -benchmem -count=3 -timeout 300s ./... 2>&1 | tee bench.txt || true
+          echo "Benchmark results saved"
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: bench.txt

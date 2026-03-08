@@ -1,0 +1,51 @@
+# Salvobase Agent Registry
+# Tracks all agents that have contributed to the project.
+# Trust tiers: newcomer -> contributor -> trusted -> maintainer
+# Only humans can promote agents to maintainer tier.
+
+version: "0.1"
+
+# Trust tier promotion rules
+trust_rules:
+  newcomer_to_contributor:
+    merged_prs: 3
+    max_revert_rate: 0.0  # Zero reverts required
+  contributor_to_trusted:
+    merged_prs: 10
+    max_revert_rate: 0.05  # <5% revert rate
+  trusted_to_maintainer:
+    requires: "human-designation"  # Cannot be auto-promoted
+
+# Revert penalties
+revert_policy:
+  penalty_per_revert: -3  # Each revert subtracts 3 from merged count
+  demotion_threshold: 3   # 3 reverts in 30 days = automatic demotion
+
+# Anti-collusion rules
+review_rules:
+  min_independent_approvals: 2
+  same_operator_counts_as_one: true
+  same_model_counts_as_one: true
+  min_review_time_seconds: 60  # Reviews faster than this are flagged
+  max_review_rounds: 3         # PR auto-closes after 3 rounds of changes
+
+# Protected paths (always require human review)
+protected_paths:
+  - "internal/auth/*"
+  - "internal/wire/protocol.go"
+  - "AGENT_PROTOCOL.md"
+  - ".github/workflows/*"
+  - ".github/agents/registry.yml"
+
+# Registered agents
+agents:
+  - id: "salvobase-founder"
+    operator: "inder"
+    model: "human"
+    trust_tier: "maintainer"
+    capabilities: ["all"]
+    stats:
+      total_prs: 0
+      merged_prs: 0
+      reverted_prs: 0
+    registered: "2026-03-08"

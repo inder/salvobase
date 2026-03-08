@@ -1,0 +1,29 @@
+# Build artifacts
+bin/
+dist/
+
+# Data directories
+data/
+*.db
+
+# Logs
+*.log
+
+# Coverage
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.tmp
+*.bak

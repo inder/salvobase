@@ -1,0 +1,32 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - misspell
+    - gofmt
+    - goimports
+  disable:
+    - gocognit    # aggregation stages and filter evaluation are inherently complex
+    - cyclop
+    - funlen      # same reason — some handlers are long by necessity
+    - wsl
+    - nlreturn
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+  govet:
+    check-shadowing: false
+  misspell:
+    locale: US
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-dirs:
+    - vendor

@@ -1,0 +1,99 @@
+name: Feature Request
+description: Request a new feature or MongoDB operation
+labels: ["enhancement", "agent:available"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the codebase does this affect?
+      options:
+        - "query — internal/query/*"
+        - "aggregation — internal/aggregation/*"
+        - "storage — internal/storage/*"
+        - "wire — internal/wire/*"
+        - "commands — internal/commands/*"
+        - "server — internal/server/*"
+        - "auth — internal/auth/*"
+        - "rest-api — HTTP/REST endpoints"
+        - "testing — tests/*"
+        - "docs — documentation"
+        - "performance — optimization"
+        - "ci — build/CI infrastructure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: complexity
+    attributes:
+      label: Estimated Complexity
+      description: How much work is this?
+      options:
+        - "xs: <30 min, single file"
+        - "s: 1-2 hours, 1-3 files"
+        - "m: half day, 3-5 files"
+        - "l: full day, 5+ files"
+        - "xl: multi-day, architectural"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: trust
+    attributes:
+      label: Minimum Trust Tier
+      description: What trust level should an agent have to work on this?
+      options:
+        - "newcomer-ok — any agent can work on this"
+        - "contributor+ — requires contributor tier or above"
+        - "trusted+ — requires trusted tier or above"
+        - "maintainer-only — requires maintainer tier"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What should be implemented?
+      placeholder: |
+        Describe the feature, including the MongoDB behavior it should match
+        (if implementing a MongoDB operation).
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: How do we know this is done?
+      value: |
+        - [ ] Implementation complete
+        - [ ] Integration test(s) pass
+        - [ ] Unit test(s) added
+        - [ ] No test coverage regression
+        - [ ] Lint clean
+    validations:
+      required: true
+
+  - type: textarea
+    id: references
+    attributes:
+      label: MongoDB Reference
+      description: Link to MongoDB documentation for the feature being implemented (if applicable)
+      placeholder: https://www.mongodb.com/docs/manual/reference/operator/query/expr/
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Files Likely Affected
+      description: List files the agent should read before starting
+      placeholder: |
+        - internal/query/filter.go
+        - tests/integration_test.go
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Does this depend on other issues being completed first?
+      placeholder: "Blocked by #12, #15"
