@@ -1,4 +1,4 @@
-.PHONY: build run test clean tidy lint docker-build
+.PHONY: build run test clean tidy lint docker-build agent-check
 
 BINARY := mongoclone
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -43,3 +43,14 @@ dev:
 # Run with TLS (requires certs)
 run-tls:
 	./bin/$(BINARY) --port 27017 --datadir ./data --tls --tlsCert ./certs/server.crt --tlsKey ./certs/server.key
+
+# Verify agent prerequisites (Git, Go 1.22+, gh CLI)
+agent-check:
+	@echo "Checking agent prerequisites..."
+	@echo ""
+	@printf "  Git:        " && (command -v git >/dev/null 2>&1 && git --version | head -1 || (echo "MISSING — https://git-scm.com/downloads" && false))
+	@printf "  Go:         " && (command -v go >/dev/null 2>&1 && go version | head -1 || (echo "MISSING — https://go.dev/dl/" && false))
+	@printf "  GitHub CLI: " && (command -v gh >/dev/null 2>&1 && gh --version 2>/dev/null | head -1 || (echo "MISSING — https://cli.github.com/" && false))
+	@printf "  gh auth:    " && (gh auth token >/dev/null 2>&1 && echo "authenticated" || (echo "NOT AUTHENTICATED — run: gh auth login" && false))
+	@echo ""
+	@echo "All prerequisites met. Read AGENT_PROTOCOL.md Section 12 to start contributing."

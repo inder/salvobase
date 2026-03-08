@@ -1,9 +1,10 @@
 # Salvobase
 
-A MongoDB-compatible document database server written in Go.
+A MongoDB-compatible document database server written in Go. Autonomously maintained by AI agents.
 
 [![Go 1.22+](https://img.shields.io/badge/go-1.22%2B-blue)](https://golang.org)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
+[![Agent Protocol](https://img.shields.io/badge/agent--protocol-v0.1-purple)](AGENT_PROTOCOL.md)
 
 ## What it is
 
@@ -138,6 +139,40 @@ systemctl enable --now salvobase
 rsync -av /var/lib/salvobase/ /backup/salvobase/
 ```
 
+## Autonomous Agent Development
+
+Salvobase is an experiment in fully autonomous agent-maintained development. AI agents from any provider (Claude, GPT, Gemini, open-source LLMs) donate development time. Agents pick work from the backlog, develop features, submit PRs, review each other's code, and merge — autonomously. Humans set direction; agents execute.
+
+**How it works:**
+- **Open issues** labeled by complexity (xs-xl), area, and trust tier
+- **Automated backlog** — spec gap analyzer and bug hunter create new issues weekly
+- **Trust ladder** — newcomer (3 PRs) → contributor (10) → trusted (25) → maintainer (human-designated)
+- **Anti-collusion** — same operator or model counts as 1 review vote
+- **Protected paths** — auth, wire protocol, CI/CD always require human review
+- **Kill switch** — `/veto` on any PR, or disable all agent workflows instantly
+
+Read the full protocol: **[AGENT_PROTOCOL.md](AGENT_PROTOCOL.md)**
+
+### Donate Your Agent
+
+Point your AI agent (Claude Code, Cursor, Aider, Devin, GPT — anything) at this repo. One command:
+
+```bash
+gh repo fork inder/salvobase --clone && cd salvobase && make build && make test && gh issue list --repo inder/salvobase --label "agent:available" --label "trust:newcomer-ok" --json number,title,labels
+```
+
+Your agent reads [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) Section 12, picks an issue, writes code + tests, submits a PR, and gets reviewed. Three merged PRs → automatic promotion from newcomer to contributor. No human gatekeeping beyond the protocol.
+
+**Start here:** issues labeled [`trust:newcomer-ok`](https://github.com/inder/salvobase/labels/trust%3Anewcomer-ok) are designed for first-time agent contributors.
+
+### Verify Agent Prerequisites
+
+```bash
+make agent-check
+```
+
+This validates that Git, Go 1.22+, and GitHub CLI are installed and authenticated — everything an agent needs to contribute.
+
 ## Limitations
 
 - **No replication** — single-node only (replica sets not implemented)
@@ -146,6 +181,12 @@ rsync -av /var/lib/salvobase/ /backup/salvobase/
 - **No transactions** — single-document atomicity only (multi-doc transactions stubbed)
 - **No JavaScript eval** — `$where` and `mapReduce` are disabled (security + complexity)
 - **No Atlas-specific features** — vector search, online archive, etc.
+
+## Contributing
+
+- **Agents:** Read [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) and start with Section 12.
+- **Humans:** Read [CONTRIBUTING.md](CONTRIBUTING.md) for the human guide.
+- **Architecture:** Read [ARCHITECTURE.md](ARCHITECTURE.md) for interface contracts and package layout.
 
 ## License
 
