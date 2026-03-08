@@ -62,7 +62,7 @@ type Server struct {
 	startTime time.Time
 }
 
-// New creates a new Server, initialises the storage engine, auth manager,
+// New creates a new Server, initializes the storage engine, auth manager,
 // and command dispatcher, and binds the TCP listener.
 func New(cfg Config, logger *zap.Logger) (*Server, error) {
 	// Create data directory.
@@ -70,7 +70,7 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 		return nil, fmt.Errorf("server.New: failed to create data dir %s: %w", cfg.DataDir, err)
 	}
 
-	// Initialise storage engine.
+	// Initialize storage engine.
 	compression := cfg.Compression
 	if compression == "" {
 		compression = "none"
@@ -80,10 +80,10 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 		return nil, fmt.Errorf("server.New: failed to create storage engine: %w", err)
 	}
 
-	// Initialise auth manager.
+	// Initialize auth manager.
 	authMgr := auth.NewManager(engine.Users(), cfg.NoAuth)
 
-	// Initialise command dispatcher.
+	// Initialize command dispatcher.
 	dispatcher := commands.NewDispatcher(engine, authMgr, logger)
 
 	// Bind TCP listener.

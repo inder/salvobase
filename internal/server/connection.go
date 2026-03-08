@@ -385,7 +385,7 @@ func injectField(doc bson.Raw, key string, value bson.Raw) bson.Raw {
 	return raw
 }
 
-// bsonRawArray serialises a []bson.Raw as a BSON array.
+// bsonRawArray serializes a []bson.Raw as a BSON array.
 // BSON arrays and documents have identical wire format — elements keyed by
 // "0", "1", "2"... — so we marshal a bson.D with numeric string keys.
 // The caller (injectField) sets the RawValue.Type to TypeArray explicitly.

@@ -177,7 +177,7 @@ type IndexInfo struct {
 	Hidden             bool     `json:"hidden,omitempty"`
 }
 
-// FindOptions controls the behaviour of a find operation.
+// FindOptions controls the behavior of a find operation.
 type FindOptions struct {
 	Skip                int64
 	Limit               int64
@@ -194,7 +194,7 @@ type FindOptions struct {
 	ShowRecordID        bool
 }
 
-// UpdateOptions controls update and replace behaviour.
+// UpdateOptions controls update and replace behavior.
 type UpdateOptions struct {
 	Upsert                   bool
 	ArrayFilters             []bson.Raw
@@ -203,7 +203,7 @@ type UpdateOptions struct {
 	Comment                  string
 }
 
-// InsertOptions controls insert behaviour.
+// InsertOptions controls insert behavior.
 type InsertOptions struct {
 	Ordered                  bool // default true
 	BypassDocumentValidation bool
@@ -221,7 +221,7 @@ type CreateCollectionOptions struct {
 	Comment          string
 }
 
-// FindAndModifyOptions controls findAndModify behaviour.
+// FindAndModifyOptions controls findAndModify behavior.
 type FindAndModifyOptions struct {
 	Sort         bson.Raw
 	Projection   bson.Raw

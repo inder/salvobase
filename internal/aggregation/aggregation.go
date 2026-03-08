@@ -28,7 +28,7 @@ func applyStage(name string, val bson.RawValue, docs []bson.Raw, engine storage.
 	return stage.Process(docs)
 }
 
-// ExecuteOnDocs executes a pipeline on an already-materialised slice of
+// ExecuteOnDocs executes a pipeline on an already-materialized slice of
 // documents without requiring a Collection. Used internally by $facet.
 func ExecuteOnDocs(docs []bson.Raw, engine storage.Engine, db string, pipeline []bson.Raw) (storage.Cursor, error) {
 	current := make([]bson.Raw, len(docs))
