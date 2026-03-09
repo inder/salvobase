@@ -107,7 +107,7 @@ func (s *Server) handleRESTRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the command document.
-	cmdD := bson.D{{cmdStr, collName}}
+	cmdD := bson.D{{Key: cmdStr, Value: collName}}
 	for k, v := range bodyMap {
 		cmdD = append(cmdD, bson.E{Key: k, Value: v})
 	}

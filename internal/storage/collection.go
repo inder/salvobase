@@ -805,7 +805,7 @@ func (c *bboltCollection) CountDocuments(filter bson.Raw) (int64, error) {
 		return 0, nil
 	}
 
-	// Optimise for empty filter
+	// Optimize for empty filter
 	if len(filter) == 0 {
 		var n int64
 		_ = boltDB.View(func(tx *bolt.Tx) error {

@@ -423,7 +423,7 @@ func TestAggregateUnwind(t *testing.T) {
 
 	_, _ = coll.InsertOne(ctx, bson.D{
 		{Key: "name", Value: "alice"},
-		{Key: "tags", Value: bson.A{Key: "go", Value: "python", "rust"}},
+		{Key: "tags", Value: bson.A{"go", "python", "rust"}},
 	})
 
 	pipeline := mongo.Pipeline{
@@ -492,9 +492,9 @@ func TestFilterOperators(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{Key: "n", Value: 1}, {Key: "tags", Value: bson.A{Key: "a", Value: "b"}}},
-		bson.D{{Key: "n", Value: 2}, {Key: "tags", Value: bson.A{Key: "b", Value: "c"}}},
-		bson.D{{Key: "n", Value: 3}, {Key: "tags", Value: bson.A{Key: "a", Value: "c"}}},
+		bson.D{{Key: "n", Value: 1}, {Key: "tags", Value: bson.A{"a", "b"}}},
+		bson.D{{Key: "n", Value: 2}, {Key: "tags", Value: bson.A{"b", "c"}}},
+		bson.D{{Key: "n", Value: 3}, {Key: "tags", Value: bson.A{"a", "c"}}},
 		bson.D{{Key: "n", Value: 4}}, // no tags
 	})
 
@@ -503,17 +503,17 @@ func TestFilterOperators(t *testing.T) {
 		filter bson.D
 		expect int
 	}{
-		{Key: "$in", Value: bson.D{{Key: "n", Value: bson.D{{Key: "$in", Value: bson.A{1, 3}}}}}, 2},
-		{Key: "$nin", Value: bson.D{{Key: "n", Value: bson.D{{Key: "$nin", Value: bson.A{1, 2}}}}}, 2},
-		{Key: "$exists true", Value: bson.D{{Key: "tags", Value: bson.D{{Key: "$exists", Value: true}}}}, 3},
-		{Key: "$exists false", Value: bson.D{{Key: "tags", Value: bson.D{{Key: "$exists", Value: false}}}}, 1},
-		{Key: "$all", Value: bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{Key: "a", Value: "b"}}}}}, 1},
-		{Key: "$size", Value: bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: 2}}}}, 3},
-		{Key: "$and", Value: bson.D{{Key: "$and", Value: bson.A{
+		{"$in", bson.D{{Key: "n", Value: bson.D{{Key: "$in", Value: bson.A{1, 3}}}}}, 2},
+		{"$nin", bson.D{{Key: "n", Value: bson.D{{Key: "$nin", Value: bson.A{1, 2}}}}}, 2},
+		{"$exists true", bson.D{{Key: "tags", Value: bson.D{{Key: "$exists", Value: true}}}}, 3},
+		{"$exists false", bson.D{{Key: "tags", Value: bson.D{{Key: "$exists", Value: false}}}}, 1},
+		{"$all", bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{"a", "b"}}}}}, 1},
+		{"$size", bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: 2}}}}, 3},
+		{"$and", bson.D{{Key: "$and", Value: bson.A{
 			bson.D{{Key: "n", Value: bson.D{{Key: "$gte", Value: 2}}}},
 			bson.D{{Key: "n", Value: bson.D{{Key: "$lte", Value: 3}}}},
 		}}}, 2},
-		{Key: "$or", Value: bson.D{{Key: "$or", Value: bson.A{
+		{"$or", bson.D{{Key: "$or", Value: bson.A{
 			bson.D{{Key: "n", Value: 1}},
 			bson.D{{Key: "n", Value: 4}},
 		}}}, 2},
@@ -541,7 +541,7 @@ func TestUpdateOperators(t *testing.T) {
 
 	id, _ := coll.InsertOne(ctx, bson.D{
 		{Key: "score", Value: 10},
-		{Key: "tags", Value: bson.A{Key: "a", Value: "b"}},
+		{Key: "tags", Value: bson.A{"a", "b"}},
 		{Key: "nested", Value: bson.D{{Key: "x", Value: 1}}},
 	})
 
@@ -962,7 +962,7 @@ func TestAggregateExpressions(t *testing.T) {
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
 		bson.D{{Key: "$project", Value: bson.D{
 			{Key: "result", Value: bson.D{{Key: "$add", Value: bson.A{
-				bson.D{{Key: "$multiply", Value: bson.A{Key: "$a", Value: "$b"}}},
+				bson.D{{Key: "$multiply", Value: bson.A{"$a", "$b"}}},
 				1,
 			}}}},
 			{Key: "_id", Value: 0},
@@ -999,7 +999,7 @@ func TestAggregateAddFields(t *testing.T) {
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
 		bson.D{{Key: "$addFields", Value: bson.D{
-			{Key: "total", Value: bson.D{{Key: "$multiply", Value: bson.A{Key: "$price", Value: "$qty"}}}},
+			{Key: "total", Value: bson.D{{Key: "$multiply", Value: bson.A{"$price", "$qty"}}}},
 		}}},
 	})
 	if err != nil {
@@ -1033,7 +1033,7 @@ func TestAggregateCondExpr(t *testing.T) {
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
 		bson.D{{Key: "$project", Value: bson.D{
 			{Key: "grade", Value: bson.D{{Key: "$cond", Value: bson.D{
-				{Key: "if", Value: bson.D{{Key: "$gte", Value: bson.A{Key: "$score", Value: 60}}}},
+				{Key: "if", Value: bson.D{{Key: "$gte", Value: bson.A{"$score", 60}}}},
 				{Key: "then", Value: "pass"},
 				{Key: "else", Value: "fail"},
 			}}}},
@@ -1430,7 +1430,7 @@ func TestAggregateUnionWith(t *testing.T) {
 		t.Fatalf("$unionWith: expected 3, got %d", len(results))
 	}
 	names := []string{results[0]["name"].(string), results[1]["name"].(string), results[2]["name"].(string)}
-	expected := []string{"alice", "bob", "carol"}
+	expected := []string{Key: "alice", Value: "bob", "carol"}
 	for i, n := range names {
 		if n != expected[i] {
 			t.Errorf("$unionWith[%d]: expected %s, got %s", i, expected[i], n)
@@ -1456,13 +1456,13 @@ func TestAggregateSwitchAndIfNull(t *testing.T) {
 			// $switch: grade based on score
 			{Key: "grade", Value: bson.D{{Key: "$switch", Value: bson.D{
 				{Key: "branches", Value: bson.A{
-					bson.D{{Key: "case", Value: bson.D{{Key: "$gte", Value: bson.A{Key: "$score", Value: 90}}}}, {Key: "then", Value: "A"}},
-					bson.D{{Key: "case", Value: bson.D{{Key: "$gte", Value: bson.A{Key: "$score", Value: 70}}}}, {Key: "then", Value: "B"}},
+					bson.D{{Key: "case", Value: bson.D{{Key: "$gte", Value: bson.A{"$score", 90}}}}, {Key: "then", Value: "A"}},
+					bson.D{{Key: "case", Value: bson.D{{Key: "$gte", Value: bson.A{"$score", 70}}}}, {Key: "then", Value: "B"}},
 				}},
 				{Key: "default", Value: "C"},
 			}}}},
 			// $ifNull: use bonus if present, else 0
-			{Key: "effectiveBonus", Value: bson.D{{Key: "$ifNull", Value: bson.A{Key: "$bonus", Value: 0}}}},
+			{Key: "effectiveBonus", Value: bson.D{{Key: "$ifNull", Value: bson.A{"$bonus", 0}}}},
 			{Key: "_id", Value: 0},
 		}}},
 		bson.D{{Key: "$sort", Value: bson.D{{Key: "grade", Value: 1}}}},
@@ -1612,8 +1612,8 @@ func TestArrayFieldEquality(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{Key: "tags", Value: bson.A{Key: "a", Value: "b", "c"}}},
-		bson.D{{Key: "tags", Value: bson.A{Key: "x", Value: "y"}}},
+		bson.D{{Key: "tags", Value: bson.A{"a", "b", "c"}}},
+		bson.D{{Key: "tags", Value: bson.A{"x", "y"}}},
 		bson.D{{Key: "tags", Value: "a"}}, // scalar "a", not array
 	})
 
@@ -1849,7 +1849,7 @@ func TestArrayUpdateOperators(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	res, _ := coll.InsertOne(ctx, bson.D{{Key: "tags", Value: bson.A{Key: "a", Value: "b", "c", "b"}}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "tags", Value: bson.A{"a", "b", "c", "b"}}})
 	id := res.InsertedID
 
 	decode := func() bson.A {
@@ -2058,7 +2058,7 @@ func TestAggregateStringExpressions(t *testing.T) {
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
 		bson.D{{Key: "$project", Value: bson.D{
-			{Key: "fullName", Value: bson.D{{Key: "$concat", Value: bson.A{Key: "$first", Value: " ", bson.D{{Key: "$toLower", Value: "$last"}}}}}},
+			{Key: "fullName", Value: bson.D{{Key: "$concat", Value: bson.A{"$first", " ", bson.D{{Key: "$toLower", Value: "$last"}}}}}},
 			{Key: "_id", Value: 0},
 		}}},
 	})
@@ -2156,12 +2156,12 @@ func TestAggregateArrayExpressions(t *testing.T) {
 	pipe := mongo.Pipeline{
 		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
 		{{Key: "$project", Value: bson.D{
-			{Key: "first", Value: bson.D{{Key: "$arrayElemAt", Value: bson.A{Key: "$arr", Value: 0}}}},
-			{Key: "last", Value: bson.D{{Key: "$arrayElemAt", Value: bson.A{Key: "$arr", Value: -1}}}},
+			{Key: "first", Value: bson.D{{Key: "$arrayElemAt", Value: bson.A{"$arr", 0}}}},
+			{Key: "last", Value: bson.D{{Key: "$arrayElemAt", Value: bson.A{"$arr", -1}}}},
 			{Key: "sz", Value: bson.D{{Key: "$size", Value: "$arr"}}},
-			{Key: "sliced", Value: bson.D{{Key: "$slice", Value: bson.A{Key: "$arr", Value: 1, 3}}}},
+			{Key: "sliced", Value: bson.D{{Key: "$slice", Value: bson.A{"$arr", 1, 3}}}},
 			{Key: "reversed", Value: bson.D{{Key: "$reverseArray", Value: "$arr"}}},
-			{Key: "concat", Value: bson.D{{Key: "$concatArrays", Value: bson.A{Key: "$arr", Value: bson.A{60, 70}}}}},
+			{Key: "concat", Value: bson.D{{Key: "$concatArrays", Value: bson.A{"$arr", bson.A{60, 70}}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2212,13 +2212,13 @@ func TestAggregateMapFilter(t *testing.T) {
 			{Key: "doubled", Value: bson.D{{Key: "$map", Value: bson.D{
 				{Key: "input", Value: "$nums"},
 				{Key: "as", Value: "n"},
-				{Key: "in", Value: bson.D{{Key: "$multiply", Value: bson.A{Key: "$$n", Value: 2}}}},
+				{Key: "in", Value: bson.D{{Key: "$multiply", Value: bson.A{"$$n", 2}}}},
 			}}}},
 			// $filter: keep only > 2
 			{Key: "gt2", Value: bson.D{{Key: "$filter", Value: bson.D{
 				{Key: "input", Value: "$nums"},
 				{Key: "as", Value: "n"},
-				{Key: "cond", Value: bson.D{{Key: "$gt", Value: bson.A{Key: "$$n", Value: 2}}}},
+				{Key: "cond", Value: bson.D{{Key: "$gt", Value: bson.A{"$$n", 2}}}},
 			}}}},
 		}}},
 	}
@@ -2256,7 +2256,7 @@ func TestAggregateReduce(t *testing.T) {
 			{Key: "sum", Value: bson.D{{Key: "$reduce", Value: bson.D{
 				{Key: "input", Value: "$nums"},
 				{Key: "initialValue", Value: 0},
-				{Key: "in", Value: bson.D{{Key: "$add", Value: bson.A{Key: "$$value", Value: "$$this"}}}},
+				{Key: "in", Value: bson.D{{Key: "$add", Value: bson.A{"$$value", "$$this"}}}},
 			}}}},
 		}}},
 	}
@@ -2292,10 +2292,10 @@ func TestAggregateMathExpressions(t *testing.T) {
 			{Key: "absneg", Value: bson.D{{Key: "$abs", Value: -5}}},
 			{Key: "ceil_v", Value: bson.D{{Key: "$ceil", Value: 4.3}}},
 			{Key: "floor_v", Value: bson.D{{Key: "$floor", Value: 4.9}}},
-			{Key: "mod_v", Value: bson.D{{Key: "$mod", Value: bson.A{Key: "$x", Value: "$y"}}}},
+			{Key: "mod_v", Value: bson.D{{Key: "$mod", Value: bson.A{"$x", "$y"}}}},
 			{Key: "pow_v", Value: bson.D{{Key: "$pow", Value: bson.A{2, 10}}}},
 			{Key: "sqrt_v", Value: bson.D{{Key: "$sqrt", Value: 9}}},
-			{Key: "sub_v", Value: bson.D{{Key: "$subtract", Value: bson.A{Key: "$x", Value: "$y"}}}},
+			{Key: "sub_v", Value: bson.D{{Key: "$subtract", Value: bson.A{"$x", "$y"}}}},
 			{Key: "div_v", Value: bson.D{{Key: "$divide", Value: bson.A{10.0, 4.0}}}},
 		}}},
 	}
@@ -2352,9 +2352,9 @@ func TestAggregateMoreStringExpressions(t *testing.T) {
 		{{Key: "$project", Value: bson.D{
 			{Key: "up", Value: bson.D{{Key: "$toUpper", Value: "$name"}}},
 			{Key: "trimmed", Value: bson.D{{Key: "$trim", Value: bson.D{{Key: "input", Value: "$name"}}}}},
-			{Key: "split_v", Value: bson.D{{Key: "$split", Value: bson.A{Key: "$name", Value: " "}}}},
+			{Key: "split_v", Value: bson.D{{Key: "$split", Value: bson.A{"$name", " "}}}},
 			{Key: "strlen", Value: bson.D{{Key: "$strLenBytes", Value: "$name"}}},
-			{Key: "sub_v", Value: bson.D{{Key: "$substr", Value: bson.A{Key: "$name", Value: 2, 5}}}},
+			{Key: "sub_v", Value: bson.D{{Key: "$substr", Value: bson.A{"$name", 2, 5}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2502,7 +2502,7 @@ func TestAggregateMergeObjects(t *testing.T) {
 	pipe := mongo.Pipeline{
 		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
 		{{Key: "$project", Value: bson.D{
-			{Key: "merged", Value: bson.D{{Key: "$mergeObjects", Value: bson.A{Key: "$a", Value: "$b"}}}},
+			{Key: "merged", Value: bson.D{{Key: "$mergeObjects", Value: bson.A{"$a", "$b"}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2545,9 +2545,9 @@ func TestAggregateLogicalExpressions(t *testing.T) {
 			{Key: "isArr", Value: bson.D{{Key: "$isArray", Value: "$arr"}}},
 			{Key: "notArr", Value: bson.D{{Key: "$isArray", Value: "$x"}}},
 			{Key: "inArr", Value: bson.D{{Key: "$in", Value: bson.A{2, "$arr"}}}},
-			{Key: "gtval", Value: bson.D{{Key: "$gt", Value: bson.A{Key: "$x", Value: 3}}}},
-			{Key: "ltval", Value: bson.D{{Key: "$lt", Value: bson.A{Key: "$x", Value: 3}}}},
-			{Key: "eqval", Value: bson.D{{Key: "$eq", Value: bson.A{Key: "$x", Value: 5}}}},
+			{Key: "gtval", Value: bson.D{{Key: "$gt", Value: bson.A{"$x", 3}}}},
+			{Key: "ltval", Value: bson.D{{Key: "$lt", Value: bson.A{"$x", 3}}}},
+			{Key: "eqval", Value: bson.D{{Key: "$eq", Value: bson.A{"$x", 5}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2590,14 +2590,14 @@ func TestAggregateRangeAndIndexOf(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "arr", Value: bson.A{Key: "a", Value: "b", "c", "b"}}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "arr", Value: bson.A{"a", "b", "c", "b"}}})
 
 	pipe := mongo.Pipeline{
 		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
 		{{Key: "$project", Value: bson.D{
 			{Key: "rng", Value: bson.D{{Key: "$range", Value: bson.A{0, 5}}}},
-			{Key: "idx", Value: bson.D{{Key: "$indexOfArray", Value: bson.A{Key: "$arr", Value: "b"}}}},
-			{Key: "idx2", Value: bson.D{{Key: "$indexOfArray", Value: bson.A{Key: "$arr", Value: "z"}}}},
+			{Key: "idx", Value: bson.D{{Key: "$indexOfArray", Value: bson.A{"$arr", "b"}}}},
+			{Key: "idx2", Value: bson.D{{Key: "$indexOfArray", Value: bson.A{"$arr", "z"}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2639,7 +2639,7 @@ func TestAggregateLetExpression(t *testing.T) {
 		{{Key: "$project", Value: bson.D{
 			{Key: "total", Value: bson.D{{Key: "$let", Value: bson.D{
 				{Key: "vars", Value: bson.D{{Key: "p", Value: "$price"}, {Key: "q", Value: "$qty"}}},
-				{Key: "in", Value: bson.D{{Key: "$multiply", Value: bson.A{Key: "$$p", Value: "$$q"}}}},
+				{Key: "in", Value: bson.D{{Key: "$multiply", Value: bson.A{"$$p", "$$q"}}}},
 			}}}},
 		}}},
 	}

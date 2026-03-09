@@ -131,14 +131,14 @@ type UserStore interface {
 
 // ─── Data types ──────────────────────────────────────────────────────────────
 
-// DatabaseInfo summarises a database for listDatabases.
+// DatabaseInfo summarizes a database for listDatabases.
 type DatabaseInfo struct {
 	Name       string `json:"name"`
 	SizeOnDisk int64  `json:"sizeOnDisk"`
 	Empty      bool   `json:"empty"`
 }
 
-// CollectionInfo summarises a collection for listCollections.
+// CollectionInfo summarizes a collection for listCollections.
 type CollectionInfo struct {
 	Name    string   `json:"name"`
 	Type    string   `json:"type"` // "collection" or "view"
