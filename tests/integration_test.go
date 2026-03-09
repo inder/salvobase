@@ -2766,6 +2766,80 @@ func TestTypeFilter(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// hostInfo command
+// ---------------------------------------------------------------------------
+
+func TestHostInfo(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "hostInfo", Value: 1}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("hostInfo: %v", err)
+	}
+
+	if result["ok"].(float64) != 1 {
+		t.Errorf("hostInfo: expected ok=1, got %v", result["ok"])
+	}
+
+	system, ok := result["system"].(bson.M)
+	if !ok {
+		t.Fatalf("hostInfo: missing or invalid 'system' field")
+	}
+	if _, ok := system["hostname"]; !ok {
+		t.Error("hostInfo: 'system.hostname' field missing")
+	}
+	if _, ok := system["numCores"]; !ok {
+		t.Error("hostInfo: 'system.numCores' field missing")
+	}
+	if _, ok := system["cpuAddrSize"]; !ok {
+		t.Error("hostInfo: 'system.cpuAddrSize' field missing")
+	}
+	if _, ok := system["currentTime"]; !ok {
+		t.Error("hostInfo: 'system.currentTime' field missing")
+	}
+
+	if _, ok := result["os"]; !ok {
+		t.Error("hostInfo: 'os' field missing")
+	}
+	if _, ok := result["extra"]; !ok {
+		t.Error("hostInfo: 'extra' field missing")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// getCmdLineOpts command
+// ---------------------------------------------------------------------------
+
+func TestGetCmdLineOpts(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "getCmdLineOpts", Value: 1}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("getCmdLineOpts: %v", err)
+	}
+
+	if result["ok"].(float64) != 1 {
+		t.Errorf("getCmdLineOpts: expected ok=1, got %v", result["ok"])
+	}
+
+	argv, ok := result["argv"].(bson.A)
+	if !ok {
+		t.Fatalf("getCmdLineOpts: missing or invalid 'argv' field")
+	}
+	if len(argv) == 0 {
+		t.Error("getCmdLineOpts: 'argv' must be non-empty")
+	}
+
+	if _, ok := result["parsed"]; !ok {
+		t.Error("getCmdLineOpts: 'parsed' field missing")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

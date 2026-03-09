@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"time"
 
@@ -237,6 +238,66 @@ func handleFeatures(_ *Context, _ bson.Raw) (bson.Raw, error) {
 // handleLogout handles the "logout" command.
 func handleLogout(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
+}
+
+// handleHostInfo handles the "hostInfo" command.
+// Returns system, OS, and CPU information about the host running the server.
+func handleHostInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
+	hostname, _ := os.Hostname()
+	now := time.Now().UTC()
+
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	memSizeMB := int64(ms.Sys) / (1024 * 1024)
+
+	// Map GOOS to MongoDB's OS type convention.
+	osType := runtime.GOOS
+	switch runtime.GOOS {
+	case "linux":
+		osType = "Linux"
+	case "darwin":
+		osType = "Darwin"
+	case "windows":
+		osType = "Windows"
+	}
+
+	// Determine pointer size: 32 on 32-bit builds, 64 on 64-bit builds.
+	cpuAddrSize := int32(32 << (^uint(0) >> 63))
+
+	return marshalResponse(bson.D{
+		{Key: "system", Value: bson.D{
+			{Key: "currentTime", Value: bson.DateTime(now.UnixMilli())},
+			{Key: "hostname", Value: hostname},
+			{Key: "cpuAddrSize", Value: cpuAddrSize},
+			{Key: "memSizeMB", Value: memSizeMB},
+			{Key: "memLimitMB", Value: memSizeMB},
+			{Key: "numCores", Value: int32(runtime.NumCPU())},
+			{Key: "cpuArch", Value: runtime.GOARCH},
+			{Key: "numaEnabled", Value: false},
+		}},
+		{Key: "os", Value: bson.D{
+			{Key: "type", Value: osType},
+			{Key: "name", Value: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)},
+			{Key: "version", Value: "unknown"},
+		}},
+		{Key: "extra", Value: bson.D{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
+// handleGetCmdLineOpts handles the "getCmdLineOpts" command.
+// Returns the command line arguments the server was started with.
+func handleGetCmdLineOpts(_ *Context, _ bson.Raw) (bson.Raw, error) {
+	argv := bson.A{}
+	for _, arg := range os.Args {
+		argv = append(argv, arg)
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "argv", Value: argv},
+		{Key: "parsed", Value: bson.D{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
 }
 
 // handleExplain handles the "explain" command.
