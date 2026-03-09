@@ -84,11 +84,14 @@ jobs:
         run: |
           echo "::notice::Newcomer agent PR -- founder agent or human approval required."
           gh pr edit $PR_NUMBER --add-label "newcomer-pr" --repo ${{ github.repository }} || true
-          gh pr comment $PR_NUMBER --body "### Newcomer Gate
-
-This PR is from a **newcomer** agent. Per the [Agent Protocol](AGENT_PROTOCOL.md#2-trust-tiers), newcomer PRs require approval from the **founder agent** (operator: \`inder\`) or a human maintainer.
-
-The founder agent can review and approve this PR on behalf of the project." --repo ${{ github.repository }}
+          {
+            echo "### Newcomer Gate"
+            echo ""
+            echo "This PR is from a **newcomer** agent. Per the [Agent Protocol](AGENT_PROTOCOL.md#2-trust-tiers), newcomer PRs require approval from the **founder agent** (operator: \`inder\`) or a human maintainer."
+            echo ""
+            echo "The founder agent can review and approve this PR on behalf of the project."
+          } > /tmp/newcomer-comment.md
+          gh pr comment $PR_NUMBER --body-file /tmp/newcomer-comment.md --repo ${{ github.repository }}
 
       - name: Check for veto
         env:

@@ -130,46 +130,47 @@ jobs:
             fi
 
             echo "CREATE: issue for command '$cmd'"
+            TODAY=$(date -u +%Y-%m-%d)
+            {
+              echo "## Spec Gap: \`$cmd\` command"
+              echo ""
+              echo "**Source:** Spec Gap Analyzer (automated)"
+              echo "**MongoDB Reference:** $MONGO_DOC"
+              echo ""
+              echo "### Description"
+              echo ""
+              echo "The \`$cmd\` command is part of the MongoDB wire protocol but is not yet implemented in salvobase."
+              echo ""
+              echo "$NOTES"
+              echo ""
+              echo "### Acceptance Criteria"
+              echo ""
+              echo "- [ ] \`$cmd\` command handler registered in \`internal/commands/dispatcher.go\`"
+              echo "- [ ] Returns correct MongoDB-compatible response format"
+              echo "- [ ] Integration test added to \`tests/integration_test.go\`"
+              echo "- [ ] Error cases handled (invalid args, unauthorized, etc.)"
+              echo ""
+              echo "### Files Likely Affected"
+              echo ""
+              echo "- \`internal/commands/dispatcher.go\` -- register handler"
+              echo "- \`internal/commands/\` -- new handler file or existing file"
+              echo "- \`tests/integration_test.go\` -- integration tests"
+              echo ""
+              echo "### Agent Provenance"
+              echo ""
+              echo '```yaml'
+              echo "source_agent:"
+              echo "  type: \"spec-analyzer\""
+              echo "  model: \"deterministic\""
+              echo "  operator: \"github-actions\""
+              echo "  run_date: \"$TODAY\""
+              echo "  evidence: \"Command not found in dispatcher.go registerAll()\""
+              echo '```'
+            } > /tmp/spec-gap-body.md
             gh issue create \
               --title "$TITLE" \
               --label "agent:available,area:${AREA},complexity:${COMPLEXITY},trust:${TRUST},priority:${PRIORITY},enhancement" \
-              --body "$(cat <<EOF
-## Spec Gap: \`$cmd\` command
-
-**Source:** Spec Gap Analyzer (automated)
-**MongoDB Reference:** $MONGO_DOC
-
-### Description
-
-The \`$cmd\` command is part of the MongoDB wire protocol but is not yet implemented in salvobase.
-
-$NOTES
-
-### Acceptance Criteria
-
-- [ ] \`$cmd\` command handler registered in \`internal/commands/dispatcher.go\`
-- [ ] Returns correct MongoDB-compatible response format
-- [ ] Integration test added to \`tests/integration_test.go\`
-- [ ] Error cases handled (invalid args, unauthorized, etc.)
-
-### Files Likely Affected
-
-- \`internal/commands/dispatcher.go\` -- register handler
-- \`internal/commands/\` -- new handler file or existing file
-- \`tests/integration_test.go\` -- integration tests
-
-### Agent Provenance
-
-\`\`\`yaml
-source_agent:
-  type: "spec-analyzer"
-  model: "deterministic"
-  operator: "github-actions"
-  run_date: "$(date -u +%Y-%m-%d)"
-  evidence: "Command not found in dispatcher.go registerAll()"
-\`\`\`
-EOF
-)" \
+              --body-file /tmp/spec-gap-body.md \
               --repo ${{ github.repository }}
 
             ISSUES_CREATED=$((ISSUES_CREATED + 1))
@@ -212,46 +213,47 @@ EOF
             fi
 
             echo "CREATE: issue for query operator '$op'"
+            TODAY=$(date -u +%Y-%m-%d)
+            {
+              echo "## Spec Gap: \`$op\` query operator"
+              echo ""
+              echo "**Source:** Spec Gap Analyzer (automated)"
+              echo "**MongoDB Reference:** $MONGO_DOC"
+              echo ""
+              echo "### Description"
+              echo ""
+              echo "The \`$op\` query operator is part of the MongoDB query language but is not yet fully implemented in salvobase."
+              echo ""
+              echo "$NOTES"
+              echo ""
+              echo "### Acceptance Criteria"
+              echo ""
+              echo "- [ ] \`$op\` operator returns correct results for valid inputs"
+              echo "- [ ] Edge cases handled (null, missing field, wrong type)"
+              echo "- [ ] Unit tests in \`internal/query/filter_test.go\`"
+              echo "- [ ] Integration tests in \`tests/integration_test.go\`"
+              echo ""
+              echo "### Files Likely Affected"
+              echo ""
+              echo "- \`internal/query/filter.go\` -- operator implementation"
+              echo "- \`internal/query/filter_test.go\` -- unit tests"
+              echo "- \`tests/integration_test.go\` -- integration tests"
+              echo ""
+              echo "### Agent Provenance"
+              echo ""
+              echo '```yaml'
+              echo "source_agent:"
+              echo "  type: \"spec-analyzer\""
+              echo "  model: \"deterministic\""
+              echo "  operator: \"github-actions\""
+              echo "  run_date: \"$TODAY\""
+              echo "  evidence: \"Operator returns 'not implemented' error in filter.go\""
+              echo '```'
+            } > /tmp/spec-gap-body.md
             gh issue create \
               --title "$TITLE" \
               --label "agent:available,area:${AREA},complexity:${COMPLEXITY},trust:${TRUST},priority:${PRIORITY},enhancement" \
-              --body "$(cat <<EOF
-## Spec Gap: \`$op\` query operator
-
-**Source:** Spec Gap Analyzer (automated)
-**MongoDB Reference:** $MONGO_DOC
-
-### Description
-
-The \`$op\` query operator is part of the MongoDB query language but is not yet fully implemented in salvobase.
-
-$NOTES
-
-### Acceptance Criteria
-
-- [ ] \`$op\` operator returns correct results for valid inputs
-- [ ] Edge cases handled (null, missing field, wrong type)
-- [ ] Unit tests in \`internal/query/filter_test.go\`
-- [ ] Integration tests in \`tests/integration_test.go\`
-
-### Files Likely Affected
-
-- \`internal/query/filter.go\` -- operator implementation
-- \`internal/query/filter_test.go\` -- unit tests
-- \`tests/integration_test.go\` -- integration tests
-
-### Agent Provenance
-
-\`\`\`yaml
-source_agent:
-  type: "spec-analyzer"
-  model: "deterministic"
-  operator: "github-actions"
-  run_date: "$(date -u +%Y-%m-%d)"
-  evidence: "Operator returns 'not implemented' error in filter.go"
-\`\`\`
-EOF
-)" \
+              --body-file /tmp/spec-gap-body.md \
               --repo ${{ github.repository }}
 
             ISSUES_CREATED=$((ISSUES_CREATED + 1))
@@ -293,46 +295,47 @@ EOF
             fi
 
             echo "CREATE: issue for aggregation stage '$stage'"
+            TODAY=$(date -u +%Y-%m-%d)
+            {
+              echo "## Spec Gap: \`$stage\` aggregation stage"
+              echo ""
+              echo "**Source:** Spec Gap Analyzer (automated)"
+              echo "**MongoDB Reference:** $MONGO_DOC"
+              echo ""
+              echo "### Description"
+              echo ""
+              echo "The \`$stage\` aggregation pipeline stage is part of MongoDB's aggregation framework but is not yet fully implemented in salvobase."
+              echo ""
+              echo "$NOTES"
+              echo ""
+              echo "### Acceptance Criteria"
+              echo ""
+              echo "- [ ] \`$stage\` stage processes documents correctly"
+              echo "- [ ] Edge cases handled (empty pipeline input, invalid args)"
+              echo "- [ ] Unit tests in \`internal/aggregation/stages_test.go\`"
+              echo "- [ ] Integration tests in \`tests/integration_test.go\`"
+              echo ""
+              echo "### Files Likely Affected"
+              echo ""
+              echo "- \`internal/aggregation/stages.go\` -- stage implementation"
+              echo "- \`internal/aggregation/stages_test.go\` -- unit tests"
+              echo "- \`tests/integration_test.go\` -- integration tests"
+              echo ""
+              echo "### Agent Provenance"
+              echo ""
+              echo '```yaml'
+              echo "source_agent:"
+              echo "  type: \"spec-analyzer\""
+              echo "  model: \"deterministic\""
+              echo "  operator: \"github-actions\""
+              echo "  run_date: \"$TODAY\""
+              echo "  evidence: \"Stage returns 'not implemented' error in stages.go\""
+              echo '```'
+            } > /tmp/spec-gap-body.md
             gh issue create \
               --title "$TITLE" \
               --label "agent:available,area:${AREA},complexity:${COMPLEXITY},trust:${TRUST},priority:${PRIORITY},enhancement" \
-              --body "$(cat <<EOF
-## Spec Gap: \`$stage\` aggregation stage
-
-**Source:** Spec Gap Analyzer (automated)
-**MongoDB Reference:** $MONGO_DOC
-
-### Description
-
-The \`$stage\` aggregation pipeline stage is part of MongoDB's aggregation framework but is not yet fully implemented in salvobase.
-
-$NOTES
-
-### Acceptance Criteria
-
-- [ ] \`$stage\` stage processes documents correctly
-- [ ] Edge cases handled (empty pipeline input, invalid args)
-- [ ] Unit tests in \`internal/aggregation/stages_test.go\`
-- [ ] Integration tests in \`tests/integration_test.go\`
-
-### Files Likely Affected
-
-- \`internal/aggregation/stages.go\` -- stage implementation
-- \`internal/aggregation/stages_test.go\` -- unit tests
-- \`tests/integration_test.go\` -- integration tests
-
-### Agent Provenance
-
-\`\`\`yaml
-source_agent:
-  type: "spec-analyzer"
-  model: "deterministic"
-  operator: "github-actions"
-  run_date: "$(date -u +%Y-%m-%d)"
-  evidence: "Stage returns 'not implemented' error in stages.go"
-\`\`\`
-EOF
-)" \
+              --body-file /tmp/spec-gap-body.md \
               --repo ${{ github.repository }}
 
             ISSUES_CREATED=$((ISSUES_CREATED + 1))

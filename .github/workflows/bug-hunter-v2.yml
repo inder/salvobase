@@ -158,45 +158,46 @@ jobs:
               esac
 
               echo "FILING: Bug for $test_name (area: $AREA_LABEL)"
+              TODAY=$(date -u +%Y-%m-%d)
+              {
+                echo "## Bug: Compatibility Test Failure"
+                echo ""
+                echo "**Source:** Bug Hunter Agent (automated)"
+                echo "**Test:** \`$test_name\`"
+                echo "**Detected:** $TODAY"
+                echo ""
+                echo "### Test Output"
+                echo ""
+                echo '```'
+                echo "$TEST_OUTPUT"
+                echo '```'
+                echo ""
+                echo "### Description"
+                echo ""
+                echo "The compatibility test \`$test_name\` failed, indicating a behavioral divergence from the MongoDB specification. This test exercises edge cases in salvobase's query/command handling."
+                echo ""
+                echo "### Fix Guidelines"
+                echo ""
+                echo "1. Read the test in \`tests/compat_edge_cases_test.go\` to understand expected behavior"
+                echo "2. Check the [MongoDB documentation](https://www.mongodb.com/docs/manual/) for the correct behavior"
+                echo "3. Fix the implementation to match MongoDB's behavior"
+                echo "4. Ensure the fix doesn't break any existing integration tests"
+                echo ""
+                echo "### Agent Provenance"
+                echo ""
+                echo '```yaml'
+                echo "source_agent:"
+                echo "  type: \"bug-hunter\""
+                echo "  model: \"deterministic\""
+                echo "  operator: \"github-actions\""
+                echo "  run_date: \"$TODAY\""
+                echo "  evidence: \"Compatibility test failure in CI\""
+                echo '```'
+              } > /tmp/bug-issue-body.md
               gh issue create \
                 --title "bug: compatibility test failure in $test_name" \
                 --label "bug,agent:available,${AREA_LABEL},complexity:s,trust:newcomer-ok,priority:medium" \
-                --body "$(cat <<EOF
-## Bug: Compatibility Test Failure
-
-**Source:** Bug Hunter Agent (automated)
-**Test:** \`$test_name\`
-**Detected:** $(date -u +%Y-%m-%d)
-
-### Test Output
-
-\`\`\`
-$TEST_OUTPUT
-\`\`\`
-
-### Description
-
-The compatibility test \`$test_name\` failed, indicating a behavioral divergence from the MongoDB specification. This test exercises edge cases in salvobase's query/command handling.
-
-### Fix Guidelines
-
-1. Read the test in \`tests/compat_edge_cases_test.go\` to understand expected behavior
-2. Check the [MongoDB documentation](https://www.mongodb.com/docs/manual/) for the correct behavior
-3. Fix the implementation to match MongoDB's behavior
-4. Ensure the fix doesn't break any existing integration tests
-
-### Agent Provenance
-
-\`\`\`yaml
-source_agent:
-  type: "bug-hunter"
-  model: "deterministic"
-  operator: "github-actions"
-  run_date: "$(date -u +%Y-%m-%d)"
-  evidence: "Compatibility test failure in CI"
-\`\`\`
-EOF
-)" \
+                --body-file /tmp/bug-issue-body.md \
                 --repo ${{ github.repository }}
 
               BUGS_FILED=$((BUGS_FILED + 1))
@@ -225,39 +226,40 @@ EOF
               TEST_OUTPUT=$(awk "/^=== RUN   ${escaped_name}$/,/^--- FAIL: ${escaped_name}/" /tmp/regression-output.txt | head -50)
 
               echo "FILING: Regression for $test_name"
+              TODAY=$(date -u +%Y-%m-%d)
+              {
+                echo "## Regression: Previously Passing Test Now Fails"
+                echo ""
+                echo "**Source:** Bug Hunter Agent (automated)"
+                echo "**Test:** \`$test_name\`"
+                echo "**Detected:** $TODAY"
+                echo "**Severity:** HIGH -- this test was previously passing"
+                echo ""
+                echo "### Test Output"
+                echo ""
+                echo '```'
+                echo "$TEST_OUTPUT"
+                echo '```'
+                echo ""
+                echo "### Description"
+                echo ""
+                echo "The integration test \`$test_name\` was previously passing but is now failing. This is a regression that should be investigated and fixed urgently."
+                echo ""
+                echo "### Agent Provenance"
+                echo ""
+                echo '```yaml'
+                echo "source_agent:"
+                echo "  type: \"bug-hunter\""
+                echo "  model: \"deterministic\""
+                echo "  operator: \"github-actions\""
+                echo "  run_date: \"$TODAY\""
+                echo "  evidence: \"Regression detected in standard integration test suite\""
+                echo '```'
+              } > /tmp/regression-issue-body.md
               gh issue create \
                 --title "bug(regression): $test_name now failing" \
                 --label "bug,agent:available,priority:high,complexity:s,trust:newcomer-ok" \
-                --body "$(cat <<EOF
-## Regression: Previously Passing Test Now Fails
-
-**Source:** Bug Hunter Agent (automated)
-**Test:** \`$test_name\`
-**Detected:** $(date -u +%Y-%m-%d)
-**Severity:** HIGH -- this test was previously passing
-
-### Test Output
-
-\`\`\`
-$TEST_OUTPUT
-\`\`\`
-
-### Description
-
-The integration test \`$test_name\` was previously passing but is now failing. This is a regression that should be investigated and fixed urgently.
-
-### Agent Provenance
-
-\`\`\`yaml
-source_agent:
-  type: "bug-hunter"
-  model: "deterministic"
-  operator: "github-actions"
-  run_date: "$(date -u +%Y-%m-%d)"
-  evidence: "Regression detected in standard integration test suite"
-\`\`\`
-EOF
-)" \
+                --body-file /tmp/regression-issue-body.md \
                 --repo ${{ github.repository }}
 
               BUGS_FILED=$((BUGS_FILED + 1))
