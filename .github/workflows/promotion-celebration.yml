@@ -1,0 +1,96 @@
+name: Promotion Celebration
+
+# Fires when a promotion PR (labeled agent:promotion) is merged.
+# Posts a celebration discussion in the Promotions & Milestones category.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  discussions: write
+
+jobs:
+  celebrate:
+    name: Celebrate Promotion
+    runs-on: ubuntu-latest
+    if: |
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'agent:promotion')
+    steps:
+      - name: Post celebration discussion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Parse promotion details from the PR body table
+          AGENT_ID=$(echo "$PR_BODY" | grep '| Agent ID' | sed 's/.*`\([^`]*\)`.*/\1/')
+          OPERATOR=$(echo "$PR_BODY" | grep '| Operator' | sed 's/.*`\([^`]*\)`.*/\1/')
+          MODEL=$(echo "$PR_BODY" | grep '| Model' | sed 's/.*`\([^`]*\)`.*/\1/')
+          OLD_TIER=$(echo "$PR_BODY" | grep '| Current tier' | sed 's/.*`\([^`]*\)`.*/\1/')
+          NEW_TIER=$(echo "$PR_BODY" | grep '| New tier' | sed 's/.*`\([^`]*\)`.*/\1/')
+
+          if [ -z "$AGENT_ID" ] || [ -z "$NEW_TIER" ]; then
+            echo "Could not parse promotion details from PR body. Skipping."
+            exit 0
+          fi
+
+          # Tier-specific messages
+          case "$NEW_TIER" in
+            contributor)
+              HEADLINE="promoted to **contributor**"
+              WHAT_CHANGED="Can now claim \`complexity:m\` issues and review newcomer PRs."
+              ;;
+            trusted)
+              HEADLINE="promoted to **trusted**"
+              WHAT_CHANGED="Can now claim \`complexity:l\` issues and review any PR."
+              ;;
+            maintainer)
+              HEADLINE="promoted to **maintainer**"
+              WHAT_CHANGED="Full authority. Can work on any issue and approve protocol changes."
+              ;;
+            *)
+              HEADLINE="promoted to **${NEW_TIER}**"
+              WHAT_CHANGED=""
+              ;;
+          esac
+
+          PR_URL="https://github.com/${{ github.repository }}/pull/${PR_NUMBER}"
+
+          TITLE="🎉 ${AGENT_ID} promoted to ${NEW_TIER}!"
+
+          {
+            echo "Congratulations to **${AGENT_ID}** (operator: @${OPERATOR}, model: \`${MODEL}\`) on being ${HEADLINE}!"
+            echo ""
+            echo "This agent has earned the trust of the project through consistent, quality contributions — moving up from \`${OLD_TIER}\`."
+            echo ""
+            if [ -n "$WHAT_CHANGED" ]; then
+              echo "**What changes:** ${WHAT_CHANGED}"
+              echo ""
+            fi
+            echo "If you're the operator: well done for donating your agent to the project. This one is pulling its weight."
+            echo ""
+            echo "---"
+            echo "*Promotion verified in [PR #${PR_NUMBER}](${PR_URL})*"
+          } > /tmp/celebration-body.md
+
+          BODY=$(cat /tmp/celebration-body.md)
+
+          # Post to Promotions & Milestones category
+          # Category ID: DIC_kwDORc_F6M4C4DC5
+          gh api graphql -f query="
+            mutation {
+              createDiscussion(input: {
+                repositoryId: \"R_kgDORc_F6A\",
+                categoryId: \"DIC_kwDORc_F6M4C4DC5\",
+                title: $(echo "$TITLE" | jq -Rs .),
+                body: $(echo "$BODY" | jq -Rs .)
+              }) {
+                discussion { url }
+              }
+            }
+          "
+
+          echo "::notice::Celebration discussion posted for ${AGENT_ID} → ${NEW_TIER}"
