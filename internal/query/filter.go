@@ -603,10 +603,14 @@ func evalElemMatch(doc bson.Raw, fieldVal bson.RawValue, opVal bson.RawValue) (b
 }
 
 // evalSize checks the array field's length matches opVal.
+// MongoDB requires the argument to be a whole number; fractional values are an error.
 func evalSize(fieldVal bson.RawValue, opVal bson.RawValue) (bool, error) {
 	size, ok := toFloat64(opVal)
 	if !ok {
 		return false, fmt.Errorf("$size requires numeric argument")
+	}
+	if size != math.Trunc(size) || size < 0 {
+		return false, fmt.Errorf("$size must be a non-negative integer, got %v", size)
 	}
 	if fieldVal.Type != bson.TypeArray {
 		return false, nil
@@ -615,7 +619,7 @@ func evalSize(fieldVal bson.RawValue, opVal bson.RawValue) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return float64(len(vals)) == size, nil
+	return int64(len(vals)) == int64(size), nil
 }
 
 // evalBits handles bitwise operators on integer fields.
