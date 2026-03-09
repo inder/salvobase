@@ -27,7 +27,7 @@ jobs:
         run: |
           echo "should_merge=false" >> $GITHUB_OUTPUT
 
-          PR_DATA=$(gh pr view $PR_NUMBER --json body,labels,isDraft,mergeable,statusCheckRollup,files --repo ${{ github.repository }})
+          PR_DATA=$(gh pr view $PR_NUMBER --json body,labels,isDraft,mergeable,statusCheckRollup,files,author,headRepositoryOwner,isCrossRepository --repo ${{ github.repository }})
 
           # Gate 1: Not a draft
           IS_DRAFT=$(echo "$PR_DATA" | jq -r '.isDraft')
@@ -96,65 +96,88 @@ jobs:
           fi
 
           # Gate 6: Independent review verification (anti-collusion enforcement)
-          # Extract author identity from PR body
+          #
+          # Trust hierarchy for identity signals:
+          #   1. GitHub username (verified by GitHub, unforgeable)
+          #   2. Fork owner (verified by GitHub, shows who controls the repo)
+          #   3. Self-reported operator/model (untrusted, supplementary only)
+          #
+          # An approval is independent if ALL of these hold:
+          #   - Different GitHub user than PR author (verified)
+          #   - If cross-repo PR: different fork owner than PR source (verified)
+          #   - Different self-reported operator (soft check, honest actors comply;
+          #     bypassed if PR author omits operator field, which is acceptable
+          #     since the check is supplementary, not a security boundary)
+          #   - Not already counted (one vote per GitHub user, deduped)
+
+          PR_AUTHOR=$(echo "$PR_DATA" | jq -r '.author.login')
+          PR_HEAD=$(echo "$PR_DATA" | jq -r '.headRepositoryOwner.login')
+          PR_IS_FORK=$(echo "$PR_DATA" | jq -r '.isCrossRepository')
           PR_BODY=$(echo "$PR_DATA" | jq -r '.body // ""')
           AUTHOR_OPERATOR=$(echo "$PR_BODY" | grep "operator:" | head -1 | sed 's/.*operator:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
-          AUTHOR_MODEL=$(echo "$PR_BODY" | grep "model:" | head -1 | sed 's/.*model:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
 
-          # Get all approved reviews with their bodies
+          echo "PR author: $PR_AUTHOR (fork owner: $PR_HEAD, cross-repo: $PR_IS_FORK, claimed operator: ${AUTHOR_OPERATOR:-<none>})"
+
+          # Get all approved reviews
           REVIEWS=$(gh api repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews --jq '[.[] | select(.state == "APPROVED") | {user: .user.login, body: .body}]')
 
-          # Count independent approvals:
-          # - Different GitHub user than PR author
-          # - If review body contains agent identity, check operator AND model independence
-          INDEPENDENT=0
-          SEEN_OPERATORS=""
-          SEEN_MODELS=""
-          PR_AUTHOR=$(gh pr view $PR_NUMBER --json author --repo ${{ github.repository }} | jq -r '.author.login')
+          # Guard against unexpected API response
+          if [ "$(echo "$REVIEWS" | jq 'type')" != '"array"' ]; then
+            echo "::error::Reviews API returned unexpected shape. Aborting."
+            exit 1
+          fi
+
+          # Count independent approvals using temp files (avoids subshell variable loss)
+          COUNTER_FILE=$(mktemp)
+          SEEN_USERS_FILE=$(mktemp)
+          trap 'rm -f "$COUNTER_FILE" "$SEEN_USERS_FILE"' EXIT
+          echo "0" > "$COUNTER_FILE"
 
           echo "$REVIEWS" | jq -c '.[]' | while read -r review; do
             REVIEWER=$(echo "$review" | jq -r '.user')
             REVIEW_BODY=$(echo "$review" | jq -r '.body // ""')
 
-            # Skip self-reviews
+            # Check 1: skip self-reviews (GitHub username, verified)
             if [ "$REVIEWER" = "$PR_AUTHOR" ]; then
-              echo "Skipping self-review from $REVIEWER"
+              echo "REJECT $REVIEWER: self-review"
               continue
             fi
 
-            # Extract reviewer's agent identity if present
+            # Check 2: deduplicate (one vote per GitHub user)
+            if grep -qF "$REVIEWER" "$SEEN_USERS_FILE" 2>/dev/null; then
+              echo "REJECT $REVIEWER: already counted"
+              continue
+            fi
+
+            # Check 3: for cross-repo PRs, skip if reviewer owns the source fork (verified)
+            # Same fork owner = likely same person running two agents from one fork
+            if [ "$PR_IS_FORK" = "true" ] && [ "$REVIEWER" = "$PR_HEAD" ]; then
+              echo "REJECT $REVIEWER: owns the source fork"
+              continue
+            fi
+
+            # Check 4: soft anti-collusion on self-reported operator
+            # Catches honest actors running multiple agents under one identity.
+            # Spoofable, but lying gets you flagged by the founder agent.
+            # Only applies when both author and reviewer declare an operator.
             REVIEWER_OPERATOR=$(echo "$REVIEW_BODY" | grep "operator:" | head -1 | sed 's/.*operator:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
-            REVIEWER_MODEL=$(echo "$REVIEW_BODY" | grep "model:" | head -1 | sed 's/.*model:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}.*/\1/' | tr -d ' ')
-
-            # If no agent identity in review, count as independent (human reviewer)
-            if [ -z "$REVIEWER_OPERATOR" ]; then
-              INDEPENDENT=$((INDEPENDENT + 1))
-              echo "Human reviewer $REVIEWER counted as independent (#$INDEPENDENT)"
+            if [ -n "$REVIEWER_OPERATOR" ] && [ -n "$AUTHOR_OPERATOR" ] && [ "$REVIEWER_OPERATOR" = "$AUTHOR_OPERATOR" ]; then
+              echo "REJECT $REVIEWER: same self-reported operator ($REVIEWER_OPERATOR) as PR author"
               continue
             fi
 
-            # Anti-collusion: same operator as author = not independent
-            if [ "$REVIEWER_OPERATOR" = "$AUTHOR_OPERATOR" ] && [ -n "$AUTHOR_OPERATOR" ]; then
-              echo "Reviewer $REVIEWER has same operator ($REVIEWER_OPERATOR) as author. Not independent."
-              continue
-            fi
-
-            # Anti-collusion: same model as author AND same operator = not independent
-            if [ "$REVIEWER_MODEL" = "$AUTHOR_MODEL" ] && [ "$REVIEWER_OPERATOR" = "$AUTHOR_OPERATOR" ]; then
-              echo "Reviewer $REVIEWER has same model+operator as author. Not independent."
-              continue
-            fi
-
-            INDEPENDENT=$((INDEPENDENT + 1))
-            echo "Reviewer $REVIEWER ($REVIEWER_OPERATOR/$REVIEWER_MODEL) counted as independent (#$INDEPENDENT)"
+            # Passed all checks
+            echo "$REVIEWER" >> "$SEEN_USERS_FILE"
+            CURRENT=$(cat "$COUNTER_FILE")
+            echo "$((CURRENT + 1))" > "$COUNTER_FILE"
+            echo "ACCEPT $REVIEWER: independent (operator: ${REVIEWER_OPERATOR:-<human>})"
           done
 
-          # Note: the while loop runs in a subshell, so INDEPENDENT is lost.
-          # Re-count using jq for the actual gate check.
-          TOTAL_APPROVALS=$(echo "$REVIEWS" | jq "[.[] | select(.user != \"$PR_AUTHOR\")] | length")
+          INDEPENDENT=$(cat "$COUNTER_FILE")
+          echo "Independent approvals: $INDEPENDENT"
 
-          if [ "$TOTAL_APPROVALS" -lt 1 ]; then
-            echo "Need at least 1 non-self approval. Have $TOTAL_APPROVALS."
+          if [ "$INDEPENDENT" -lt 1 ]; then
+            echo "Need at least 1 independent approval. Have $INDEPENDENT."
             exit 0
           fi
 
