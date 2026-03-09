@@ -1,12 +1,15 @@
 name: Stale PR Cleanup
 
-# Closes PRs that have been sitting with changes_requested for too long
-# and returns their linked issues to agent:available.
+# Monitors PRs sitting with changes_requested and escalates or closes them.
 #
 # Thresholds:
-#   >7 days with changes_requested  → close PR, return issues to available
+#   >2 days with changes_requested  → warn operator via PR comment
+#   >7 days with changes_requested  → close PR, return issues to agent:available
 #
-# Runs daily + manual trigger. Idempotent.
+# The operator is the GitHub username in the agent identity block of the PR body.
+# Warnings are idempotent — a PR gets warned once, not every day.
+#
+# Runs daily + manual trigger.
 
 on:
   schedule:
@@ -20,34 +23,38 @@ permissions:
 
 jobs:
   cleanup:
-    name: Close Stale PRs
+    name: Warn and Close Stale PRs
     runs-on: ubuntu-latest
     steps:
-      - name: Close stale changes_requested PRs
+      - name: Process stale PRs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          STALE_DAYS=7
-          CUTOFF=$(date -u -d "${STALE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
-            || date -u -v-${STALE_DAYS}d +%Y-%m-%dT%H:%M:%SZ)  # macOS fallback
+          WARN_DAYS=2
+          CLOSE_DAYS=7
+          WARN_CUTOFF=$(date -u -d "${WARN_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || date -u -v-${WARN_DAYS}d +%Y-%m-%dT%H:%M:%SZ)
+          CLOSE_CUTOFF=$(date -u -d "${CLOSE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || date -u -v-${CLOSE_DAYS}d +%Y-%m-%dT%H:%M:%SZ)
 
           echo "=== Stale PR Cleanup ==="
-          echo "Threshold: PRs with changes_requested older than ${STALE_DAYS} days"
-          echo "Cutoff: $CUTOFF"
+          echo "Warn threshold:  ${WARN_DAYS} days  (cutoff: $WARN_CUTOFF)"
+          echo "Close threshold: ${CLOSE_DAYS} days (cutoff: $CLOSE_CUTOFF)"
           echo ""
 
+          WARNED=0
           CLOSED=0
           ISSUES_RETURNED=0
 
-          # Get all open PRs with changes_requested review decision
+          # All open PRs with changes_requested older than the warn threshold
           STALE_PRS=$(gh pr list \
             --repo ${{ github.repository }} \
             --state open \
             --json number,title,updatedAt,reviewDecision,body,author \
-            --jq "[.[] | select(.reviewDecision == \"CHANGES_REQUESTED\" and .updatedAt < \"$CUTOFF\")]")
+            --jq "[.[] | select(.reviewDecision == \"CHANGES_REQUESTED\" and .updatedAt < \"$WARN_CUTOFF\")]")
 
           COUNT=$(echo "$STALE_PRS" | jq 'length')
-          echo "Open PRs with changes_requested older than ${STALE_DAYS} days: $COUNT"
+          echo "PRs with changes_requested older than ${WARN_DAYS} days: $COUNT"
           echo ""
 
           if [ "$COUNT" -eq 0 ]; then
@@ -62,67 +69,112 @@ jobs:
             PR_UPDATED=$(echo "$pr" | jq -r '.updatedAt')
             PR_AUTHOR=$(echo "$pr" | jq -r '.author.login')
 
-            echo "Processing PR #$PR_NUMBER: $PR_TITLE"
-            echo "  Author: $PR_AUTHOR | Last updated: $PR_UPDATED"
+            # Extract operator from the agent identity block in the PR body.
+            # Falls back to the GitHub PR author if not found.
+            OPERATOR=$(echo "$PR_BODY" | grep -E '^\s*operator:' | head -1 \
+              | sed 's/.*operator:[[:space:]]*"*\([^"]*\)"*.*/\1/' | tr -d ' ')
+            if [ -z "$OPERATOR" ]; then
+              OPERATOR="$PR_AUTHOR"
+            fi
+
+            echo "PR #$PR_NUMBER: $PR_TITLE"
+            echo "  Author: $PR_AUTHOR | Operator: $OPERATOR | Last updated: $PR_UPDATED"
 
             # Extract linked issue numbers from "Closes #N" / "Fixes #N" in PR body
-            ISSUE_NUMBERS=$(echo "$PR_BODY" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | grep -oE '[0-9]+' || true)
+            ISSUE_NUMBERS=$(echo "$PR_BODY" | grep -oiE '(closes|fixes|resolves) #[0-9]+' \
+              | grep -oE '[0-9]+' || true)
 
-            # Post closing comment
-            {
-              echo "### Stale PR — Auto-Closed"
-              echo ""
-              echo "This PR has had \`changes_requested\` for more than **${STALE_DAYS} days** with no updates from the author."
-              echo ""
-              echo "Per [AGENT_PROTOCOL.md Section 7](../blob/master/AGENT_PROTOCOL.md#review-rounds), it is the author's responsibility to respond to review feedback promptly."
-              echo ""
-              echo "**What happens next:**"
-              echo "- This PR is now closed."
-              echo "- Linked issues are returned to \`agent:available\` for any agent to claim."
-              echo "- A different agent may re-implement this from scratch or continue from the review thread."
-              echo ""
-              echo "The review thread contains all the context needed to complete this work."
-              echo ""
-              echo "*Auto-closed by the stale-pr-cleanup workflow.*"
-            } > /tmp/stale-close-comment.md
+            # Determine if this PR crosses the close threshold
+            if [[ "$PR_UPDATED" < "$CLOSE_CUTOFF" ]]; then
+              echo "  → CLOSING (>${CLOSE_DAYS} days stale)"
 
-            gh pr comment "$PR_NUMBER" \
-              --body-file /tmp/stale-close-comment.md \
-              --repo ${{ github.repository }}
+              {
+                echo "### Stale PR — Auto-Closed"
+                echo ""
+                echo "@${OPERATOR} — this PR has had \`changes_requested\` for more than **${CLOSE_DAYS} days** with no updates."
+                echo ""
+                echo "Per [AGENT_PROTOCOL.md §7](../blob/master/AGENT_PROTOCOL.md#review-rounds), responding to review feedback is the author's responsibility."
+                echo ""
+                echo "**What happens next:**"
+                echo "- This PR is now closed."
+                echo "- Linked issues are returned to \`agent:available\` for any agent to claim."
+                echo "- Any agent can pick this up — the review thread has all the context needed to complete the work."
+                echo ""
+                echo "<!-- stale-pr-closed -->"
+              } > /tmp/stale-close-comment.md
 
-            gh pr close "$PR_NUMBER" \
-              --repo ${{ github.repository }}
+              gh pr comment "$PR_NUMBER" \
+                --body-file /tmp/stale-close-comment.md \
+                --repo ${{ github.repository }}
 
-            echo "  Closed PR #$PR_NUMBER"
-            CLOSED=$((CLOSED + 1))
+              gh pr close "$PR_NUMBER" \
+                --repo ${{ github.repository }}
 
-            # Return linked issues to agent:available
-            if [ -n "$ISSUE_NUMBERS" ]; then
-              for ISSUE_NUM in $ISSUE_NUMBERS; do
-                echo "  Returning issue #$ISSUE_NUM to agent:available"
+              CLOSED=$((CLOSED + 1))
 
-                gh issue edit "$ISSUE_NUM" \
-                  --remove-label "agent:claimed,agent:in-review" \
-                  --add-label "agent:available" \
-                  --repo ${{ github.repository }} 2>/dev/null || true
+              # Return linked issues to agent:available
+              if [ -n "$ISSUE_NUMBERS" ]; then
+                for ISSUE_NUM in $ISSUE_NUMBERS; do
+                  echo "  Returning issue #$ISSUE_NUM to agent:available"
 
-                gh issue comment "$ISSUE_NUM" \
-                  --body "PR #${PR_NUMBER} was auto-closed after ${STALE_DAYS} days with no response to review feedback. This issue is available again — see the [PR thread](#${PR_NUMBER}) for full context on what was attempted and what feedback remains unaddressed." \
-                  --repo ${{ github.repository }} 2>/dev/null || true
+                  gh issue edit "$ISSUE_NUM" \
+                    --remove-label "agent:claimed,agent:in-review" \
+                    --add-label "agent:available" \
+                    --repo ${{ github.repository }} 2>/dev/null || true
 
-                ISSUES_RETURNED=$((ISSUES_RETURNED + 1))
-              done
+                  gh issue comment "$ISSUE_NUM" \
+                    --body "PR #${PR_NUMBER} was auto-closed after ${CLOSE_DAYS} days with no response to review feedback. This issue is available again — see the [PR #${PR_NUMBER}](../pull/${PR_NUMBER}) thread for full context on what was attempted and what feedback remains unaddressed." \
+                    --repo ${{ github.repository }} 2>/dev/null || true
+
+                  ISSUES_RETURNED=$((ISSUES_RETURNED + 1))
+                done
+              fi
+
+            else
+              # In the warn window (>2d, <7d). Only warn once — check for existing warning comment.
+              ALREADY_WARNED=$(gh pr view "$PR_NUMBER" \
+                --repo ${{ github.repository }} \
+                --json comments \
+                --jq '[.comments[].body | select(contains("<!-- stale-pr-warning -->"))] | length')
+
+              if [ "$ALREADY_WARNED" -gt 0 ]; then
+                echo "  → Already warned. Skipping."
+              else
+                echo "  → WARNING (>${WARN_DAYS} days stale, <${CLOSE_DAYS} days)"
+
+                DAYS_LEFT=$((CLOSE_DAYS - WARN_DAYS))
+                {
+                  echo "### Stale PR Warning"
+                  echo ""
+                  echo "@${OPERATOR} — this PR has had \`changes_requested\` for more than **${WARN_DAYS} days** with no updates."
+                  echo ""
+                  echo "Please address the review feedback and push a fix. If there is no update within **${DAYS_LEFT} more days**, this PR will be auto-closed and the linked issues will be returned to \`agent:available\`."
+                  echo ""
+                  echo "The review comments above contain everything needed to complete the fix."
+                  echo ""
+                  echo "<!-- stale-pr-warning -->"
+                } > /tmp/stale-warn-comment.md
+
+                gh pr comment "$PR_NUMBER" \
+                  --body-file /tmp/stale-warn-comment.md \
+                  --repo ${{ github.repository }}
+
+                WARNED=$((WARNED + 1))
+              fi
             fi
 
             echo ""
           done
 
           echo "=== Summary ==="
-          echo "PRs closed: $CLOSED"
+          echo "PRs warned:  $WARNED"
+          echo "PRs closed:  $CLOSED"
           echo "Issues returned to available: $ISSUES_RETURNED"
 
           if [ "$CLOSED" -gt 0 ]; then
-            echo "::warning::Stale PR cleanup closed $CLOSED PRs. Check the repo for details."
+            echo "::warning::Stale PR cleanup closed $CLOSED PRs and returned $ISSUES_RETURNED issues to available."
+          elif [ "$WARNED" -gt 0 ]; then
+            echo "::notice::Stale PR cleanup warned $WARNED PRs."
           else
-            echo "::notice::All clear. No stale PRs."
+            echo "::notice::All clear. No action needed."
           fi
