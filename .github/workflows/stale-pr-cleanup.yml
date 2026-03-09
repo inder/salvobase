@@ -88,17 +88,21 @@ jobs:
             if [[ "$PR_UPDATED" < "$CLOSE_CUTOFF" ]]; then
               echo "  → CLOSING (>${CLOSE_DAYS} days stale)"
 
+              PR_URL="https://github.com/${{ github.repository }}/pull/${PR_NUMBER}"
               {
                 echo "### Stale PR — Auto-Closed"
                 echo ""
-                echo "@${OPERATOR} — this PR has had \`changes_requested\` for more than **${CLOSE_DAYS} days** with no updates."
+                echo "@${OPERATOR} — this PR has had \`changes_requested\` for more than **${CLOSE_DAYS} days** with no updates. It has been closed automatically."
                 echo ""
-                echo "Per [AGENT_PROTOCOL.md §7](../blob/master/AGENT_PROTOCOL.md#review-rounds), responding to review feedback is the author's responsibility."
+                echo "**The linked issues are now available again** for any agent to claim and complete."
                 echo ""
-                echo "**What happens next:**"
-                echo "- This PR is now closed."
-                echo "- Linked issues are returned to \`agent:available\` for any agent to claim."
-                echo "- Any agent can pick this up — the review thread has all the context needed to complete the work."
+                echo "---"
+                echo ""
+                echo "**If you want your agent to fix this**, open your agent (Cursor, Claude, etc.) and paste this prompt:"
+                echo ""
+                echo "> Go to $PR_URL, read the review feedback in the comments, and address it. The PR is now closed — create a new branch from master, apply the fix, and open a fresh PR referencing the same issues."
+                echo ""
+                echo "The review thread has everything your agent needs — what is wrong, where it is, and what the fix should look like."
                 echo ""
                 echo "<!-- stale-pr-closed -->"
               } > /tmp/stale-close-comment.md
@@ -143,14 +147,19 @@ jobs:
                 echo "  → WARNING (>${WARN_DAYS} days stale, <${CLOSE_DAYS} days)"
 
                 DAYS_LEFT=$((CLOSE_DAYS - WARN_DAYS))
+                PR_URL="https://github.com/${{ github.repository }}/pull/${PR_NUMBER}"
                 {
                   echo "### Stale PR Warning"
                   echo ""
-                  echo "@${OPERATOR} — this PR has had \`changes_requested\` for more than **${WARN_DAYS} days** with no updates."
+                  echo "@${OPERATOR} — this PR has had \`changes_requested\` for more than **${WARN_DAYS} days** with no updates. It will be **auto-closed in ${DAYS_LEFT} days** if there is no response."
                   echo ""
-                  echo "Please address the review feedback and push a fix. If there is no update within **${DAYS_LEFT} more days**, this PR will be auto-closed and the linked issues will be returned to \`agent:available\`."
+                  echo "---"
                   echo ""
-                  echo "The review comments above contain everything needed to complete the fix."
+                  echo "**If you want your agent to fix this**, open your agent (Cursor, Claude, etc.) and paste this prompt:"
+                  echo ""
+                  echo "> Go to $PR_URL, read the review feedback in the comments, and fix the issues. Push the fix to the existing branch."
+                  echo ""
+                  echo "That's it. Your agent will handle the rest."
                   echo ""
                   echo "<!-- stale-pr-warning -->"
                 } > /tmp/stale-warn-comment.md
