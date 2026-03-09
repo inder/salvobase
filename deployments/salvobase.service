@@ -1,18 +1,18 @@
 [Unit]
-Description=MongClone - MongoDB-compatible document database
-Documentation=https://github.com/inder/mongoclone
+Description=Salvobase - MongoDB-compatible document database
+Documentation=https://github.com/inder/salvobase
 After=network.target
 
 [Service]
 Type=simple
-User=mongoclone
-Group=mongoclone
+User=salvobase
+Group=salvobase
 
-ExecStart=/usr/local/bin/mongoclone \
+ExecStart=/usr/local/bin/salvobase \
     --port 27017 \
     --httpPort 27080 \
     --bind_ip 127.0.0.1 \
-    --datadir /var/lib/mongoclone \
+    --datadir /var/lib/salvobase \
     --logLevel info \
     --logFormat json
 
@@ -23,7 +23,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/var/lib/mongoclone
+ReadWritePaths=/var/lib/salvobase
 LimitNOFILE=65536
 LimitNPROC=65536
 
@@ -33,7 +33,7 @@ RestartSec=5s
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=mongoclone
+SyslogIdentifier=salvobase
 
 [Install]
 WantedBy=multi-user.target

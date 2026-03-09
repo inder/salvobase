@@ -1,6 +1,6 @@
 .PHONY: build run test clean tidy lint docker-build agent-check
 
-BINARY := mongoclone
+BINARY := salvobase
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 BUILD_TIME := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -s -w"
@@ -33,7 +33,7 @@ clean:
 	rm -rf bin/ data/
 
 docker-build:
-	docker build -t mongoclone:$(VERSION) .
+	docker build -t salvobase:$(VERSION) .
 
 # Convenience: run with a test database and auth disabled
 dev:
