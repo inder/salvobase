@@ -1,0 +1,128 @@
+name: Stale PR Cleanup
+
+# Closes PRs that have been sitting with changes_requested for too long
+# and returns their linked issues to agent:available.
+#
+# Thresholds:
+#   >7 days with changes_requested  → close PR, return issues to available
+#
+# Runs daily + manual trigger. Idempotent.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at 8 AM UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  cleanup:
+    name: Close Stale PRs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close stale changes_requested PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          STALE_DAYS=7
+          CUTOFF=$(date -u -d "${STALE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || date -u -v-${STALE_DAYS}d +%Y-%m-%dT%H:%M:%SZ)  # macOS fallback
+
+          echo "=== Stale PR Cleanup ==="
+          echo "Threshold: PRs with changes_requested older than ${STALE_DAYS} days"
+          echo "Cutoff: $CUTOFF"
+          echo ""
+
+          CLOSED=0
+          ISSUES_RETURNED=0
+
+          # Get all open PRs with changes_requested review decision
+          STALE_PRS=$(gh pr list \
+            --repo ${{ github.repository }} \
+            --state open \
+            --json number,title,updatedAt,reviewDecision,body,author \
+            --jq "[.[] | select(.reviewDecision == \"CHANGES_REQUESTED\" and .updatedAt < \"$CUTOFF\")]")
+
+          COUNT=$(echo "$STALE_PRS" | jq 'length')
+          echo "Open PRs with changes_requested older than ${STALE_DAYS} days: $COUNT"
+          echo ""
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::notice::No stale PRs found."
+            exit 0
+          fi
+
+          echo "$STALE_PRS" | jq -c '.[]' | while read -r pr; do
+            PR_NUMBER=$(echo "$pr" | jq -r '.number')
+            PR_TITLE=$(echo "$pr" | jq -r '.title')
+            PR_BODY=$(echo "$pr" | jq -r '.body')
+            PR_UPDATED=$(echo "$pr" | jq -r '.updatedAt')
+            PR_AUTHOR=$(echo "$pr" | jq -r '.author.login')
+
+            echo "Processing PR #$PR_NUMBER: $PR_TITLE"
+            echo "  Author: $PR_AUTHOR | Last updated: $PR_UPDATED"
+
+            # Extract linked issue numbers from "Closes #N" / "Fixes #N" in PR body
+            ISSUE_NUMBERS=$(echo "$PR_BODY" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | grep -oE '[0-9]+' || true)
+
+            # Post closing comment
+            {
+              echo "### Stale PR — Auto-Closed"
+              echo ""
+              echo "This PR has had \`changes_requested\` for more than **${STALE_DAYS} days** with no updates from the author."
+              echo ""
+              echo "Per [AGENT_PROTOCOL.md Section 7](../blob/master/AGENT_PROTOCOL.md#review-rounds), it is the author's responsibility to respond to review feedback promptly."
+              echo ""
+              echo "**What happens next:**"
+              echo "- This PR is now closed."
+              echo "- Linked issues are returned to \`agent:available\` for any agent to claim."
+              echo "- A different agent may re-implement this from scratch or continue from the review thread."
+              echo ""
+              echo "The review thread contains all the context needed to complete this work."
+              echo ""
+              echo "*Auto-closed by the stale-pr-cleanup workflow.*"
+            } > /tmp/stale-close-comment.md
+
+            gh pr comment "$PR_NUMBER" \
+              --body-file /tmp/stale-close-comment.md \
+              --repo ${{ github.repository }}
+
+            gh pr close "$PR_NUMBER" \
+              --repo ${{ github.repository }}
+
+            echo "  Closed PR #$PR_NUMBER"
+            CLOSED=$((CLOSED + 1))
+
+            # Return linked issues to agent:available
+            if [ -n "$ISSUE_NUMBERS" ]; then
+              for ISSUE_NUM in $ISSUE_NUMBERS; do
+                echo "  Returning issue #$ISSUE_NUM to agent:available"
+
+                gh issue edit "$ISSUE_NUM" \
+                  --remove-label "agent:claimed,agent:in-review" \
+                  --add-label "agent:available" \
+                  --repo ${{ github.repository }} 2>/dev/null || true
+
+                gh issue comment "$ISSUE_NUM" \
+                  --body "PR #${PR_NUMBER} was auto-closed after ${STALE_DAYS} days with no response to review feedback. This issue is available again — see the [PR thread](#${PR_NUMBER}) for full context on what was attempted and what feedback remains unaddressed." \
+                  --repo ${{ github.repository }} 2>/dev/null || true
+
+                ISSUES_RETURNED=$((ISSUES_RETURNED + 1))
+              done
+            fi
+
+            echo ""
+          done
+
+          echo "=== Summary ==="
+          echo "PRs closed: $CLOSED"
+          echo "Issues returned to available: $ISSUES_RETURNED"
+
+          if [ "$CLOSED" -gt 0 ]; then
+            echo "::warning::Stale PR cleanup closed $CLOSED PRs. Check the repo for details."
+          else
+            echo "::notice::All clear. No stale PRs."
+          fi
