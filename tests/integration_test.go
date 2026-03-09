@@ -1430,7 +1430,7 @@ func TestAggregateUnionWith(t *testing.T) {
 		t.Fatalf("$unionWith: expected 3, got %d", len(results))
 	}
 	names := []string{results[0]["name"].(string), results[1]["name"].(string), results[2]["name"].(string)}
-	expected := []string{Key: "alice", Value: "bob", "carol"}
+	expected := []string{"alice", "bob", "carol"}
 	for i, n := range names {
 		if n != expected[i] {
 			t.Errorf("$unionWith[%d]: expected %s, got %s", i, expected[i], n)
@@ -1739,7 +1739,7 @@ func TestMultiKeySort(t *testing.T) {
 		dept  string
 		score int32
 	}{
-		{Key: "eng", Value: 90}, {Key: "eng", Value: 70}, {Key: "mkt", Value: 95}, {Key: "mkt", Value: 85},
+		{"eng", 90}, {"eng", 70}, {"mkt", 95}, {"mkt", 85},
 	}
 	for i, exp := range expected {
 		if docs[i]["dept"] != exp.dept || docs[i]["score"] != exp.score {
