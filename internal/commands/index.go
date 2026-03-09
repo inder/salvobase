@@ -98,10 +98,10 @@ func handleCreateIndexes(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	numAfter := numBefore + int32(len(newIndexNames))
 
 	return marshalResponse(bson.D{
-		{"createdCollectionAutomatically", createdAutomatically},
-		{"numIndexesBefore", numBefore},
-		{"numIndexesAfter", numAfter},
-		{"ok", float64(1)},
+		{Key: "createdCollectionAutomatically", Value: createdAutomatically},
+		{Key: "numIndexesBefore", Value: numBefore},
+		{Key: "numIndexesAfter", Value: numAfter},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -168,8 +168,8 @@ func handleDropIndexes(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"nIndexesWas", numBefore},
-		{"ok", float64(1)},
+		{Key: "nIndexesWas", Value: numBefore},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -198,9 +198,9 @@ func handleListIndexes(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	docs := make([]bson.Raw, 0, len(indexes))
 	for _, idx := range indexes {
 		d := bson.D{
-			{"v", idx.V},
-			{"key", idx.Key},
-			{"name", idx.Name},
+			{Key: "v", Value: idx.V},
+			{Key: "key", Value: idx.Key},
+			{Key: "name", Value: idx.Name},
 		}
 		if idx.Unique {
 			d = append(d, bson.E{Key: "unique", Value: true})
@@ -228,12 +228,12 @@ func handleListIndexes(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"cursor", bson.D{
-			{"id", int64(0)},
-			{"ns", ns + ".$cmd.listIndexes"},
-			{"firstBatch", firstBatch},
+		{Key: "cursor", Value: bson.D{
+			{Key: "id", Value: int64(0)},
+			{Key: "ns", Value: ns + ".$cmd.listIndexes"},
+			{Key: "firstBatch", Value: firstBatch},
 		}},
-		{"ok", float64(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 

@@ -11,10 +11,10 @@ import (
 // MongoDB's TTL monitor runs every 60 seconds. We run every second for
 // millisecond-precision TTL support (an improvement over MongoDB Community).
 type TTLCleaner struct {
-	engine  *BBoltEngine
-	logger  *zap.Logger
-	stop    chan struct{}
-	done    chan struct{}
+	engine   *BBoltEngine
+	logger   *zap.Logger
+	stop     chan struct{}
+	done     chan struct{}
 	interval time.Duration
 }
 

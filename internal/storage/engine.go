@@ -51,11 +51,11 @@ func collBucket(coll string) string { return "col." + coll }
 func idxBucket(coll, idx string) string {
 	return "idx." + coll + "." + idx
 }
-func metaCollKey(coll string) []byte        { return []byte(coll) }
-func metaIdxKey(coll, idx string) []byte    { return []byte(coll + "." + idx) }
-func metaIdxPrefix(coll string) []byte      { return []byte(coll + ".") }
-func userKey(db, username string) []byte    { return []byte(db + "\x00" + username) }
-func userPrefix(db string) []byte           { return []byte(db + "\x00") }
+func metaCollKey(coll string) []byte     { return []byte(coll) }
+func metaIdxKey(coll, idx string) []byte { return []byte(coll + "." + idx) }
+func metaIdxPrefix(coll string) []byte   { return []byte(coll + ".") }
+func userKey(db, username string) []byte { return []byte(db + "\x00" + username) }
+func userPrefix(db string) []byte        { return []byte(db + "\x00") }
 
 // NewBBoltEngine creates (or opens) a BBolt-backed storage engine.
 func NewBBoltEngine(dataDir, compression string, syncOnWrite bool) (*BBoltEngine, error) {
@@ -690,14 +690,14 @@ func (e *BBoltEngine) ListIndexes(db, coll string) ([]IndexInfo, error) {
 				continue // already added above
 			}
 			info := IndexInfo{
-				V:      2,
-				Key:    spec.Keys,
-				Name:   spec.Name,
-				NS:     db + "." + coll,
-				Unique: spec.Unique,
-				Sparse: spec.Sparse,
+				V:                  2,
+				Key:                spec.Keys,
+				Name:               spec.Name,
+				NS:                 db + "." + coll,
+				Unique:             spec.Unique,
+				Sparse:             spec.Sparse,
 				ExpireAfterSeconds: spec.ExpireAfterSeconds,
-				Hidden: spec.Hidden,
+				Hidden:             spec.Hidden,
 			}
 			result = append(result, info)
 		}

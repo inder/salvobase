@@ -4,7 +4,8 @@
 // These tests use the official MongoDB Go driver to verify wire protocol compatibility.
 //
 // Run with:
-//   go test -tags integration -v ./tests/ -mongoURI mongodb://localhost:27017
+//
+//	go test -tags integration -v ./tests/ -mongoURI mongodb://localhost:27017
 package tests
 
 import (
@@ -54,7 +55,7 @@ func TestInsertOne(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 
 	ctx := context.Background()
-	res, err := coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"age", 30}})
+	res, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "age", Value: 30}})
 	if err != nil {
 		t.Fatalf("InsertOne: %v", err)
 	}
@@ -69,9 +70,9 @@ func TestInsertMany(t *testing.T) {
 
 	ctx := context.Background()
 	docs := []interface{}{
-		bson.D{{"name", "alice"}, {"age", 30}},
-		bson.D{{"name", "bob"}, {"age", 25}},
-		bson.D{{"name", "carol"}, {"age", 35}},
+		bson.D{{Key: "name", Value: "alice"}, {Key: "age", Value: 30}},
+		bson.D{{Key: "name", Value: "bob"}, {Key: "age", Value: 25}},
+		bson.D{{Key: "name", Value: "carol"}, {Key: "age", Value: 35}},
 	}
 	res, err := coll.InsertMany(ctx, docs)
 	if err != nil {
@@ -88,7 +89,7 @@ func TestFindAll(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		_, _ = coll.InsertOne(ctx, bson.D{{"n", i}})
+		_, _ = coll.InsertOne(ctx, bson.D{{Key: "n", Value: i}})
 	}
 
 	cursor, err := coll.Find(ctx, bson.D{})
@@ -112,14 +113,14 @@ func TestFindWithFilter(t *testing.T) {
 	ctx := context.Background()
 
 	docs := []interface{}{
-		bson.D{{"name", "alice"}, {"score", 90}},
-		bson.D{{"name", "bob"}, {"score", 70}},
-		bson.D{{"name", "carol"}, {"score", 85}},
+		bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: 90}},
+		bson.D{{Key: "name", Value: "bob"}, {Key: "score", Value: 70}},
+		bson.D{{Key: "name", Value: "carol"}, {Key: "score", Value: 85}},
 	}
 	_, _ = coll.InsertMany(ctx, docs)
 
 	// Find where score > 80
-	cursor, err := coll.Find(ctx, bson.D{{"score", bson.D{{"$gt", 80}}}})
+	cursor, err := coll.Find(ctx, bson.D{{Key: "score", Value: bson.D{{Key: "$gt", Value: 80}}}})
 	if err != nil {
 		t.Fatalf("Find: %v", err)
 	}
@@ -137,10 +138,10 @@ func TestFindOne(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	_, _ = coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 99}})
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: 99}})
 
 	var result bson.M
-	err := coll.FindOne(ctx, bson.D{{"name", "alice"}}).Decode(&result)
+	err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "alice"}}).Decode(&result)
 	if err != nil {
 		t.Fatalf("FindOne: %v", err)
 	}
@@ -154,11 +155,11 @@ func TestUpdateOne(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	_, _ = coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 90}})
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: 90}})
 
 	res, err := coll.UpdateOne(ctx,
-		bson.D{{"name", "alice"}},
-		bson.D{{"$set", bson.D{{"score", 95}}}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "score", Value: 95}}}},
 	)
 	if err != nil {
 		t.Fatalf("UpdateOne: %v", err)
@@ -168,7 +169,7 @@ func TestUpdateOne(t *testing.T) {
 	}
 
 	var result bson.M
-	_ = coll.FindOne(ctx, bson.D{{"name", "alice"}}).Decode(&result)
+	_ = coll.FindOne(ctx, bson.D{{Key: "name", Value: "alice"}}).Decode(&result)
 	if result["score"] != int32(95) {
 		t.Errorf("expected updated score=95, got %v", result["score"])
 	}
@@ -180,14 +181,14 @@ func TestUpdateMany(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"status", "pending"}},
-		bson.D{{"status", "pending"}},
-		bson.D{{"status", "done"}},
+		bson.D{{Key: "status", Value: "pending"}},
+		bson.D{{Key: "status", Value: "pending"}},
+		bson.D{{Key: "status", Value: "done"}},
 	})
 
 	res, err := coll.UpdateMany(ctx,
-		bson.D{{"status", "pending"}},
-		bson.D{{"$set", bson.D{{"status", "processed"}}}},
+		bson.D{{Key: "status", Value: "pending"}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "status", Value: "processed"}}}},
 	)
 	if err != nil {
 		t.Fatalf("UpdateMany: %v", err)
@@ -203,10 +204,10 @@ func TestDeleteOne(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"n", 1}}, bson.D{{"n", 2}}, bson.D{{"n", 3}},
+		bson.D{{Key: "n", Value: 1}}, bson.D{{Key: "n", Value: 2}}, bson.D{{Key: "n", Value: 3}},
 	})
 
-	res, err := coll.DeleteOne(ctx, bson.D{{"n", 2}})
+	res, err := coll.DeleteOne(ctx, bson.D{{Key: "n", Value: 2}})
 	if err != nil {
 		t.Fatalf("DeleteOne: %v", err)
 	}
@@ -226,10 +227,10 @@ func TestDeleteMany(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"tag", "a"}}, bson.D{{"tag", "a"}}, bson.D{{"tag", "b"}},
+		bson.D{{Key: "tag", Value: "a"}}, bson.D{{Key: "tag", Value: "a"}}, bson.D{{Key: "tag", Value: "b"}},
 	})
 
-	res, err := coll.DeleteMany(ctx, bson.D{{"tag", "a"}})
+	res, err := coll.DeleteMany(ctx, bson.D{{Key: "tag", Value: "a"}})
 	if err != nil {
 		t.Fatalf("DeleteMany: %v", err)
 	}
@@ -246,8 +247,8 @@ func TestUpsertInsert(t *testing.T) {
 	ctx := context.Background()
 
 	res, err := coll.UpdateOne(ctx,
-		bson.D{{"name", "alice"}},
-		bson.D{{"$set", bson.D{{"score", 100}}}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "score", Value: 100}}}},
 		options.UpdateOne().SetUpsert(true),
 	)
 	if err != nil {
@@ -266,19 +267,19 @@ func TestCreateUniqueIndex(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := coll.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.D{{"email", 1}},
+		Keys:    bson.D{{Key: "email", Value: 1}},
 		Options: options.Index().SetUnique(true),
 	})
 	if err != nil {
 		t.Fatalf("CreateIndex: %v", err)
 	}
 
-	_, err = coll.InsertOne(ctx, bson.D{{"email", "a@example.com"}})
+	_, err = coll.InsertOne(ctx, bson.D{{Key: "email", Value: "a@example.com"}})
 	if err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 
-	_, err = coll.InsertOne(ctx, bson.D{{"email", "a@example.com"}})
+	_, err = coll.InsertOne(ctx, bson.D{{Key: "email", Value: "a@example.com"}})
 	if err == nil {
 		t.Error("expected duplicate key error, got nil")
 	}
@@ -290,7 +291,7 @@ func TestListIndexes(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys: bson.D{{"name", 1}},
+		Keys: bson.D{{Key: "name", Value: 1}},
 	})
 
 	cursor, err := coll.Indexes().List(ctx)
@@ -315,11 +316,11 @@ func TestSortSkipLimit(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 10; i++ {
-		_, _ = coll.InsertOne(ctx, bson.D{{"n", i}})
+		_, _ = coll.InsertOne(ctx, bson.D{{Key: "n", Value: i}})
 	}
 
 	opts := options.Find().
-		SetSort(bson.D{{"n", -1}}). // descending
+		SetSort(bson.D{{Key: "n", Value: -1}}). // descending
 		SetSkip(2).
 		SetLimit(3)
 
@@ -350,13 +351,13 @@ func TestAggregateMatch(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"dept", "eng"}, {"salary", 100000}},
-		bson.D{{"dept", "eng"}, {"salary", 120000}},
-		bson.D{{"dept", "mkt"}, {"salary", 80000}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: 100000}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: 120000}},
+		bson.D{{Key: "dept", Value: "mkt"}, {Key: "salary", Value: 80000}},
 	})
 
 	pipeline := mongo.Pipeline{
-		{{"$match", bson.D{{"dept", "eng"}}}},
+		{{Key: "$match", Value: bson.D{{Key: "dept", Value: "eng"}}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipeline)
 	if err != nil {
@@ -375,18 +376,18 @@ func TestAggregateGroup(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"dept", "eng"}, {"salary", 100000}},
-		bson.D{{"dept", "eng"}, {"salary", 120000}},
-		bson.D{{"dept", "mkt"}, {"salary", 80000}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: 100000}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: 120000}},
+		bson.D{{Key: "dept", Value: "mkt"}, {Key: "salary", Value: 80000}},
 	})
 
 	pipeline := mongo.Pipeline{
-		{{"$group", bson.D{
-			{"_id", "$dept"},
-			{"totalSalary", bson.D{{"$sum", "$salary"}}},
-			{"count", bson.D{{"$sum", 1}}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$dept"},
+			{Key: "totalSalary", Value: bson.D{{Key: "$sum", Value: "$salary"}}},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
 		}}},
-		{{"$sort", bson.D{{"_id", 1}}}},
+		{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipeline)
 	if err != nil {
@@ -421,12 +422,12 @@ func TestAggregateUnwind(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertOne(ctx, bson.D{
-		{"name", "alice"},
-		{"tags", bson.A{"go", "python", "rust"}},
+		{Key: "name", Value: "alice"},
+		{Key: "tags", Value: bson.A{Key: "go", Value: "python", "rust"}},
 	})
 
 	pipeline := mongo.Pipeline{
-		{{"$unwind", "$tags"}},
+		{{Key: "$unwind", Value: "$tags"}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipeline)
 	if err != nil {
@@ -447,23 +448,23 @@ func TestAggregateLookup(t *testing.T) {
 	// orders collection
 	orders := db.Collection("orders")
 	_, _ = orders.InsertMany(ctx, []interface{}{
-		bson.D{{"_id", 1}, {"userID", 10}, {"amount", 100}},
-		bson.D{{"_id", 2}, {"userID", 11}, {"amount", 200}},
+		bson.D{{Key: "_id", Value: 1}, {Key: "userID", Value: 10}, {Key: "amount", Value: 100}},
+		bson.D{{Key: "_id", Value: 2}, {Key: "userID", Value: 11}, {Key: "amount", Value: 200}},
 	})
 
 	// users collection
 	users := db.Collection("users")
 	_, _ = users.InsertMany(ctx, []interface{}{
-		bson.D{{"_id", 10}, {"name", "alice"}},
-		bson.D{{"_id", 11}, {"name", "bob"}},
+		bson.D{{Key: "_id", Value: 10}, {Key: "name", Value: "alice"}},
+		bson.D{{Key: "_id", Value: 11}, {Key: "name", Value: "bob"}},
 	})
 
 	pipeline := mongo.Pipeline{
-		{{"$lookup", bson.D{
-			{"from", "users"},
-			{"localField", "userID"},
-			{"foreignField", "_id"},
-			{"as", "user"},
+		{{Key: "$lookup", Value: bson.D{
+			{Key: "from", Value: "users"},
+			{Key: "localField", Value: "userID"},
+			{Key: "foreignField", Value: "_id"},
+			{Key: "as", Value: "user"},
 		}}},
 	}
 	cursor, err := orders.Aggregate(ctx, pipeline)
@@ -491,10 +492,10 @@ func TestFilterOperators(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"n", 1}, {"tags", bson.A{"a", "b"}}},
-		bson.D{{"n", 2}, {"tags", bson.A{"b", "c"}}},
-		bson.D{{"n", 3}, {"tags", bson.A{"a", "c"}}},
-		bson.D{{"n", 4}},                             // no tags
+		bson.D{{Key: "n", Value: 1}, {Key: "tags", Value: bson.A{Key: "a", Value: "b"}}},
+		bson.D{{Key: "n", Value: 2}, {Key: "tags", Value: bson.A{Key: "b", Value: "c"}}},
+		bson.D{{Key: "n", Value: 3}, {Key: "tags", Value: bson.A{Key: "a", Value: "c"}}},
+		bson.D{{Key: "n", Value: 4}}, // no tags
 	})
 
 	tests := []struct {
@@ -502,19 +503,19 @@ func TestFilterOperators(t *testing.T) {
 		filter bson.D
 		expect int
 	}{
-		{"$in", bson.D{{"n", bson.D{{"$in", bson.A{1, 3}}}}}, 2},
-		{"$nin", bson.D{{"n", bson.D{{"$nin", bson.A{1, 2}}}}}, 2},
-		{"$exists true", bson.D{{"tags", bson.D{{"$exists", true}}}}, 3},
-		{"$exists false", bson.D{{"tags", bson.D{{"$exists", false}}}}, 1},
-		{"$all", bson.D{{"tags", bson.D{{"$all", bson.A{"a", "b"}}}}}, 1},
-		{"$size", bson.D{{"tags", bson.D{{"$size", 2}}}}, 3},
-		{"$and", bson.D{{"$and", bson.A{
-			bson.D{{"n", bson.D{{"$gte", 2}}}},
-			bson.D{{"n", bson.D{{"$lte", 3}}}},
+		{Key: "$in", Value: bson.D{{Key: "n", Value: bson.D{{Key: "$in", Value: bson.A{1, 3}}}}}, 2},
+		{Key: "$nin", Value: bson.D{{Key: "n", Value: bson.D{{Key: "$nin", Value: bson.A{1, 2}}}}}, 2},
+		{Key: "$exists true", Value: bson.D{{Key: "tags", Value: bson.D{{Key: "$exists", Value: true}}}}, 3},
+		{Key: "$exists false", Value: bson.D{{Key: "tags", Value: bson.D{{Key: "$exists", Value: false}}}}, 1},
+		{Key: "$all", Value: bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{Key: "a", Value: "b"}}}}}, 1},
+		{Key: "$size", Value: bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: 2}}}}, 3},
+		{Key: "$and", Value: bson.D{{Key: "$and", Value: bson.A{
+			bson.D{{Key: "n", Value: bson.D{{Key: "$gte", Value: 2}}}},
+			bson.D{{Key: "n", Value: bson.D{{Key: "$lte", Value: 3}}}},
 		}}}, 2},
-		{"$or", bson.D{{"$or", bson.A{
-			bson.D{{"n", 1}},
-			bson.D{{"n", 4}},
+		{Key: "$or", Value: bson.D{{Key: "$or", Value: bson.A{
+			bson.D{{Key: "n", Value: 1}},
+			bson.D{{Key: "n", Value: 4}},
 		}}}, 2},
 	}
 
@@ -539,33 +540,33 @@ func TestUpdateOperators(t *testing.T) {
 	ctx := context.Background()
 
 	id, _ := coll.InsertOne(ctx, bson.D{
-		{"score", 10},
-		{"tags", bson.A{"a", "b"}},
-		{"nested", bson.D{{"x", 1}}},
+		{Key: "score", Value: 10},
+		{Key: "tags", Value: bson.A{Key: "a", Value: "b"}},
+		{Key: "nested", Value: bson.D{{Key: "x", Value: 1}}},
 	})
 
 	// $inc
-	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id.InsertedID}},
-		bson.D{{"$inc", bson.D{{"score", 5}}}})
+	_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id.InsertedID}},
+		bson.D{{Key: "$inc", Value: bson.D{{Key: "score", Value: 5}}}})
 	var r bson.M
-	_ = coll.FindOne(ctx, bson.D{{"_id", id.InsertedID}}).Decode(&r)
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id.InsertedID}}).Decode(&r)
 	if r["score"] != int32(15) {
 		t.Errorf("$inc: expected 15, got %v", r["score"])
 	}
 
 	// $push
-	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id.InsertedID}},
-		bson.D{{"$push", bson.D{{"tags", "c"}}}})
-	_ = coll.FindOne(ctx, bson.D{{"_id", id.InsertedID}}).Decode(&r)
+	_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id.InsertedID}},
+		bson.D{{Key: "$push", Value: bson.D{{Key: "tags", Value: "c"}}}})
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id.InsertedID}}).Decode(&r)
 	tags := r["tags"].(bson.A)
 	if len(tags) != 3 {
 		t.Errorf("$push: expected 3 tags, got %d", len(tags))
 	}
 
 	// $set nested
-	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id.InsertedID}},
-		bson.D{{"$set", bson.D{{"nested.x", 99}}}})
-	_ = coll.FindOne(ctx, bson.D{{"_id", id.InsertedID}}).Decode(&r)
+	_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id.InsertedID}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "nested.x", Value: 99}}}})
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id.InsertedID}}).Decode(&r)
 	// In mongo-driver v2, decoding into bson.M returns nested docs as bson.D.
 	nested := r["nested"].(bson.D)
 	nestedMap := make(map[string]interface{})
@@ -577,10 +578,10 @@ func TestUpdateOperators(t *testing.T) {
 	}
 
 	// $unset — use a fresh map so stale keys from prior Decodes don't linger.
-	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id.InsertedID}},
-		bson.D{{"$unset", bson.D{{"nested", ""}}}})
+	_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id.InsertedID}},
+		bson.D{{Key: "$unset", Value: bson.D{{Key: "nested", Value: ""}}}})
 	var r2 bson.M
-	_ = coll.FindOne(ctx, bson.D{{"_id", id.InsertedID}}).Decode(&r2)
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id.InsertedID}}).Decode(&r2)
 	if _, exists := r2["nested"]; exists {
 		t.Error("$unset: expected nested to be removed")
 	}
@@ -594,10 +595,10 @@ func TestDistinct(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"dept", "eng"}},
-		bson.D{{"dept", "eng"}},
-		bson.D{{"dept", "mkt"}},
-		bson.D{{"dept", "hr"}},
+		bson.D{{Key: "dept", Value: "eng"}},
+		bson.D{{Key: "dept", Value: "eng"}},
+		bson.D{{Key: "dept", Value: "mkt"}},
+		bson.D{{Key: "dept", Value: "hr"}},
 	})
 
 	distinctResult := coll.Distinct(ctx, "dept", bson.D{})
@@ -621,7 +622,7 @@ func TestListDatabases(t *testing.T) {
 
 	// Create a test database
 	dbName := testDB(t)
-	_, _ = client.Database(dbName).Collection("test").InsertOne(ctx, bson.D{{"x", 1}})
+	_, _ = client.Database(dbName).Collection("test").InsertOne(ctx, bson.D{{Key: "x", Value: 1}})
 
 	result, err := client.ListDatabaseNames(ctx, bson.D{})
 	if err != nil {
@@ -645,8 +646,8 @@ func TestListCollections(t *testing.T) {
 	ctx := context.Background()
 
 	db := client.Database(testDB(t))
-	_, _ = db.Collection("col1").InsertOne(ctx, bson.D{{"x", 1}})
-	_, _ = db.Collection("col2").InsertOne(ctx, bson.D{{"x", 1}})
+	_, _ = db.Collection("col1").InsertOne(ctx, bson.D{{Key: "x", Value: 1}})
+	_, _ = db.Collection("col2").InsertOne(ctx, bson.D{{Key: "x", Value: 1}})
 
 	names, err := db.ListCollectionNames(ctx, bson.D{})
 	if err != nil {
@@ -674,7 +675,7 @@ func TestServerVersion(t *testing.T) {
 	ctx := context.Background()
 
 	var result bson.M
-	err := client.Database("admin").RunCommand(ctx, bson.D{{"buildInfo", 1}}).Decode(&result)
+	err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "buildInfo", Value: 1}}).Decode(&result)
 	if err != nil {
 		t.Fatalf("buildInfo: %v", err)
 	}
@@ -691,15 +692,15 @@ func TestProjection(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertOne(ctx, bson.D{
-		{"name", "alice"},
-		{"score", 95},
-		{"internal", "secret"},
+		{Key: "name", Value: "alice"},
+		{Key: "score", Value: 95},
+		{Key: "internal", Value: "secret"},
 	})
 
 	opts := options.FindOne().SetProjection(bson.D{
-		{"name", 1},
-		{"score", 1},
-		{"_id", 0},
+		{Key: "name", Value: 1},
+		{Key: "score", Value: 1},
+		{Key: "_id", Value: 0},
 	})
 	var result bson.M
 	if err := coll.FindOne(ctx, bson.D{}, opts).Decode(&result); err != nil {
@@ -726,7 +727,7 @@ func TestGetMore(t *testing.T) {
 	// Insert 200 docs to force multiple batches
 	docs := make([]interface{}, 200)
 	for i := range docs {
-		docs[i] = bson.D{{"n", i}}
+		docs[i] = bson.D{{Key: "n", Value: i}}
 	}
 	_, _ = coll.InsertMany(ctx, docs)
 
@@ -755,13 +756,13 @@ func TestFindOneAndUpdate(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	_, _ = coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 80}})
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: 80}})
 
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 	var result bson.M
 	err := coll.FindOneAndUpdate(ctx,
-		bson.D{{"name", "alice"}},
-		bson.D{{"$inc", bson.D{{"score", 10}}}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "$inc", Value: bson.D{{Key: "score", Value: 10}}}},
 		opts,
 	).Decode(&result)
 	if err != nil {
@@ -779,17 +780,17 @@ func TestReplaceOne(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	res, _ := coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 42}, {"extra", "keep"}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: 42}, {Key: "extra", Value: "keep"}})
 	id := res.InsertedID
 
 	// Replace doc entirely (only _id is preserved).
-	_, err := coll.ReplaceOne(ctx, bson.D{{"_id", id}}, bson.D{{"name", "bob"}, {"score", 99}})
+	_, err := coll.ReplaceOne(ctx, bson.D{{Key: "_id", Value: id}}, bson.D{{Key: "name", Value: "bob"}, {Key: "score", Value: 99}})
 	if err != nil {
 		t.Fatalf("ReplaceOne: %v", err)
 	}
 
 	var r bson.M
-	_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&r)
 	if r["name"] != "bob" {
 		t.Errorf("ReplaceOne: expected name=bob, got %v", r["name"])
 	}
@@ -809,10 +810,10 @@ func TestFindOneAndDelete(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	_, _ = coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 10}})
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: 10}})
 
 	var deleted bson.M
-	err := coll.FindOneAndDelete(ctx, bson.D{{"name", "alice"}}).Decode(&deleted)
+	err := coll.FindOneAndDelete(ctx, bson.D{{Key: "name", Value: "alice"}}).Decode(&deleted)
 	if err != nil {
 		t.Fatalf("FindOneAndDelete: %v", err)
 	}
@@ -821,7 +822,7 @@ func TestFindOneAndDelete(t *testing.T) {
 	}
 
 	// Doc must be gone.
-	err = coll.FindOne(ctx, bson.D{{"name", "alice"}}).Err()
+	err = coll.FindOne(ctx, bson.D{{Key: "name", Value: "alice"}}).Err()
 	if err != mongo.ErrNoDocuments {
 		t.Errorf("FindOneAndDelete: expected doc to be deleted, got err=%v", err)
 	}
@@ -832,15 +833,15 @@ func TestFindOneAndReplace(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	res, _ := coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"score", 10}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: 10}})
 	id := res.InsertedID
 
 	// ReturnDocument(After) should give back the replacement.
 	opts := options.FindOneAndReplace().SetReturnDocument(options.After)
 	var result bson.M
 	err := coll.FindOneAndReplace(ctx,
-		bson.D{{"name", "alice"}},
-		bson.D{{"name", "bob"}, {"score", 99}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "name", Value: "bob"}, {Key: "score", Value: 99}},
 		opts,
 	).Decode(&result)
 	if err != nil {
@@ -863,19 +864,19 @@ func TestBulkWrite(t *testing.T) {
 
 	// Seed two docs.
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"name", "alice"}, {"score", 10}},
-		bson.D{{"name", "bob"}, {"score", 20}},
+		bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: 10}},
+		bson.D{{Key: "name", Value: "bob"}, {Key: "score", Value: 20}},
 	})
 
 	res, err := coll.BulkWrite(ctx, []mongo.WriteModel{
 		// Insert a new doc.
-		mongo.NewInsertOneModel().SetDocument(bson.D{{"name", "carol"}, {"score", 30}}),
+		mongo.NewInsertOneModel().SetDocument(bson.D{{Key: "name", Value: "carol"}, {Key: "score", Value: 30}}),
 		// Update alice.
 		mongo.NewUpdateOneModel().
-			SetFilter(bson.D{{"name", "alice"}}).
-			SetUpdate(bson.D{{"$inc", bson.D{{"score", 5}}}}),
+			SetFilter(bson.D{{Key: "name", Value: "alice"}}).
+			SetUpdate(bson.D{{Key: "$inc", Value: bson.D{{Key: "score", Value: 5}}}}),
 		// Delete bob.
-		mongo.NewDeleteOneModel().SetFilter(bson.D{{"name", "bob"}}),
+		mongo.NewDeleteOneModel().SetFilter(bson.D{{Key: "name", Value: "bob"}}),
 	})
 	if err != nil {
 		t.Fatalf("BulkWrite: %v", err)
@@ -892,19 +893,19 @@ func TestBulkWrite(t *testing.T) {
 
 	// Verify alice's score was incremented.
 	var alice bson.M
-	_ = coll.FindOne(ctx, bson.D{{"name", "alice"}}).Decode(&alice)
+	_ = coll.FindOne(ctx, bson.D{{Key: "name", Value: "alice"}}).Decode(&alice)
 	if alice["score"] != int32(15) {
 		t.Errorf("BulkWrite: expected alice score=15, got %v", alice["score"])
 	}
 
 	// Verify bob is deleted.
-	if err := coll.FindOne(ctx, bson.D{{"name", "bob"}}).Err(); err != mongo.ErrNoDocuments {
+	if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "bob"}}).Err(); err != mongo.ErrNoDocuments {
 		t.Errorf("BulkWrite: expected bob to be deleted, got err=%v", err)
 	}
 
 	// Verify carol was inserted.
 	var carol bson.M
-	if err := coll.FindOne(ctx, bson.D{{"name", "carol"}}).Decode(&carol); err != nil {
+	if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "carol"}}).Decode(&carol); err != nil {
 		t.Errorf("BulkWrite: carol not found: %v", err)
 	}
 }
@@ -917,14 +918,14 @@ func TestRegexFilter(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"name", "Alice"}},
-		bson.D{{"name", "alice"}},
-		bson.D{{"name", "Bob"}},
-		bson.D{{"name", "alicia"}},
+		bson.D{{Key: "name", Value: "Alice"}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "name", Value: "Bob"}},
+		bson.D{{Key: "name", Value: "alicia"}},
 	})
 
 	// Case-sensitive prefix match: "^alice" matches "alice" and "alicia".
-	count, err := coll.CountDocuments(ctx, bson.D{{"name", bson.D{{"$regex", "^alic"}}}})
+	count, err := coll.CountDocuments(ctx, bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "^alic"}}}})
 	if err != nil {
 		t.Fatalf("$regex: %v", err)
 	}
@@ -933,9 +934,9 @@ func TestRegexFilter(t *testing.T) {
 	}
 
 	// Case-insensitive with $options: "^alic" matches "Alice", "alice", "alicia".
-	count, err = coll.CountDocuments(ctx, bson.D{{"name", bson.D{
-		{"$regex", "^alic"},
-		{"$options", "i"},
+	count, err = coll.CountDocuments(ctx, bson.D{{Key: "name", Value: bson.D{
+		{Key: "$regex", Value: "^alic"},
+		{Key: "$options", Value: "i"},
 	}}})
 	if err != nil {
 		t.Fatalf("$regex $options: %v", err)
@@ -953,20 +954,20 @@ func TestAggregateExpressions(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"a", 10}, {"b", 3}},
-		bson.D{{"a", 6}, {"b", 2}},
+		bson.D{{Key: "a", Value: 10}, {Key: "b", Value: 3}},
+		bson.D{{Key: "a", Value: 6}, {Key: "b", Value: 2}},
 	})
 
 	// $project with $multiply and $add.
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$project", bson.D{
-			{"result", bson.D{{"$add", bson.A{
-				bson.D{{"$multiply", bson.A{"$a", "$b"}}},
+		bson.D{{Key: "$project", Value: bson.D{
+			{Key: "result", Value: bson.D{{Key: "$add", Value: bson.A{
+				bson.D{{Key: "$multiply", Value: bson.A{Key: "$a", Value: "$b"}}},
 				1,
 			}}}},
-			{"_id", 0},
+			{Key: "_id", Value: 0},
 		}}},
-		bson.D{{"$sort", bson.D{{"result", 1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "result", Value: 1}}}},
 	})
 	if err != nil {
 		t.Fatalf("Aggregate expr: %v", err)
@@ -994,11 +995,11 @@ func TestAggregateAddFields(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	_, _ = coll.InsertOne(ctx, bson.D{{"price", 100}, {"qty", 3}})
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "price", Value: 100}, {Key: "qty", Value: 3}})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$addFields", bson.D{
-			{"total", bson.D{{"$multiply", bson.A{"$price", "$qty"}}}},
+		bson.D{{Key: "$addFields", Value: bson.D{
+			{Key: "total", Value: bson.D{{Key: "$multiply", Value: bson.A{Key: "$price", Value: "$qty"}}}},
 		}}},
 	})
 	if err != nil {
@@ -1025,20 +1026,20 @@ func TestAggregateCondExpr(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"score", 85}},
-		bson.D{{"score", 45}},
+		bson.D{{Key: "score", Value: 85}},
+		bson.D{{Key: "score", Value: 45}},
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$project", bson.D{
-			{"grade", bson.D{{"$cond", bson.D{
-				{"if", bson.D{{"$gte", bson.A{"$score", 60}}}},
-				{"then", "pass"},
-				{"else", "fail"},
+		bson.D{{Key: "$project", Value: bson.D{
+			{Key: "grade", Value: bson.D{{Key: "$cond", Value: bson.D{
+				{Key: "if", Value: bson.D{{Key: "$gte", Value: bson.A{Key: "$score", Value: 60}}}},
+				{Key: "then", Value: "pass"},
+				{Key: "else", Value: "fail"},
 			}}}},
-			{"_id", 0},
+			{Key: "_id", Value: 0},
 		}}},
-		bson.D{{"$sort", bson.D{{"grade", 1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "grade", Value: 1}}}},
 	})
 	if err != nil {
 		t.Fatalf("$cond: %v", err)
@@ -1069,16 +1070,16 @@ func TestNorAndNotFilters(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"n", 1}, {"active", true}},
-		bson.D{{"n", 2}, {"active", false}},
-		bson.D{{"n", 3}, {"active", true}},
-		bson.D{{"n", 4}}, // active missing
+		bson.D{{Key: "n", Value: 1}, {Key: "active", Value: true}},
+		bson.D{{Key: "n", Value: 2}, {Key: "active", Value: false}},
+		bson.D{{Key: "n", Value: 3}, {Key: "active", Value: true}},
+		bson.D{{Key: "n", Value: 4}}, // active missing
 	})
 
 	// $nor: docs where n is NOT 1 AND NOT 3 → docs 2 and 4.
-	count, err := coll.CountDocuments(ctx, bson.D{{"$nor", bson.A{
-		bson.D{{"n", 1}},
-		bson.D{{"n", 3}},
+	count, err := coll.CountDocuments(ctx, bson.D{{Key: "$nor", Value: bson.A{
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 3}},
 	}}})
 	if err != nil {
 		t.Fatalf("$nor: %v", err)
@@ -1088,7 +1089,7 @@ func TestNorAndNotFilters(t *testing.T) {
 	}
 
 	// $not: docs where active is NOT true → docs 2 (false) and 4 (missing).
-	count, err = coll.CountDocuments(ctx, bson.D{{"active", bson.D{{"$not", bson.D{{"$eq", true}}}}}})
+	count, err = coll.CountDocuments(ctx, bson.D{{Key: "active", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$eq", Value: true}}}}}})
 	if err != nil {
 		t.Fatalf("$not: %v", err)
 	}
@@ -1105,13 +1106,13 @@ func TestDotNotationFilter(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"profile", bson.D{{"age", 25}, {"city", "NYC"}}}},
-		bson.D{{"profile", bson.D{{"age", 30}, {"city", "LA"}}}},
-		bson.D{{"profile", bson.D{{"age", 25}, {"city", "SF"}}}},
+		bson.D{{Key: "profile", Value: bson.D{{Key: "age", Value: 25}, {Key: "city", Value: "NYC"}}}},
+		bson.D{{Key: "profile", Value: bson.D{{Key: "age", Value: 30}, {Key: "city", Value: "LA"}}}},
+		bson.D{{Key: "profile", Value: bson.D{{Key: "age", Value: 25}, {Key: "city", Value: "SF"}}}},
 	})
 
 	// Filter by nested field using dot notation.
-	count, err := coll.CountDocuments(ctx, bson.D{{"profile.age", 25}})
+	count, err := coll.CountDocuments(ctx, bson.D{{Key: "profile.age", Value: 25}})
 	if err != nil {
 		t.Fatalf("dot notation filter: %v", err)
 	}
@@ -1120,7 +1121,7 @@ func TestDotNotationFilter(t *testing.T) {
 	}
 
 	// Range filter on nested field.
-	count, err = coll.CountDocuments(ctx, bson.D{{"profile.age", bson.D{{"$gte", 30}}}})
+	count, err = coll.CountDocuments(ctx, bson.D{{Key: "profile.age", Value: bson.D{{Key: "$gte", Value: 30}}}})
 	if err != nil {
 		t.Fatalf("dot notation $gte: %v", err)
 	}
@@ -1135,13 +1136,13 @@ func TestElemMatchFilter(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"scores", bson.A{85, 92, 78}}},
-		bson.D{{"scores", bson.A{55, 60, 70}}},
-		bson.D{{"scores", bson.A{90, 95, 88}}},
+		bson.D{{Key: "scores", Value: bson.A{85, 92, 78}}},
+		bson.D{{Key: "scores", Value: bson.A{55, 60, 70}}},
+		bson.D{{Key: "scores", Value: bson.A{90, 95, 88}}},
 	})
 
 	// $elemMatch on a scalar array: find docs with at least one score >= 90.
-	count, err := coll.CountDocuments(ctx, bson.D{{"scores", bson.D{{"$elemMatch", bson.D{{"$gte", 90}}}}}})
+	count, err := coll.CountDocuments(ctx, bson.D{{Key: "scores", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "$gte", Value: 90}}}}}})
 	if err != nil {
 		t.Fatalf("$elemMatch: %v", err)
 	}
@@ -1158,16 +1159,16 @@ func TestAggregateSortByCount(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"tag", "go"}},
-		bson.D{{"tag", "go"}},
-		bson.D{{"tag", "go"}},
-		bson.D{{"tag", "rust"}},
-		bson.D{{"tag", "rust"}},
-		bson.D{{"tag", "python"}},
+		bson.D{{Key: "tag", Value: "go"}},
+		bson.D{{Key: "tag", Value: "go"}},
+		bson.D{{Key: "tag", Value: "go"}},
+		bson.D{{Key: "tag", Value: "rust"}},
+		bson.D{{Key: "tag", Value: "rust"}},
+		bson.D{{Key: "tag", Value: "python"}},
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$sortByCount", "$tag"}},
+		bson.D{{Key: "$sortByCount", Value: "$tag"}},
 	})
 	if err != nil {
 		t.Fatalf("$sortByCount: %v", err)
@@ -1196,20 +1197,20 @@ func TestAggregateBucket(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"score", 15}},
-		bson.D{{"score", 42}},
-		bson.D{{"score", 78}},
-		bson.D{{"score", 91}},
-		bson.D{{"score", 55}},
+		bson.D{{Key: "score", Value: 15}},
+		bson.D{{Key: "score", Value: 42}},
+		bson.D{{Key: "score", Value: 78}},
+		bson.D{{Key: "score", Value: 91}},
+		bson.D{{Key: "score", Value: 55}},
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$bucket", bson.D{
-			{"groupBy", "$score"},
-			{"boundaries", bson.A{0, 50, 75, 100}},
-			{"default", "other"},
+		bson.D{{Key: "$bucket", Value: bson.D{
+			{Key: "groupBy", Value: "$score"},
+			{Key: "boundaries", Value: bson.A{0, 50, 75, 100}},
+			{Key: "default", Value: "other"},
 		}}},
-		bson.D{{"$sort", bson.D{{"_id", 1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 	})
 	if err != nil {
 		t.Fatalf("$bucket: %v", err)
@@ -1245,14 +1246,14 @@ func TestRenameCollection(t *testing.T) {
 
 	// Insert into "old" collection.
 	_, _ = db.Collection("old").InsertMany(ctx, []interface{}{
-		bson.D{{"n", 1}},
-		bson.D{{"n", 2}},
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 2}},
 	})
 
 	// Rename via admin db.
 	err := client.Database("admin").RunCommand(ctx, bson.D{
-		{"renameCollection", db.Name() + ".old"},
-		{"to", db.Name() + ".new"},
+		{Key: "renameCollection", Value: db.Name() + ".old"},
+		{Key: "to", Value: db.Name() + ".new"},
 	}).Err()
 	if err != nil {
 		t.Fatalf("renameCollection: %v", err)
@@ -1281,24 +1282,24 @@ func TestAggregateMerge(t *testing.T) {
 	// Seed "source" collection.
 	src := db.Collection("source")
 	_, _ = src.InsertMany(ctx, []interface{}{
-		bson.D{{"_id", "a"}, {"val", 10}},
-		bson.D{{"_id", "b"}, {"val", 20}},
+		bson.D{{Key: "_id", Value: "a"}, {Key: "val", Value: 10}},
+		bson.D{{Key: "_id", Value: "b"}, {Key: "val", Value: 20}},
 	})
 
 	// Seed "target" with one overlapping doc.
 	tgt := db.Collection("target")
 	_, _ = tgt.InsertMany(ctx, []interface{}{
-		bson.D{{"_id", "a"}, {"val", 999}, {"extra", "keep"}},
-		bson.D{{"_id", "c"}, {"val", 30}},
+		bson.D{{Key: "_id", Value: "a"}, {Key: "val", Value: 999}, {Key: "extra", Value: "keep"}},
+		bson.D{{Key: "_id", Value: "c"}, {Key: "val", Value: 30}},
 	})
 
 	// $merge: update matching docs (by _id), insert new ones.
 	_, err := src.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$merge", bson.D{
-			{"into", "target"},
-			{"on", "_id"},
-			{"whenMatched", "merge"},
-			{"whenNotMatched", "insert"},
+		bson.D{{Key: "$merge", Value: bson.D{
+			{Key: "into", Value: "target"},
+			{Key: "on", Value: "_id"},
+			{Key: "whenMatched", Value: "merge"},
+			{Key: "whenNotMatched", Value: "insert"},
 		}}},
 	})
 	if err != nil {
@@ -1307,19 +1308,19 @@ func TestAggregateMerge(t *testing.T) {
 
 	// "a" should have val=10 now (merged from source), extra="keep" preserved.
 	var a bson.M
-	_ = tgt.FindOne(ctx, bson.D{{"_id", "a"}}).Decode(&a)
+	_ = tgt.FindOne(ctx, bson.D{{Key: "_id", Value: "a"}}).Decode(&a)
 	if a["val"] != int32(10) {
 		t.Errorf("$merge a.val: expected 10, got %v", a["val"])
 	}
 
 	// "b" should have been inserted.
-	count, _ := tgt.CountDocuments(ctx, bson.D{{"_id", "b"}})
+	count, _ := tgt.CountDocuments(ctx, bson.D{{Key: "_id", Value: "b"}})
 	if count != 1 {
 		t.Errorf("$merge: expected 'b' to be inserted, count=%d", count)
 	}
 
 	// "c" should still exist (not touched by merge).
-	count, _ = tgt.CountDocuments(ctx, bson.D{{"_id", "c"}})
+	count, _ = tgt.CountDocuments(ctx, bson.D{{Key: "_id", Value: "c"}})
 	if count != 1 {
 		t.Errorf("$merge: 'c' should still exist, count=%d", count)
 	}
@@ -1338,13 +1339,13 @@ func TestAggregateReplaceRoot(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"user", bson.D{{"name", "alice"}, {"age", 25}}}},
-		bson.D{{"user", bson.D{{"name", "bob"}, {"age", 30}}}},
+		bson.D{{Key: "user", Value: bson.D{{Key: "name", Value: "alice"}, {Key: "age", Value: 25}}}},
+		bson.D{{Key: "user", Value: bson.D{{Key: "name", Value: "bob"}, {Key: "age", Value: 30}}}},
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$replaceRoot", bson.D{{"newRoot", "$user"}}}},
-		bson.D{{"$sort", bson.D{{"name", 1}}}},
+		bson.D{{Key: "$replaceRoot", Value: bson.D{{Key: "newRoot", Value: "$user"}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "name", Value: 1}}}},
 	})
 	if err != nil {
 		t.Fatalf("$replaceRoot: %v", err)
@@ -1373,14 +1374,14 @@ func TestAggregateCountStage(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"active", true}},
-		bson.D{{"active", false}},
-		bson.D{{"active", true}},
+		bson.D{{Key: "active", Value: true}},
+		bson.D{{Key: "active", Value: false}},
+		bson.D{{Key: "active", Value: true}},
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$match", bson.D{{"active", true}}}},
-		bson.D{{"$count", "numActive"}},
+		bson.D{{Key: "$match", Value: bson.D{{Key: "active", Value: true}}}},
+		bson.D{{Key: "$count", Value: "numActive"}},
 	})
 	if err != nil {
 		t.Fatalf("$count: %v", err)
@@ -1405,16 +1406,16 @@ func TestAggregateUnionWith(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = db.Collection("colA").InsertMany(ctx, []interface{}{
-		bson.D{{"name", "alice"}},
-		bson.D{{"name", "bob"}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "name", Value: "bob"}},
 	})
 	_, _ = db.Collection("colB").InsertMany(ctx, []interface{}{
-		bson.D{{"name", "carol"}},
+		bson.D{{Key: "name", Value: "carol"}},
 	})
 
 	cursor, err := db.Collection("colA").Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$unionWith", bson.D{{"coll", "colB"}}}},
-		bson.D{{"$sort", bson.D{{"name", 1}}}},
+		bson.D{{Key: "$unionWith", Value: bson.D{{Key: "coll", Value: "colB"}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "name", Value: 1}}}},
 	})
 	if err != nil {
 		t.Fatalf("$unionWith: %v", err)
@@ -1445,26 +1446,26 @@ func TestAggregateSwitchAndIfNull(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"score", 95}, {"bonus", nil}},
-		bson.D{{"score", 72}, {"bonus", 100}},
-		bson.D{{"score", 45}}, // bonus missing
+		bson.D{{Key: "score", Value: 95}, {Key: "bonus", Value: nil}},
+		bson.D{{Key: "score", Value: 72}, {Key: "bonus", Value: 100}},
+		bson.D{{Key: "score", Value: 45}}, // bonus missing
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$project", bson.D{
+		bson.D{{Key: "$project", Value: bson.D{
 			// $switch: grade based on score
-			{"grade", bson.D{{"$switch", bson.D{
-				{"branches", bson.A{
-					bson.D{{"case", bson.D{{"$gte", bson.A{"$score", 90}}}}, {"then", "A"}},
-					bson.D{{"case", bson.D{{"$gte", bson.A{"$score", 70}}}}, {"then", "B"}},
+			{Key: "grade", Value: bson.D{{Key: "$switch", Value: bson.D{
+				{Key: "branches", Value: bson.A{
+					bson.D{{Key: "case", Value: bson.D{{Key: "$gte", Value: bson.A{Key: "$score", Value: 90}}}}, {Key: "then", Value: "A"}},
+					bson.D{{Key: "case", Value: bson.D{{Key: "$gte", Value: bson.A{Key: "$score", Value: 70}}}}, {Key: "then", Value: "B"}},
 				}},
-				{"default", "C"},
+				{Key: "default", Value: "C"},
 			}}}},
 			// $ifNull: use bonus if present, else 0
-			{"effectiveBonus", bson.D{{"$ifNull", bson.A{"$bonus", 0}}}},
-			{"_id", 0},
+			{Key: "effectiveBonus", Value: bson.D{{Key: "$ifNull", Value: bson.A{Key: "$bonus", Value: 0}}}},
+			{Key: "_id", Value: 0},
 		}}},
-		bson.D{{"$sort", bson.D{{"grade", 1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "grade", Value: 1}}}},
 	})
 	if err != nil {
 		t.Fatalf("$switch $ifNull: %v", err)
@@ -1507,23 +1508,23 @@ func TestAggregateFacet(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"dept", "eng"}, {"salary", 90000}},
-		bson.D{{"dept", "mkt"}, {"salary", 70000}},
-		bson.D{{"dept", "eng"}, {"salary", 110000}},
-		bson.D{{"dept", "hr"}, {"salary", 60000}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: 90000}},
+		bson.D{{Key: "dept", Value: "mkt"}, {Key: "salary", Value: 70000}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: 110000}},
+		bson.D{{Key: "dept", Value: "hr"}, {Key: "salary", Value: 60000}},
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$facet", bson.D{
-			{"byDept", bson.A{
-				bson.D{{"$group", bson.D{{"_id", "$dept"}, {"count", bson.D{{"$sum", 1}}}}}},
-				bson.D{{"$sort", bson.D{{"_id", 1}}}},
+		bson.D{{Key: "$facet", Value: bson.D{
+			{Key: "byDept", Value: bson.A{
+				bson.D{{Key: "$group", Value: bson.D{{Key: "_id", Value: "$dept"}, {Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}}}}},
+				bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 			}},
-			{"salaryStats", bson.A{
-				bson.D{{"$group", bson.D{
-					{"_id", nil},
-					{"avgSalary", bson.D{{"$avg", "$salary"}}},
-					{"maxSalary", bson.D{{"$max", "$salary"}}},
+			{Key: "salaryStats", Value: bson.A{
+				bson.D{{Key: "$group", Value: bson.D{
+					{Key: "_id", Value: nil},
+					{Key: "avgSalary", Value: bson.D{{Key: "$avg", Value: "$salary"}}},
+					{Key: "maxSalary", Value: bson.D{{Key: "$max", Value: "$salary"}}},
 				}}},
 			}},
 		}}},
@@ -1570,13 +1571,13 @@ func TestNullAndMissingFilter(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"name", "alice"}, {"score", nil}},     // score is null
-		bson.D{{"name", "bob"}},                        // score is missing
-		bson.D{{"name", "carol"}, {"score", 42}},       // score is non-null
+		bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: nil}}, // score is null
+		bson.D{{Key: "name", Value: "bob"}},                               // score is missing
+		bson.D{{Key: "name", Value: "carol"}, {Key: "score", Value: 42}},  // score is non-null
 	})
 
 	// {score: null} should match both null and missing.
-	count, err := coll.CountDocuments(ctx, bson.D{{"score", nil}})
+	count, err := coll.CountDocuments(ctx, bson.D{{Key: "score", Value: nil}})
 	if err != nil {
 		t.Fatalf("null filter: %v", err)
 	}
@@ -1585,7 +1586,7 @@ func TestNullAndMissingFilter(t *testing.T) {
 	}
 
 	// {score: {$exists: true}} should only match alice (has the field, even if null).
-	count, err = coll.CountDocuments(ctx, bson.D{{"score", bson.D{{"$exists", true}}}})
+	count, err = coll.CountDocuments(ctx, bson.D{{Key: "score", Value: bson.D{{Key: "$exists", Value: true}}}})
 	if err != nil {
 		t.Fatalf("$exists true: %v", err)
 	}
@@ -1594,7 +1595,7 @@ func TestNullAndMissingFilter(t *testing.T) {
 	}
 
 	// {score: {$exists: false}} should only match bob (missing field).
-	count, err = coll.CountDocuments(ctx, bson.D{{"score", bson.D{{"$exists", false}}}})
+	count, err = coll.CountDocuments(ctx, bson.D{{Key: "score", Value: bson.D{{Key: "$exists", Value: false}}}})
 	if err != nil {
 		t.Fatalf("$exists false: %v", err)
 	}
@@ -1611,13 +1612,13 @@ func TestArrayFieldEquality(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"tags", bson.A{"a", "b", "c"}}},
-		bson.D{{"tags", bson.A{"x", "y"}}},
-		bson.D{{"tags", "a"}}, // scalar "a", not array
+		bson.D{{Key: "tags", Value: bson.A{Key: "a", Value: "b", "c"}}},
+		bson.D{{Key: "tags", Value: bson.A{Key: "x", Value: "y"}}},
+		bson.D{{Key: "tags", Value: "a"}}, // scalar "a", not array
 	})
 
 	// {tags: "a"} should match any doc where "a" is in the tags array (or tags == "a").
-	count, err := coll.CountDocuments(ctx, bson.D{{"tags", "a"}})
+	count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: "a"}})
 	if err != nil {
 		t.Fatalf("array equality: %v", err)
 	}
@@ -1634,17 +1635,17 @@ func TestAggregateGroupNull(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"score", 10}},
-		bson.D{{"score", 20}},
-		bson.D{{"score", 30}},
+		bson.D{{Key: "score", Value: 10}},
+		bson.D{{Key: "score", Value: 20}},
+		bson.D{{Key: "score", Value: 30}},
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$group", bson.D{
-			{"_id", nil},
-			{"total", bson.D{{"$sum", "$score"}}},
-			{"count", bson.D{{"$sum", 1}}},
-			{"avg", bson.D{{"$avg", "$score"}}},
+		bson.D{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "total", Value: bson.D{{Key: "$sum", Value: "$score"}}},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+			{Key: "avg", Value: bson.D{{Key: "$avg", Value: "$score"}}},
 		}}},
 	})
 	if err != nil {
@@ -1679,15 +1680,15 @@ func TestAggregateOut(t *testing.T) {
 
 	coll := db.Collection("source")
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"n", 1}},
-		bson.D{{"n", 2}},
-		bson.D{{"n", 3}},
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 2}},
+		bson.D{{Key: "n", Value: 3}},
 	})
 
 	// $out to "dest" collection.
 	_, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$match", bson.D{{"n", bson.D{{"$gte", 2}}}}}},
-		bson.D{{"$out", "dest"}},
+		bson.D{{Key: "$match", Value: bson.D{{Key: "n", Value: bson.D{{Key: "$gte", Value: 2}}}}}},
+		bson.D{{Key: "$out", Value: "dest"}},
 	})
 	if err != nil {
 		t.Fatalf("$out: %v", err)
@@ -1710,15 +1711,15 @@ func TestMultiKeySort(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"dept", "eng"}, {"score", 90}},
-		bson.D{{"dept", "eng"}, {"score", 70}},
-		bson.D{{"dept", "mkt"}, {"score", 85}},
-		bson.D{{"dept", "mkt"}, {"score", 95}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "score", Value: 90}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "score", Value: 70}},
+		bson.D{{Key: "dept", Value: "mkt"}, {Key: "score", Value: 85}},
+		bson.D{{Key: "dept", Value: "mkt"}, {Key: "score", Value: 95}},
 	})
 
 	// Sort by dept ASC, then score DESC.
 	cursor, err := coll.Find(ctx, bson.D{}, options.Find().SetSort(
-		bson.D{{"dept", 1}, {"score", -1}},
+		bson.D{{Key: "dept", Value: 1}, {Key: "score", Value: -1}},
 	))
 	if err != nil {
 		t.Fatalf("Find sort: %v", err)
@@ -1734,8 +1735,11 @@ func TestMultiKeySort(t *testing.T) {
 	}
 
 	// Expected order: eng/90, eng/70, mkt/95, mkt/85
-	expected := []struct{ dept string; score int32 }{
-		{"eng", 90}, {"eng", 70}, {"mkt", 95}, {"mkt", 85},
+	expected := []struct {
+		dept  string
+		score int32
+	}{
+		{Key: "eng", Value: 90}, {Key: "eng", Value: 70}, {Key: "mkt", Value: 95}, {Key: "mkt", Value: 85},
 	}
 	for i, exp := range expected {
 		if docs[i]["dept"] != exp.dept || docs[i]["score"] != exp.score {
@@ -1752,18 +1756,18 @@ func TestAggregateGroupPush(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{"dept", "eng"}, {"name", "alice"}},
-		bson.D{{"dept", "eng"}, {"name", "bob"}},
-		bson.D{{"dept", "mkt"}, {"name", "carol"}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "name", Value: "alice"}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "name", Value: "bob"}},
+		bson.D{{Key: "dept", Value: "mkt"}, {Key: "name", Value: "carol"}},
 	})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$group", bson.D{
-			{"_id", "$dept"},
-			{"members", bson.D{{"$push", "$name"}}},
-			{"count", bson.D{{"$sum", 1}}},
+		bson.D{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$dept"},
+			{Key: "members", Value: bson.D{{Key: "$push", Value: "$name"}}},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
 		}}},
-		bson.D{{"$sort", bson.D{{"_id", 1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 	})
 	if err != nil {
 		t.Fatalf("$group $push: %v", err)
@@ -1803,10 +1807,10 @@ func TestSetOnInsert(t *testing.T) {
 
 	// Upsert: doc doesn't exist → $setOnInsert fields should be set.
 	_, err := coll.UpdateOne(ctx,
-		bson.D{{"key", "k1"}},
+		bson.D{{Key: "key", Value: "k1"}},
 		bson.D{
-			{"$set", bson.D{{"val", 1}}},
-			{"$setOnInsert", bson.D{{"created", true}}},
+			{Key: "$set", Value: bson.D{{Key: "val", Value: 1}}},
+			{Key: "$setOnInsert", Value: bson.D{{Key: "created", Value: true}}},
 		},
 		options.UpdateOne().SetUpsert(true),
 	)
@@ -1815,23 +1819,23 @@ func TestSetOnInsert(t *testing.T) {
 	}
 
 	var r bson.M
-	_ = coll.FindOne(ctx, bson.D{{"key", "k1"}}).Decode(&r)
+	_ = coll.FindOne(ctx, bson.D{{Key: "key", Value: "k1"}}).Decode(&r)
 	if r["created"] != true {
 		t.Errorf("$setOnInsert: expected created=true on insert, got %v", r["created"])
 	}
 
 	// Update existing doc: $setOnInsert should NOT fire.
 	_, _ = coll.UpdateOne(ctx,
-		bson.D{{"key", "k1"}},
+		bson.D{{Key: "key", Value: "k1"}},
 		bson.D{
-			{"$set", bson.D{{"val", 2}}},
-			{"$setOnInsert", bson.D{{"created", false}}},
+			{Key: "$set", Value: bson.D{{Key: "val", Value: 2}}},
+			{Key: "$setOnInsert", Value: bson.D{{Key: "created", Value: false}}},
 		},
 		options.UpdateOne().SetUpsert(true),
 	)
 
 	var r2 bson.M
-	_ = coll.FindOne(ctx, bson.D{{"key", "k1"}}).Decode(&r2)
+	_ = coll.FindOne(ctx, bson.D{{Key: "key", Value: "k1"}}).Decode(&r2)
 	// "created" should still be true — $setOnInsert doesn't fire on update.
 	if r2["created"] != true {
 		t.Errorf("$setOnInsert: expected created=true (no change on update), got %v", r2["created"])
@@ -1845,18 +1849,18 @@ func TestArrayUpdateOperators(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	res, _ := coll.InsertOne(ctx, bson.D{{"tags", bson.A{"a", "b", "c", "b"}}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "tags", Value: bson.A{Key: "a", Value: "b", "c", "b"}}})
 	id := res.InsertedID
 
 	decode := func() bson.A {
 		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&r)
 		return r["tags"].(bson.A)
 	}
 
 	// $pull — remove all "b" elements.
-	_, err := coll.UpdateOne(ctx, bson.D{{"_id", id}},
-		bson.D{{"$pull", bson.D{{"tags", "b"}}}})
+	_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$pull", Value: bson.D{{Key: "tags", Value: "b"}}}})
 	if err != nil {
 		t.Fatalf("$pull: %v", err)
 	}
@@ -1871,13 +1875,13 @@ func TestArrayUpdateOperators(t *testing.T) {
 	}
 
 	// $addToSet — add "x" (new) and "a" (duplicate, no-op).
-	_, err = coll.UpdateOne(ctx, bson.D{{"_id", id}},
-		bson.D{{"$addToSet", bson.D{{"tags", "x"}}}})
+	_, err = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$addToSet", Value: bson.D{{Key: "tags", Value: "x"}}}})
 	if err != nil {
 		t.Fatalf("$addToSet new: %v", err)
 	}
-	_, err = coll.UpdateOne(ctx, bson.D{{"_id", id}},
-		bson.D{{"$addToSet", bson.D{{"tags", "a"}}}})
+	_, err = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$addToSet", Value: bson.D{{Key: "tags", Value: "a"}}}})
 	if err != nil {
 		t.Fatalf("$addToSet dup: %v", err)
 	}
@@ -1887,8 +1891,8 @@ func TestArrayUpdateOperators(t *testing.T) {
 	}
 
 	// $pop -1 removes first element.
-	_, err = coll.UpdateOne(ctx, bson.D{{"_id", id}},
-		bson.D{{"$pop", bson.D{{"tags", -1}}}})
+	_, err = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$pop", Value: bson.D{{Key: "tags", Value: -1}}}})
 	if err != nil {
 		t.Fatalf("$pop: %v", err)
 	}
@@ -1906,11 +1910,11 @@ func TestNestedProjection(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertOne(ctx, bson.D{
-		{"name", "alice"},
-		{"profile", bson.D{
-			{"age", 30},
-			{"city", "NYC"},
-			{"secret", "hidden"},
+		{Key: "name", Value: "alice"},
+		{Key: "profile", Value: bson.D{
+			{Key: "age", Value: 30},
+			{Key: "city", Value: "NYC"},
+			{Key: "secret", Value: "hidden"},
 		}},
 	})
 
@@ -1918,8 +1922,8 @@ func TestNestedProjection(t *testing.T) {
 	var r bson.M
 	err := coll.FindOne(ctx, bson.D{},
 		options.FindOne().SetProjection(bson.D{
-			{"name", 1},
-			{"profile.age", 1},
+			{Key: "name", Value: 1},
+			{Key: "profile.age", Value: 1},
 		}),
 	).Decode(&r)
 	if err != nil {
@@ -1955,21 +1959,21 @@ func TestPushEachSort(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	res, _ := coll.InsertOne(ctx, bson.D{{"scores", bson.A{5, 3}}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "scores", Value: bson.A{5, 3}}})
 	id := res.InsertedID
 
 	// Push multiple values and keep the array sorted descending.
-	_, err := coll.UpdateOne(ctx, bson.D{{"_id", id}},
-		bson.D{{"$push", bson.D{{"scores", bson.D{
-			{"$each", bson.A{8, 1, 6}},
-			{"$sort", -1},
+	_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$push", Value: bson.D{{Key: "scores", Value: bson.D{
+			{Key: "$each", Value: bson.A{8, 1, 6}},
+			{Key: "$sort", Value: -1},
 		}}}}})
 	if err != nil {
 		t.Fatalf("$push $each $sort: %v", err)
 	}
 
 	var r bson.M
-	_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&r)
 	arr := r["scores"].(bson.A)
 	if len(arr) != 5 {
 		t.Fatalf("$push $each: expected 5 elements, got %d: %v", len(arr), arr)
@@ -1990,17 +1994,17 @@ func TestRenameOperator(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	res, _ := coll.InsertOne(ctx, bson.D{{"oldName", "value"}, {"keep", true}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "oldName", Value: "value"}, {Key: "keep", Value: true}})
 	id := res.InsertedID
 
-	_, err := coll.UpdateOne(ctx, bson.D{{"_id", id}},
-		bson.D{{"$rename", bson.D{{"oldName", "newName"}}}})
+	_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$rename", Value: bson.D{{Key: "oldName", Value: "newName"}}}})
 	if err != nil {
 		t.Fatalf("$rename: %v", err)
 	}
 
 	var r bson.M
-	_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&r)
 
 	if _, exists := r["oldName"]; exists {
 		t.Error("$rename: oldName should not exist after rename")
@@ -2020,18 +2024,18 @@ func TestPullWithCondition(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	res, _ := coll.InsertOne(ctx, bson.D{{"scores", bson.A{10, 25, 5, 30, 15}}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "scores", Value: bson.A{10, 25, 5, 30, 15}}})
 	id := res.InsertedID
 
 	// $pull all values greater than 20.
-	_, err := coll.UpdateOne(ctx, bson.D{{"_id", id}},
-		bson.D{{"$pull", bson.D{{"scores", bson.D{{"$gt", 20}}}}}})
+	_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}},
+		bson.D{{Key: "$pull", Value: bson.D{{Key: "scores", Value: bson.D{{Key: "$gt", Value: 20}}}}}})
 	if err != nil {
 		t.Fatalf("$pull with $gt: %v", err)
 	}
 
 	var r bson.M
-	_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&r)
 	remaining := r["scores"].(bson.A)
 	for _, v := range remaining {
 		if v.(int32) > 20 {
@@ -2050,12 +2054,12 @@ func TestAggregateStringExpressions(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	_, _ = coll.InsertOne(ctx, bson.D{{"first", "John"}, {"last", "DOE"}})
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "first", Value: "John"}, {Key: "last", Value: "DOE"}})
 
 	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-		bson.D{{"$project", bson.D{
-			{"fullName", bson.D{{"$concat", bson.A{"$first", " ", bson.D{{"$toLower", "$last"}}}}}},
-			{"_id", 0},
+		bson.D{{Key: "$project", Value: bson.D{
+			{Key: "fullName", Value: bson.D{{Key: "$concat", Value: bson.A{Key: "$first", Value: " ", bson.D{{Key: "$toLower", Value: "$last"}}}}}},
+			{Key: "_id", Value: 0},
 		}}},
 	})
 	if err != nil {
@@ -2081,16 +2085,16 @@ func TestCurrentDate(t *testing.T) {
 	ctx := context.Background()
 
 	before := time.Now().Add(-time.Second)
-	res, _ := coll.InsertOne(ctx, bson.D{{"name", "alice"}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}})
 
-	_, err := coll.UpdateOne(ctx, bson.D{{"_id", res.InsertedID}},
-		bson.D{{"$currentDate", bson.D{{"updatedAt", true}}}})
+	_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+		bson.D{{Key: "$currentDate", Value: bson.D{{Key: "updatedAt", Value: true}}}})
 	if err != nil {
 		t.Fatalf("$currentDate: %v", err)
 	}
 
 	var r bson.M
-	_ = coll.FindOne(ctx, bson.D{{"_id", res.InsertedID}}).Decode(&r)
+	_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
 	// In mongo-driver v2, DateTime decodes as bson.DateTime (int64, millis since epoch).
 	ts, ok := r["updatedAt"].(bson.DateTime)
 	if !ok {
@@ -2110,29 +2114,29 @@ func TestNumericUpdateOperators(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	res, _ := coll.InsertOne(ctx, bson.D{{"n", 10}})
+	res, _ := coll.InsertOne(ctx, bson.D{{Key: "n", Value: 10}})
 	id := res.InsertedID
 
 	decode := func() int32 {
 		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{"_id", id}}).Decode(&r)
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&r)
 		return r["n"].(int32)
 	}
 
 	// $mul: 10 * 3 = 30.
-	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id}}, bson.D{{"$mul", bson.D{{"n", 3}}}})
+	_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}}, bson.D{{Key: "$mul", Value: bson.D{{Key: "n", Value: 3}}}})
 	if v := decode(); v != 30 {
 		t.Errorf("$mul: expected 30, got %d", v)
 	}
 
 	// $min: min(30, 5) = 5.
-	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id}}, bson.D{{"$min", bson.D{{"n", 5}}}})
+	_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}}, bson.D{{Key: "$min", Value: bson.D{{Key: "n", Value: 5}}}})
 	if v := decode(); v != 5 {
 		t.Errorf("$min: expected 5, got %d", v)
 	}
 
 	// $max: max(5, 99) = 99.
-	_, _ = coll.UpdateOne(ctx, bson.D{{"_id", id}}, bson.D{{"$max", bson.D{{"n", 99}}}})
+	_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: id}}, bson.D{{Key: "$max", Value: bson.D{{Key: "n", Value: 99}}}})
 	if v := decode(); v != 99 {
 		t.Errorf("$max: expected 99, got %d", v)
 	}
@@ -2147,17 +2151,17 @@ func TestAggregateArrayExpressions(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 	ctx := context.Background()
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"arr", bson.A{10, 20, 30, 40, 50}}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "arr", Value: bson.A{10, 20, 30, 40, 50}}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"first", bson.D{{"$arrayElemAt", bson.A{"$arr", 0}}}},
-			{"last", bson.D{{"$arrayElemAt", bson.A{"$arr", -1}}}},
-			{"sz", bson.D{{"$size", "$arr"}}},
-			{"sliced", bson.D{{"$slice", bson.A{"$arr", 1, 3}}}},
-			{"reversed", bson.D{{"$reverseArray", "$arr"}}},
-			{"concat", bson.D{{"$concatArrays", bson.A{"$arr", bson.A{60, 70}}}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "first", Value: bson.D{{Key: "$arrayElemAt", Value: bson.A{Key: "$arr", Value: 0}}}},
+			{Key: "last", Value: bson.D{{Key: "$arrayElemAt", Value: bson.A{Key: "$arr", Value: -1}}}},
+			{Key: "sz", Value: bson.D{{Key: "$size", Value: "$arr"}}},
+			{Key: "sliced", Value: bson.D{{Key: "$slice", Value: bson.A{Key: "$arr", Value: 1, 3}}}},
+			{Key: "reversed", Value: bson.D{{Key: "$reverseArray", Value: "$arr"}}},
+			{Key: "concat", Value: bson.D{{Key: "$concatArrays", Value: bson.A{Key: "$arr", Value: bson.A{60, 70}}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2199,22 +2203,22 @@ func TestAggregateMapFilter(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"nums", bson.A{1, 2, 3, 4, 5}}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "nums", Value: bson.A{1, 2, 3, 4, 5}}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
 			// $map: multiply each by 2
-			{"doubled", bson.D{{"$map", bson.D{
-				{"input", "$nums"},
-				{"as", "n"},
-				{"in", bson.D{{"$multiply", bson.A{"$$n", 2}}}},
+			{Key: "doubled", Value: bson.D{{Key: "$map", Value: bson.D{
+				{Key: "input", Value: "$nums"},
+				{Key: "as", Value: "n"},
+				{Key: "in", Value: bson.D{{Key: "$multiply", Value: bson.A{Key: "$$n", Value: 2}}}},
 			}}}},
 			// $filter: keep only > 2
-			{"gt2", bson.D{{"$filter", bson.D{
-				{"input", "$nums"},
-				{"as", "n"},
-				{"cond", bson.D{{"$gt", bson.A{"$$n", 2}}}},
+			{Key: "gt2", Value: bson.D{{Key: "$filter", Value: bson.D{
+				{Key: "input", Value: "$nums"},
+				{Key: "as", Value: "n"},
+				{Key: "cond", Value: bson.D{{Key: "$gt", Value: bson.A{Key: "$$n", Value: 2}}}},
 			}}}},
 		}}},
 	}
@@ -2244,15 +2248,15 @@ func TestAggregateReduce(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"nums", bson.A{1, 2, 3, 4, 5}}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "nums", Value: bson.A{1, 2, 3, 4, 5}}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"sum", bson.D{{"$reduce", bson.D{
-				{"input", "$nums"},
-				{"initialValue", 0},
-				{"in", bson.D{{"$add", bson.A{"$$value", "$$this"}}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "sum", Value: bson.D{{Key: "$reduce", Value: bson.D{
+				{Key: "input", Value: "$nums"},
+				{Key: "initialValue", Value: 0},
+				{Key: "in", Value: bson.D{{Key: "$add", Value: bson.A{Key: "$$value", Value: "$$this"}}}},
 			}}}},
 		}}},
 	}
@@ -2280,19 +2284,19 @@ func TestAggregateMathExpressions(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"x", int32(7)}, {"y", int32(3)}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "x", Value: int32(7)}, {Key: "y", Value: int32(3)}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"absneg", bson.D{{"$abs", -5}}},
-			{"ceil_v", bson.D{{"$ceil", 4.3}}},
-			{"floor_v", bson.D{{"$floor", 4.9}}},
-			{"mod_v", bson.D{{"$mod", bson.A{"$x", "$y"}}}},
-			{"pow_v", bson.D{{"$pow", bson.A{2, 10}}}},
-			{"sqrt_v", bson.D{{"$sqrt", 9}}},
-			{"sub_v", bson.D{{"$subtract", bson.A{"$x", "$y"}}}},
-			{"div_v", bson.D{{"$divide", bson.A{10.0, 4.0}}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "absneg", Value: bson.D{{Key: "$abs", Value: -5}}},
+			{Key: "ceil_v", Value: bson.D{{Key: "$ceil", Value: 4.3}}},
+			{Key: "floor_v", Value: bson.D{{Key: "$floor", Value: 4.9}}},
+			{Key: "mod_v", Value: bson.D{{Key: "$mod", Value: bson.A{Key: "$x", Value: "$y"}}}},
+			{Key: "pow_v", Value: bson.D{{Key: "$pow", Value: bson.A{2, 10}}}},
+			{Key: "sqrt_v", Value: bson.D{{Key: "$sqrt", Value: 9}}},
+			{Key: "sub_v", Value: bson.D{{Key: "$subtract", Value: bson.A{Key: "$x", Value: "$y"}}}},
+			{Key: "div_v", Value: bson.D{{Key: "$divide", Value: bson.A{10.0, 4.0}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2341,16 +2345,16 @@ func TestAggregateMoreStringExpressions(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"name", "  Hello World  "}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "name", Value: "  Hello World  "}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"up", bson.D{{"$toUpper", "$name"}}},
-			{"trimmed", bson.D{{"$trim", bson.D{{"input", "$name"}}}}},
-			{"split_v", bson.D{{"$split", bson.A{"$name", " "}}}},
-			{"strlen", bson.D{{"$strLenBytes", "$name"}}},
-			{"sub_v", bson.D{{"$substr", bson.A{"$name", 2, 5}}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "up", Value: bson.D{{Key: "$toUpper", Value: "$name"}}},
+			{Key: "trimmed", Value: bson.D{{Key: "$trim", Value: bson.D{{Key: "input", Value: "$name"}}}}},
+			{Key: "split_v", Value: bson.D{{Key: "$split", Value: bson.A{Key: "$name", Value: " "}}}},
+			{Key: "strlen", Value: bson.D{{Key: "$strLenBytes", Value: "$name"}}},
+			{Key: "sub_v", Value: bson.D{{Key: "$substr", Value: bson.A{Key: "$name", Value: 2, 5}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2393,17 +2397,17 @@ func TestAggregateDateExpressions(t *testing.T) {
 
 	// 2024-03-15 10:30:45 UTC
 	ts := time.Date(2024, 3, 15, 10, 30, 45, 0, time.UTC)
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"ts", ts}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "ts", Value: ts}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"yr", bson.D{{"$year", "$ts"}}},
-			{"mo", bson.D{{"$month", "$ts"}}},
-			{"dy", bson.D{{"$dayOfMonth", "$ts"}}},
-			{"hr", bson.D{{"$hour", "$ts"}}},
-			{"mn", bson.D{{"$minute", "$ts"}}},
-			{"sc", bson.D{{"$second", "$ts"}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "yr", Value: bson.D{{Key: "$year", Value: "$ts"}}},
+			{Key: "mo", Value: bson.D{{Key: "$month", Value: "$ts"}}},
+			{Key: "dy", Value: bson.D{{Key: "$dayOfMonth", Value: "$ts"}}},
+			{Key: "hr", Value: bson.D{{Key: "$hour", Value: "$ts"}}},
+			{Key: "mn", Value: bson.D{{Key: "$minute", Value: "$ts"}}},
+			{Key: "sc", Value: bson.D{{Key: "$second", Value: "$ts"}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2440,16 +2444,16 @@ func TestAggregateTypeConversions(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"n", int32(42)}, {"s", "100"}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "n", Value: int32(42)}, {Key: "s", Value: "100"}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"nstr", bson.D{{"$toString", "$n"}}},
-			{"sint", bson.D{{"$toInt", "$s"}}},
-			{"slong", bson.D{{"$toLong", "$s"}}},
-			{"sdbl", bson.D{{"$toDouble", "$s"}}},
-			{"tp", bson.D{{"$type", "$n"}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "nstr", Value: bson.D{{Key: "$toString", Value: "$n"}}},
+			{Key: "sint", Value: bson.D{{Key: "$toInt", Value: "$s"}}},
+			{Key: "slong", Value: bson.D{{Key: "$toLong", Value: "$s"}}},
+			{Key: "sdbl", Value: bson.D{{Key: "$toDouble", Value: "$s"}}},
+			{Key: "tp", Value: bson.D{{Key: "$type", Value: "$n"}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2490,15 +2494,15 @@ func TestAggregateMergeObjects(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 
 	coll.InsertOne(ctx, bson.D{
-		{"_id", 1},
-		{"a", bson.D{{"x", 1}}},
-		{"b", bson.D{{"y", 2}}},
+		{Key: "_id", Value: 1},
+		{Key: "a", Value: bson.D{{Key: "x", Value: 1}}},
+		{Key: "b", Value: bson.D{{Key: "y", Value: 2}}},
 	})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"merged", bson.D{{"$mergeObjects", bson.A{"$a", "$b"}}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "merged", Value: bson.D{{Key: "$mergeObjects", Value: bson.A{Key: "$a", Value: "$b"}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2533,17 +2537,17 @@ func TestAggregateLogicalExpressions(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"arr", bson.A{1, 2, 3}}, {"x", int32(5)}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "arr", Value: bson.A{1, 2, 3}}, {Key: "x", Value: int32(5)}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"isArr", bson.D{{"$isArray", "$arr"}}},
-			{"notArr", bson.D{{"$isArray", "$x"}}},
-			{"inArr", bson.D{{"$in", bson.A{2, "$arr"}}}},
-			{"gtval", bson.D{{"$gt", bson.A{"$x", 3}}}},
-			{"ltval", bson.D{{"$lt", bson.A{"$x", 3}}}},
-			{"eqval", bson.D{{"$eq", bson.A{"$x", 5}}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "isArr", Value: bson.D{{Key: "$isArray", Value: "$arr"}}},
+			{Key: "notArr", Value: bson.D{{Key: "$isArray", Value: "$x"}}},
+			{Key: "inArr", Value: bson.D{{Key: "$in", Value: bson.A{2, "$arr"}}}},
+			{Key: "gtval", Value: bson.D{{Key: "$gt", Value: bson.A{Key: "$x", Value: 3}}}},
+			{Key: "ltval", Value: bson.D{{Key: "$lt", Value: bson.A{Key: "$x", Value: 3}}}},
+			{Key: "eqval", Value: bson.D{{Key: "$eq", Value: bson.A{Key: "$x", Value: 5}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2586,14 +2590,14 @@ func TestAggregateRangeAndIndexOf(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"arr", bson.A{"a", "b", "c", "b"}}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "arr", Value: bson.A{Key: "a", Value: "b", "c", "b"}}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"rng", bson.D{{"$range", bson.A{0, 5}}}},
-			{"idx", bson.D{{"$indexOfArray", bson.A{"$arr", "b"}}}},
-			{"idx2", bson.D{{"$indexOfArray", bson.A{"$arr", "z"}}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "rng", Value: bson.D{{Key: "$range", Value: bson.A{0, 5}}}},
+			{Key: "idx", Value: bson.D{{Key: "$indexOfArray", Value: bson.A{Key: "$arr", Value: "b"}}}},
+			{Key: "idx2", Value: bson.D{{Key: "$indexOfArray", Value: bson.A{Key: "$arr", Value: "z"}}}},
 		}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
@@ -2628,14 +2632,14 @@ func TestAggregateLetExpression(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
 
-	coll.InsertOne(ctx, bson.D{{"_id", 1}, {"price", int32(10)}, {"qty", int32(3)}})
+	coll.InsertOne(ctx, bson.D{{Key: "_id", Value: 1}, {Key: "price", Value: int32(10)}, {Key: "qty", Value: int32(3)}})
 
 	pipe := mongo.Pipeline{
-		{{"$match", bson.D{{"_id", 1}}}},
-		{{"$project", bson.D{
-			{"total", bson.D{{"$let", bson.D{
-				{"vars", bson.D{{"p", "$price"}, {"q", "$qty"}}},
-				{"in", bson.D{{"$multiply", bson.A{"$$p", "$$q"}}}},
+		{{Key: "$match", Value: bson.D{{Key: "_id", Value: 1}}}},
+		{{Key: "$project", Value: bson.D{
+			{Key: "total", Value: bson.D{{Key: "$let", Value: bson.D{
+				{Key: "vars", Value: bson.D{{Key: "p", Value: "$price"}, {Key: "q", Value: "$qty"}}},
+				{Key: "in", Value: bson.D{{Key: "$multiply", Value: bson.A{Key: "$$p", Value: "$$q"}}}},
 			}}}},
 		}}},
 	}
@@ -2663,9 +2667,9 @@ func TestCountDocuments(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 
 	docs := []interface{}{
-		bson.D{{"x", 1}},
-		bson.D{{"x", 2}},
-		bson.D{{"x", 3}},
+		bson.D{{Key: "x", Value: 1}},
+		bson.D{{Key: "x", Value: 2}},
+		bson.D{{Key: "x", Value: 3}},
 	}
 	coll.InsertMany(ctx, docs)
 
@@ -2677,7 +2681,7 @@ func TestCountDocuments(t *testing.T) {
 		t.Errorf("CountDocuments: expected 3, got %d", total)
 	}
 
-	filtered, err := coll.CountDocuments(ctx, bson.D{{"x", bson.D{{"$gt", 1}}}})
+	filtered, err := coll.CountDocuments(ctx, bson.D{{Key: "x", Value: bson.D{{Key: "$gt", Value: 1}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2696,21 +2700,21 @@ func TestAggregateRegexMatch(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 
 	coll.InsertMany(ctx, []interface{}{
-		bson.D{{"_id", 1}, {"name", "alice"}},
-		bson.D{{"_id", 2}, {"name", "bob"}},
-		bson.D{{"_id", 3}, {"name", "charlie"}},
+		bson.D{{Key: "_id", Value: 1}, {Key: "name", Value: "alice"}},
+		bson.D{{Key: "_id", Value: 2}, {Key: "name", Value: "bob"}},
+		bson.D{{Key: "_id", Value: 3}, {Key: "name", Value: "charlie"}},
 	})
 
 	pipe := mongo.Pipeline{
-		{{"$project", bson.D{
-			{"name", 1},
-			{"matches", bson.D{{"$regexMatch", bson.D{
-				{"input", "$name"},
-				{"regex", "^[ab]"},
+		{{Key: "$project", Value: bson.D{
+			{Key: "name", Value: 1},
+			{Key: "matches", Value: bson.D{{Key: "$regexMatch", Value: bson.D{
+				{Key: "input", Value: "$name"},
+				{Key: "regex", Value: "^[ab]"},
 			}}}},
 		}}},
-		{{"$match", bson.D{{"matches", true}}}},
-		{{"$sort", bson.D{{"_id", 1}}}},
+		{{Key: "$match", Value: bson.D{{Key: "matches", Value: true}}}},
+		{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 	}
 	cursor, err := coll.Aggregate(ctx, pipe)
 	if err != nil {
@@ -2733,14 +2737,14 @@ func TestTypeFilter(t *testing.T) {
 	coll := client.Database(testDB(t)).Collection("docs")
 
 	coll.InsertMany(ctx, []interface{}{
-		bson.D{{"_id", 1}, {"v", int32(42)}},
-		bson.D{{"_id", 2}, {"v", "hello"}},
-		bson.D{{"_id", 3}, {"v", 3.14}},
-		bson.D{{"_id", 4}, {"v", true}},
+		bson.D{{Key: "_id", Value: 1}, {Key: "v", Value: int32(42)}},
+		bson.D{{Key: "_id", Value: 2}, {Key: "v", Value: "hello"}},
+		bson.D{{Key: "_id", Value: 3}, {Key: "v", Value: 3.14}},
+		bson.D{{Key: "_id", Value: 4}, {Key: "v", Value: true}},
 	})
 
 	// Find docs where v is a string (type 2)
-	cursor, err := coll.Find(ctx, bson.D{{"v", bson.D{{"$type", 2}}}})
+	cursor, err := coll.Find(ctx, bson.D{{Key: "v", Value: bson.D{{Key: "$type", Value: 2}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2751,7 +2755,7 @@ func TestTypeFilter(t *testing.T) {
 	}
 
 	// Find docs where v is a number by type alias
-	cursor2, err := coll.Find(ctx, bson.D{{"v", bson.D{{"$type", "int"}}}})
+	cursor2, err := coll.Find(ctx, bson.D{{Key: "v", Value: bson.D{{Key: "$type", Value: "int"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

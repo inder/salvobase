@@ -314,10 +314,10 @@ type User struct {
 	ID         string   `json:"id"`
 	DB         string   `json:"db"`
 	Username   string   `json:"user"`
-	StoredKey  []byte   `json:"storedKey"`  // SCRAM-SHA-256 StoredKey
-	ServerKey  []byte   `json:"serverKey"`  // SCRAM-SHA-256 ServerKey
-	Salt       []byte   `json:"salt"`       // SCRAM-SHA-256 salt
-	IterCount  int      `json:"iterCount"`  // SCRAM-SHA-256 iteration count
+	StoredKey  []byte   `json:"storedKey"` // SCRAM-SHA-256 StoredKey
+	ServerKey  []byte   `json:"serverKey"` // SCRAM-SHA-256 ServerKey
+	Salt       []byte   `json:"salt"`      // SCRAM-SHA-256 salt
+	IterCount  int      `json:"iterCount"` // SCRAM-SHA-256 iteration count
 	Roles      []Role   `json:"roles"`
 	CustomData bson.Raw `json:"customData,omitempty"`
 }

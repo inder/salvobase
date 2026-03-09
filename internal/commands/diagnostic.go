@@ -28,20 +28,20 @@ func handleHello(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	now := time.Now().UTC()
 
 	d := bson.D{
-		{"isWritablePrimary", true},
-		{"topologyVersion", bson.D{
-			{"processId", processObjectID},
-			{"counter", int64(0)},
+		{Key: "isWritablePrimary", Value: true},
+		{Key: "topologyVersion", Value: bson.D{
+			{Key: "processId", Value: processObjectID},
+			{Key: "counter", Value: int64(0)},
 		}},
-		{"maxBsonObjectSize", wire.MaxBSONObjectSize},
-		{"maxMessageSizeBytes", wire.MaxMessageSizeBytes},
-		{"maxWriteBatchSize", wire.MaxWriteBatchSize},
-		{"localTime", bson.DateTime(now.UnixMilli())},
-		{"logicalSessionTimeoutMinutes", wire.LogicalSessionTimeoutMinutes},
-		{"connectionId", ctx.ConnID},
-		{"minWireVersion", wire.MinWireVersion},
-		{"maxWireVersion", wire.MaxWireVersion},
-		{"readOnly", false},
+		{Key: "maxBsonObjectSize", Value: wire.MaxBSONObjectSize},
+		{Key: "maxMessageSizeBytes", Value: wire.MaxMessageSizeBytes},
+		{Key: "maxWriteBatchSize", Value: wire.MaxWriteBatchSize},
+		{Key: "localTime", Value: bson.DateTime(now.UnixMilli())},
+		{Key: "logicalSessionTimeoutMinutes", Value: wire.LogicalSessionTimeoutMinutes},
+		{Key: "connectionId", Value: ctx.ConnID},
+		{Key: "minWireVersion", Value: wire.MinWireVersion},
+		{Key: "maxWireVersion", Value: wire.MaxWireVersion},
+		{Key: "readOnly", Value: false},
 	}
 
 	// Legacy isMaster compatibility fields.
@@ -58,23 +58,23 @@ func handleHello(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 // handleBuildInfo handles the "buildInfo"/"buildinfo" command.
 func handleBuildInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return marshalResponse(bson.D{
-		{"version", "7.0.0-salvobase"},
-		{"gitVersion", "salvobase-dev"},
-		{"modules", bson.A{}},
-		{"allocator", "system"},
-		{"javascriptEngine", "none"},
-		{"sysInfo", "deprecated"},
-		{"versionArray", bson.A{int32(7), int32(0), int32(0), int32(0)}},
-		{"bits", int32(64)},
-		{"debug", false},
-		{"maxBsonObjectSize", wire.MaxBSONObjectSize},
-		{"openSSL", bson.D{{"running", "OpenSSL 3.x"}}},
-		{"buildEnvironment", bson.D{
-			{"goVersion", runtime.Version()},
-			{"os", runtime.GOOS},
-			{"arch", runtime.GOARCH},
+		{Key: "version", Value: "7.0.0-salvobase"},
+		{Key: "gitVersion", Value: "salvobase-dev"},
+		{Key: "modules", Value: bson.A{}},
+		{Key: "allocator", Value: "system"},
+		{Key: "javascriptEngine", Value: "none"},
+		{Key: "sysInfo", Value: "deprecated"},
+		{Key: "versionArray", Value: bson.A{int32(7), int32(0), int32(0), int32(0)}},
+		{Key: "bits", Value: int32(64)},
+		{Key: "debug", Value: false},
+		{Key: "maxBsonObjectSize", Value: wire.MaxBSONObjectSize},
+		{Key: "openSSL", Value: bson.D{{Key: "running", Value: "OpenSSL 3.x"}}},
+		{Key: "buildEnvironment", Value: bson.D{
+			{Key: "goVersion", Value: runtime.Version()},
+			{Key: "os", Value: runtime.GOOS},
+			{Key: "arch", Value: runtime.GOARCH},
 		}},
-		{"ok", float64(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -89,33 +89,33 @@ func handleServerStatus(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	now := time.Now().UTC()
 
 	return marshalResponse(bson.D{
-		{"host", stats.Host},
-		{"version", "7.0.0-salvobase"},
-		{"process", "salvobase"},
-		{"pid", stats.PID},
-		{"uptime", uptime},
-		{"uptimeMillis", uptime * 1000},
-		{"uptimeEstimate", uptime},
-		{"localTime", bson.DateTime(now.UnixMilli())},
-		{"connections", bson.D{
-			{"current", stats.Connections.Current},
-			{"available", stats.Connections.Available},
-			{"totalCreated", stats.Connections.TotalCreated},
+		{Key: "host", Value: stats.Host},
+		{Key: "version", Value: "7.0.0-salvobase"},
+		{Key: "process", Value: "salvobase"},
+		{Key: "pid", Value: stats.PID},
+		{Key: "uptime", Value: uptime},
+		{Key: "uptimeMillis", Value: uptime * 1000},
+		{Key: "uptimeEstimate", Value: uptime},
+		{Key: "localTime", Value: bson.DateTime(now.UnixMilli())},
+		{Key: "connections", Value: bson.D{
+			{Key: "current", Value: stats.Connections.Current},
+			{Key: "available", Value: stats.Connections.Available},
+			{Key: "totalCreated", Value: stats.Connections.TotalCreated},
 		}},
-		{"opcounters", bson.D{
-			{"insert", stats.OpCounters.Insert},
-			{"query", stats.OpCounters.Query},
-			{"update", stats.OpCounters.Update},
-			{"delete", stats.OpCounters.Delete},
-			{"getmore", stats.OpCounters.GetMore},
-			{"command", stats.OpCounters.Command},
+		{Key: "opcounters", Value: bson.D{
+			{Key: "insert", Value: stats.OpCounters.Insert},
+			{Key: "query", Value: stats.OpCounters.Query},
+			{Key: "update", Value: stats.OpCounters.Update},
+			{Key: "delete", Value: stats.OpCounters.Delete},
+			{Key: "getmore", Value: stats.OpCounters.GetMore},
+			{Key: "command", Value: stats.OpCounters.Command},
 		}},
-		{"mem", bson.D{
-			{"bits", stats.Mem.Bits},
-			{"resident", stats.Mem.Resident},
-			{"virtual", stats.Mem.Virtual},
+		{Key: "mem", Value: bson.D{
+			{Key: "bits", Value: stats.Mem.Bits},
+			{Key: "resident", Value: stats.Mem.Resident},
+			{Key: "virtual", Value: stats.Mem.Virtual},
 		}},
-		{"ok", float64(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -127,18 +127,18 @@ func handleDBStats(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"db", stats.DB},
-		{"collections", stats.Collections},
-		{"views", stats.Views},
-		{"objects", stats.Objects},
-		{"avgObjSize", stats.AvgObjSize},
-		{"dataSize", stats.DataSize},
-		{"storageSize", stats.StorageSize},
-		{"indexes", stats.Indexes},
-		{"indexSize", stats.IndexSize},
-		{"totalSize", stats.DataSize + stats.IndexSize},
-		{"scaleFactor", int32(1)},
-		{"ok", float64(1)},
+		{Key: "db", Value: stats.DB},
+		{Key: "collections", Value: stats.Collections},
+		{Key: "views", Value: stats.Views},
+		{Key: "objects", Value: stats.Objects},
+		{Key: "avgObjSize", Value: stats.AvgObjSize},
+		{Key: "dataSize", Value: stats.DataSize},
+		{Key: "storageSize", Value: stats.StorageSize},
+		{Key: "indexes", Value: stats.Indexes},
+		{Key: "indexSize", Value: stats.IndexSize},
+		{Key: "totalSize", Value: stats.DataSize + stats.IndexSize},
+		{Key: "scaleFactor", Value: int32(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -167,33 +167,33 @@ func handleCollStats(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"ns", stats.NS},
-		{"count", stats.Count},
-		{"size", stats.Size},
-		{"avgObjSize", stats.AvgObjSize},
-		{"storageSize", stats.StorageSize},
-		{"totalIndexSize", stats.TotalIndexSize},
-		{"nindexes", stats.Nindexes},
-		{"indexSizes", indexSizes},
-		{"capped", stats.Capped},
-		{"ok", float64(1)},
+		{Key: "ns", Value: stats.NS},
+		{Key: "count", Value: stats.Count},
+		{Key: "size", Value: stats.Size},
+		{Key: "avgObjSize", Value: stats.AvgObjSize},
+		{Key: "storageSize", Value: stats.StorageSize},
+		{Key: "totalIndexSize", Value: stats.TotalIndexSize},
+		{Key: "nindexes", Value: stats.Nindexes},
+		{Key: "indexSizes", Value: indexSizes},
+		{Key: "capped", Value: stats.Capped},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
 // handleWhatsmyuri handles the "whatsmyuri" command.
 func handleWhatsmyuri(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	return marshalResponse(bson.D{
-		{"you", ctx.RemoteAddr},
-		{"ok", float64(1)},
+		{Key: "you", Value: ctx.RemoteAddr},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
 // handleGetLastError handles the legacy "getLastError"/"getlasterror" command.
 func handleGetLastError(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return marshalResponse(bson.D{
-		{"n", int32(0)},
-		{"err", nil},
-		{"ok", float64(1)},
+		{Key: "n", Value: int32(0)},
+		{Key: "err", Value: nil},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -204,8 +204,8 @@ func handleConnectionStatus(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 
 	if ctx.Username != "" {
 		authenticatedUsers = append(authenticatedUsers, bson.D{
-			{"user", ctx.Username},
-			{"db", ctx.UserDB},
+			{Key: "user", Value: ctx.Username},
+			{Key: "db", Value: ctx.UserDB},
 		})
 
 		// Look up the user's roles.
@@ -213,19 +213,19 @@ func handleConnectionStatus(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 		if err == nil && ok {
 			for _, role := range user.Roles {
 				authenticatedUserRoles = append(authenticatedUserRoles, bson.D{
-					{"role", role.Role},
-					{"db", role.DB},
+					{Key: "role", Value: role.Role},
+					{Key: "db", Value: role.DB},
 				})
 			}
 		}
 	}
 
 	return marshalResponse(bson.D{
-		{"authInfo", bson.D{
-			{"authenticatedUsers", authenticatedUsers},
-			{"authenticatedUserRoles", authenticatedUserRoles},
+		{Key: "authInfo", Value: bson.D{
+			{Key: "authenticatedUsers", Value: authenticatedUsers},
+			{Key: "authenticatedUserRoles", Value: authenticatedUserRoles},
 		}},
-		{"ok", float64(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -268,36 +268,36 @@ func handleExplain(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	// Build explain output without actually executing (queryPlanner mode).
 	// For executionStats / allPlansExecution, we'd need to run the actual query.
 	explainDoc := bson.D{
-		{"queryPlanner", bson.D{
-			{"plannerVersion", int32(1)},
-			{"namespace", ctx.DB + "." + innerCmdName},
-			{"winningPlan", bson.D{
-				{"stage", "COLLSCAN"},
-				{"direction", "forward"},
+		{Key: "queryPlanner", Value: bson.D{
+			{Key: "plannerVersion", Value: int32(1)},
+			{Key: "namespace", Value: ctx.DB + "." + innerCmdName},
+			{Key: "winningPlan", Value: bson.D{
+				{Key: "stage", Value: "COLLSCAN"},
+				{Key: "direction", Value: "forward"},
 			}},
-			{"rejectedPlans", bson.A{}},
+			{Key: "rejectedPlans", Value: bson.A{}},
 		}},
-		{"serverInfo", bson.D{
-			{"host", "salvobase"},
-			{"version", "7.0.0-salvobase"},
+		{Key: "serverInfo", Value: bson.D{
+			{Key: "host", Value: "salvobase"},
+			{Key: "version", Value: "7.0.0-salvobase"},
 		}},
-		{"command", innerCmd},
-		{"ok", float64(1)},
+		{Key: "command", Value: innerCmd},
+		{Key: "ok", Value: float64(1)},
 	}
 
 	if verbosity == "executionStats" || verbosity == "allPlansExecution" {
 		explainDoc = append(explainDoc[:len(explainDoc)-1], bson.E{
 			Key: "executionStats",
 			Value: bson.D{
-				{"executionSuccess", true},
-				{"nReturned", int64(0)},
-				{"executionTimeMillis", int64(0)},
-				{"totalKeysExamined", int64(0)},
-				{"totalDocsExamined", int64(0)},
-				{"executionStages", bson.D{
-					{"stage", "COLLSCAN"},
-					{"nReturned", int64(0)},
-					{"executionTimeMillisEstimate", int64(0)},
+				{Key: "executionSuccess", Value: true},
+				{Key: "nReturned", Value: int64(0)},
+				{Key: "executionTimeMillis", Value: int64(0)},
+				{Key: "totalKeysExamined", Value: int64(0)},
+				{Key: "totalDocsExamined", Value: int64(0)},
+				{Key: "executionStages", Value: bson.D{
+					{Key: "stage", Value: "COLLSCAN"},
+					{Key: "nReturned", Value: int64(0)},
+					{Key: "executionTimeMillisEstimate", Value: int64(0)},
 				}},
 			},
 		})

@@ -1056,11 +1056,10 @@ func evalIsArray(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch val.(type) {
+	switch rv := val.(type) {
 	case []interface{}, bson.A:
 		return true, nil
 	case bson.RawValue:
-		rv, _ := val.(bson.RawValue)
 		return rv.Type == bson.TypeArray, nil
 	}
 	return false, nil
@@ -2733,9 +2732,7 @@ func toSlice(v interface{}) []interface{} {
 		return s
 	case bson.A:
 		result := make([]interface{}, len(s))
-		for i, item := range s {
-			result[i] = item
-		}
+		copy(result, s)
 		return result
 	case bson.RawValue:
 		if s.Type != bson.TypeArray {

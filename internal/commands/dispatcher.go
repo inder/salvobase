@@ -261,7 +261,7 @@ func extractCommandName(cmd bson.Raw) (string, error) {
 
 // BuildOKResponse builds {"ok": 1.0, ...extra}.
 func BuildOKResponse(extra ...bson.E) bson.Raw {
-	d := bson.D{{"ok", float64(1)}}
+	d := bson.D{{Key: "ok", Value: float64(1)}}
 	d = append(d, extra...)
 	raw, _ := bson.Marshal(d)
 	return raw
@@ -270,10 +270,10 @@ func BuildOKResponse(extra ...bson.E) bson.Raw {
 // BuildErrorResponse builds {"ok": 0, "code": code, "errmsg": msg}.
 func BuildErrorResponse(code int32, msg string) bson.Raw {
 	d := bson.D{
-		{"ok", float64(0)},
-		{"errmsg", msg},
-		{"code", code},
-		{"codeName", mongoErrorCodeName(code)},
+		{Key: "ok", Value: float64(0)},
+		{Key: "errmsg", Value: msg},
+		{Key: "code", Value: code},
+		{Key: "codeName", Value: mongoErrorCodeName(code)},
 	}
 	raw, _ := bson.Marshal(d)
 	return raw
@@ -285,21 +285,12 @@ func prependOK(resp bson.Raw) bson.Raw {
 	if err != nil {
 		return BuildOKResponse()
 	}
-	d := bson.D{{"ok", float64(1)}}
+	d := bson.D{{Key: "ok", Value: float64(1)}}
 	for _, e := range elems {
 		d = append(d, bson.E{Key: e.Key(), Value: e.Value()})
 	}
 	raw, _ := bson.Marshal(d)
 	return raw
-}
-
-// rawToD converts a bson.Raw to a bson.D for introspection / modification.
-func rawToD(raw bson.Raw) (bson.D, error) {
-	var d bson.D
-	if err := bson.Unmarshal(raw, &d); err != nil {
-		return nil, err
-	}
-	return d, nil
 }
 
 // mongoErrorCodeName returns the MongoDB error code name for common codes.
@@ -421,40 +412,6 @@ func lookupRawField(doc bson.Raw, key string) bson.Raw {
 	return raw
 }
 
-// lookupArrayField extracts a bson.A (array) by key.
-func lookupArrayField(doc bson.Raw, key string) (bson.A, bool) {
-	val, err := doc.LookupErr(key)
-	if err != nil {
-		return nil, false
-	}
-	arr, ok := val.ArrayOK()
-	if !ok {
-		return nil, false
-	}
-	var a bson.A
-	if err := bson.Unmarshal(arr, &a); err != nil {
-		return nil, false
-	}
-	return a, true
-}
-
-// rawArrayToDocs converts a bson.A to []bson.Raw.
-func rawArrayToDocs(arr bson.A) []bson.Raw {
-	docs := make([]bson.Raw, 0, len(arr))
-	for _, item := range arr {
-		switch v := item.(type) {
-		case bson.D:
-			raw, err := bson.Marshal(v)
-			if err == nil {
-				docs = append(docs, raw)
-			}
-		case bson.Raw:
-			docs = append(docs, v)
-		}
-	}
-	return docs
-}
-
 // marshalResponse marshals a bson.D to bson.Raw. Panics on marshal failure
 // (which should never happen for well-formed documents).
 func marshalResponse(d bson.D) bson.Raw {
@@ -462,9 +419,9 @@ func marshalResponse(d bson.D) bson.Raw {
 	if err != nil {
 		// This should never happen; log and return an error doc.
 		errDoc, _ := bson.Marshal(bson.D{
-			{"ok", float64(0)},
-			{"errmsg", fmt.Sprintf("internal marshal error: %v", err)},
-			{"code", int32(1)},
+			{Key: "ok", Value: float64(0)},
+			{Key: "errmsg", Value: fmt.Sprintf("internal marshal error: %v", err)},
+			{Key: "code", Value: int32(1)},
 		})
 		return errDoc
 	}

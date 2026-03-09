@@ -14,7 +14,7 @@ import (
 type OpQueryMessage struct {
 	Hdr                  Header
 	Flags                int32
-	FullCollectionName   string   // e.g. "mydb.$cmd" or "mydb.mycollection"
+	FullCollectionName   string // e.g. "mydb.$cmd" or "mydb.mycollection"
 	NumberToSkip         int32
 	NumberToReturn       int32
 	Query                bson.Raw

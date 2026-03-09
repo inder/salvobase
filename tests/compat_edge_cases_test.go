@@ -42,7 +42,7 @@ func TestCompatInsertDuplicateID(t *testing.T) {
 	coll := db.Collection("compat_dup_id")
 	ctx := context.Background()
 
-	doc := bson.D{{"_id", "fixed-id"}, {"name", "alice"}}
+	doc := bson.D{{Key: "_id", Value: "fixed-id"}, {Key: "name", Value: "alice"}}
 	_, err := coll.InsertOne(ctx, doc)
 	if err != nil {
 		t.Fatalf("first insert: %v", err)
@@ -88,7 +88,7 @@ func TestCompatFindEmptyFilter(t *testing.T) {
 	// Insert 5 docs
 	docs := make([]interface{}, 5)
 	for i := 0; i < 5; i++ {
-		docs[i] = bson.D{{"num", i}}
+		docs[i] = bson.D{{Key: "num", Value: i}}
 	}
 	_, err := coll.InsertMany(ctx, docs)
 	if err != nil {
@@ -122,8 +122,8 @@ func TestCompatUpdateUpsertCreatesDoc(t *testing.T) {
 
 	opts := options.UpdateOne().SetUpsert(true)
 	res, err := coll.UpdateOne(ctx,
-		bson.D{{"name", "nobody"}},
-		bson.D{{"$set", bson.D{{"name", "nobody"}, {"created", true}}}},
+		bson.D{{Key: "name", Value: "nobody"}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "name", Value: "nobody"}, {Key: "created", Value: true}}}},
 		opts,
 	)
 	if err != nil {
@@ -136,7 +136,7 @@ func TestCompatUpdateUpsertCreatesDoc(t *testing.T) {
 
 	// Verify the doc exists
 	var doc bson.D
-	err = coll.FindOne(ctx, bson.D{{"name", "nobody"}}).Decode(&doc)
+	err = coll.FindOne(ctx, bson.D{{Key: "name", Value: "nobody"}}).Decode(&doc)
 	if err != nil {
 		t.Fatalf("FindOne after upsert: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestCompatDeleteNonexistent(t *testing.T) {
 	coll := db.Collection("compat_delete_none")
 	ctx := context.Background()
 
-	res, err := coll.DeleteOne(ctx, bson.D{{"nonexistent", "field"}})
+	res, err := coll.DeleteOne(ctx, bson.D{{Key: "nonexistent", Value: "field"}})
 	if err != nil {
 		t.Fatalf("DeleteOne: %v", err)
 	}
@@ -172,11 +172,11 @@ func TestCompatNestedFieldQuery(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := coll.InsertOne(ctx, bson.D{
-		{"user", bson.D{
-			{"name", "alice"},
-			{"address", bson.D{
-				{"city", "portland"},
-				{"state", "OR"},
+		{Key: "user", Value: bson.D{
+			{Key: "name", Value: "alice"},
+			{Key: "address", Value: bson.D{
+				{Key: "city", Value: "portland"},
+				{Key: "state", Value: "OR"},
 			}},
 		}},
 	})
@@ -186,7 +186,7 @@ func TestCompatNestedFieldQuery(t *testing.T) {
 
 	// Query with dot notation
 	var doc bson.D
-	err = coll.FindOne(ctx, bson.D{{"user.address.city", "portland"}}).Decode(&doc)
+	err = coll.FindOne(ctx, bson.D{{Key: "user.address.city", Value: "portland"}}).Decode(&doc)
 	if err != nil {
 		t.Fatalf("FindOne with dot notation: %v", err)
 	}
@@ -202,9 +202,9 @@ func TestCompatComparisonWithNull(t *testing.T) {
 	ctx := context.Background()
 
 	docs := []interface{}{
-		bson.D{{"name", "alice"}, {"email", "alice@example.com"}},
-		bson.D{{"name", "bob"}, {"email", nil}},           // explicit null
-		bson.D{{"name", "carol"}},                          // field missing entirely
+		bson.D{{Key: "name", Value: "alice"}, {Key: "email", Value: "alice@example.com"}},
+		bson.D{{Key: "name", Value: "bob"}, {Key: "email", Value: nil}}, // explicit null
+		bson.D{{Key: "name", Value: "carol"}},                           // field missing entirely
 	}
 	_, err := coll.InsertMany(ctx, docs)
 	if err != nil {
@@ -212,7 +212,7 @@ func TestCompatComparisonWithNull(t *testing.T) {
 	}
 
 	// {email: null} should match both bob (null) and carol (missing)
-	cursor, err := coll.Find(ctx, bson.D{{"email", nil}})
+	cursor, err := coll.Find(ctx, bson.D{{Key: "email", Value: nil}})
 	if err != nil {
 		t.Fatalf("Find with null: %v", err)
 	}
@@ -236,10 +236,10 @@ func TestCompatRegexCaseInsensitive(t *testing.T) {
 	ctx := context.Background()
 
 	docs := []interface{}{
-		bson.D{{"name", "Alice"}},
-		bson.D{{"name", "ALICE"}},
-		bson.D{{"name", "alice"}},
-		bson.D{{"name", "Bob"}},
+		bson.D{{Key: "name", Value: "Alice"}},
+		bson.D{{Key: "name", Value: "ALICE"}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "name", Value: "Bob"}},
 	}
 	_, err := coll.InsertMany(ctx, docs)
 	if err != nil {
@@ -248,9 +248,9 @@ func TestCompatRegexCaseInsensitive(t *testing.T) {
 
 	// Case-insensitive regex
 	cursor, err := coll.Find(ctx, bson.D{
-		{"name", bson.D{
-			{"$regex", "^alice$"},
-			{"$options", "i"},
+		{Key: "name", Value: bson.D{
+			{Key: "$regex", Value: "^alice$"},
+			{Key: "$options", Value: "i"},
 		}},
 	})
 	if err != nil {
@@ -276,10 +276,10 @@ func TestCompatInOperatorWithMixedTypes(t *testing.T) {
 	ctx := context.Background()
 
 	docs := []interface{}{
-		bson.D{{"val", 1}},
-		bson.D{{"val", "one"}},
-		bson.D{{"val", true}},
-		bson.D{{"val", 2}},
+		bson.D{{Key: "val", Value: 1}},
+		bson.D{{Key: "val", Value: "one"}},
+		bson.D{{Key: "val", Value: true}},
+		bson.D{{Key: "val", Value: 2}},
 	}
 	_, err := coll.InsertMany(ctx, docs)
 	if err != nil {
@@ -288,7 +288,7 @@ func TestCompatInOperatorWithMixedTypes(t *testing.T) {
 
 	// $in with mixed types
 	cursor, err := coll.Find(ctx, bson.D{
-		{"val", bson.D{{"$in", bson.A{1, "one"}}}},
+		{Key: "val", Value: bson.D{{Key: "$in", Value: bson.A{1, "one"}}}},
 	})
 	if err != nil {
 		t.Fatalf("Find with $in: %v", err)
@@ -315,22 +315,22 @@ func TestCompatIncOnNonexistentField(t *testing.T) {
 	coll := db.Collection("compat_inc_missing")
 	ctx := context.Background()
 
-	_, err := coll.InsertOne(ctx, bson.D{{"name", "alice"}})
+	_, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}})
 	if err != nil {
 		t.Fatalf("InsertOne: %v", err)
 	}
 
 	// $inc on a field that doesn't exist
 	_, err = coll.UpdateOne(ctx,
-		bson.D{{"name", "alice"}},
-		bson.D{{"$inc", bson.D{{"counter", 5}}}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "$inc", Value: bson.D{{Key: "counter", Value: 5}}}},
 	)
 	if err != nil {
 		t.Fatalf("UpdateOne with $inc: %v", err)
 	}
 
 	var doc bson.D
-	err = coll.FindOne(ctx, bson.D{{"name", "alice"}}).Decode(&doc)
+	err = coll.FindOne(ctx, bson.D{{Key: "name", Value: "alice"}}).Decode(&doc)
 	if err != nil {
 		t.Fatalf("FindOne: %v", err)
 	}
@@ -365,22 +365,22 @@ func TestCompatPushCreatesArray(t *testing.T) {
 	coll := db.Collection("compat_push_create")
 	ctx := context.Background()
 
-	_, err := coll.InsertOne(ctx, bson.D{{"name", "alice"}})
+	_, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}})
 	if err != nil {
 		t.Fatalf("InsertOne: %v", err)
 	}
 
 	// $push on non-existent field
 	_, err = coll.UpdateOne(ctx,
-		bson.D{{"name", "alice"}},
-		bson.D{{"$push", bson.D{{"tags", "admin"}}}},
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "$push", Value: bson.D{{Key: "tags", Value: "admin"}}}},
 	)
 	if err != nil {
 		t.Fatalf("UpdateOne with $push: %v", err)
 	}
 
 	var doc bson.D
-	err = coll.FindOne(ctx, bson.D{{"name", "alice"}}).Decode(&doc)
+	err = coll.FindOne(ctx, bson.D{{Key: "name", Value: "alice"}}).Decode(&doc)
 	if err != nil {
 		t.Fatalf("FindOne: %v", err)
 	}
@@ -413,7 +413,7 @@ func TestCompatAggregateEmptyPipeline(t *testing.T) {
 
 	docs := make([]interface{}, 3)
 	for i := 0; i < 3; i++ {
-		docs[i] = bson.D{{"val", i}}
+		docs[i] = bson.D{{Key: "val", Value: i}}
 	}
 	_, err := coll.InsertMany(ctx, docs)
 	if err != nil {
@@ -445,11 +445,11 @@ func TestCompatGroupWithSum(t *testing.T) {
 	ctx := context.Background()
 
 	docs := []interface{}{
-		bson.D{{"dept", "eng"}, {"salary", 100000}},
-		bson.D{{"dept", "eng"}, {"salary", 120000}},
-		bson.D{{"dept", "sales"}, {"salary", 80000}},
-		bson.D{{"dept", "sales"}, {"salary", 90000}},
-		bson.D{{"dept", "sales"}, {"salary", 85000}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: 100000}},
+		bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: 120000}},
+		bson.D{{Key: "dept", Value: "sales"}, {Key: "salary", Value: 80000}},
+		bson.D{{Key: "dept", Value: "sales"}, {Key: "salary", Value: 90000}},
+		bson.D{{Key: "dept", Value: "sales"}, {Key: "salary", Value: 85000}},
 	}
 	_, err := coll.InsertMany(ctx, docs)
 	if err != nil {
@@ -457,12 +457,12 @@ func TestCompatGroupWithSum(t *testing.T) {
 	}
 
 	pipeline := bson.A{
-		bson.D{{"$group", bson.D{
-			{"_id", "$dept"},
-			{"totalSalary", bson.D{{"$sum", "$salary"}}},
-			{"count", bson.D{{"$sum", 1}}},
+		bson.D{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: "$dept"},
+			{Key: "totalSalary", Value: bson.D{{Key: "$sum", Value: "$salary"}}},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
 		}}},
-		bson.D{{"$sort", bson.D{{"_id", 1}}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
 	}
 
 	cursor, err := coll.Aggregate(ctx, pipeline)
@@ -545,7 +545,9 @@ func TestCompatListCollectionsEmpty(t *testing.T) {
 
 // TestCompatSortWithMixedTypes verifies MongoDB's type comparison order.
 // MongoDB sorts: MinKey < Null < Numbers < Symbol < String < Object < Array
-//                < BinData < ObjectId < Boolean < Date < Timestamp < RegEx < MaxKey
+//
+//	< BinData < ObjectId < Boolean < Date < Timestamp < RegEx < MaxKey
+//
 // Ref: https://www.mongodb.com/docs/manual/reference/bson-type-comparison-order/
 func TestCompatSortWithMixedTypes(t *testing.T) {
 	client := newClient(t)
@@ -554,10 +556,10 @@ func TestCompatSortWithMixedTypes(t *testing.T) {
 	ctx := context.Background()
 
 	docs := []interface{}{
-		bson.D{{"val", "string"}},
-		bson.D{{"val", 42}},
-		bson.D{{"val", nil}},
-		bson.D{{"val", true}},
+		bson.D{{Key: "val", Value: "string"}},
+		bson.D{{Key: "val", Value: 42}},
+		bson.D{{Key: "val", Value: nil}},
+		bson.D{{Key: "val", Value: true}},
 	}
 	_, err := coll.InsertMany(ctx, docs)
 	if err != nil {
@@ -565,7 +567,7 @@ func TestCompatSortWithMixedTypes(t *testing.T) {
 	}
 
 	// Sort ascending — null should come first, then numbers, then strings, then booleans
-	cursor, err := coll.Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{"val", 1}}))
+	cursor, err := coll.Find(ctx, bson.D{}, options.Find().SetSort(bson.D{{Key: "val", Value: 1}}))
 	if err != nil {
 		t.Fatalf("Find with sort: %v", err)
 	}
@@ -596,12 +598,12 @@ func TestCompatProjectionExcludeID(t *testing.T) {
 	coll := db.Collection("compat_proj_noid")
 	ctx := context.Background()
 
-	_, err := coll.InsertOne(ctx, bson.D{{"name", "alice"}, {"age", 30}})
+	_, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "age", Value: 30}})
 	if err != nil {
 		t.Fatalf("InsertOne: %v", err)
 	}
 
-	opts := options.FindOne().SetProjection(bson.D{{"_id", 0}, {"name", 1}})
+	opts := options.FindOne().SetProjection(bson.D{{Key: "_id", Value: 0}, {Key: "name", Value: 1}})
 	var doc bson.D
 	err = coll.FindOne(ctx, bson.D{}, opts).Decode(&doc)
 	if err != nil {

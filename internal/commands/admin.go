@@ -63,9 +63,9 @@ func handleDrop(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"ns", ctx.DB + "." + collName},
-		{"nIndexesWas", int32(1)},
-		{"ok", float64(1)},
+		{Key: "ns", Value: ctx.DB + "." + collName},
+		{Key: "nIndexesWas", Value: int32(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -74,8 +74,8 @@ func handleDropDatabase(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	if !ctx.Engine.HasDatabase(ctx.DB) {
 		// Dropping a non-existent database is a no-op in MongoDB.
 		return marshalResponse(bson.D{
-			{"dropped", ctx.DB},
-			{"ok", float64(1)},
+			{Key: "dropped", Value: ctx.DB},
+			{Key: "ok", Value: float64(1)},
 		}), nil
 	}
 
@@ -84,8 +84,8 @@ func handleDropDatabase(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"dropped", ctx.DB},
-		{"ok", float64(1)},
+		{Key: "dropped", Value: ctx.DB},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -105,26 +105,26 @@ func handleListDatabases(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	for _, db := range dbs {
 		// Apply filter if present.
 		if filter != nil {
-			filterDoc := bson.D{{"name", db.Name}}
+			filterDoc := bson.D{{Key: "name", Value: db.Name}}
 			filterRaw, _ := bson.Marshal(filterDoc)
 			// Simple name-only filter check.
 			_ = filterRaw
 		}
 
 		if nameOnly {
-			dbList = append(dbList, bson.D{{"name", db.Name}})
+			dbList = append(dbList, bson.D{{Key: "name", Value: db.Name}})
 		} else {
 			dbList = append(dbList, bson.D{
-				{"name", db.Name},
-				{"sizeOnDisk", db.SizeOnDisk},
-				{"empty", db.Empty},
+				{Key: "name", Value: db.Name},
+				{Key: "sizeOnDisk", Value: db.SizeOnDisk},
+				{Key: "empty", Value: db.Empty},
 			})
 			totalSize += db.SizeOnDisk
 		}
 	}
 
 	d := bson.D{
-		{"databases", dbList},
+		{Key: "databases", Value: dbList},
 	}
 	if !nameOnly {
 		d = append(d, bson.E{Key: "totalSize", Value: totalSize})
@@ -149,16 +149,16 @@ func handleListCollections(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		var d bson.D
 		if nameOnly {
 			d = bson.D{
-				{"name", coll.Name},
-				{"type", coll.Type},
+				{Key: "name", Value: coll.Name},
+				{Key: "type", Value: coll.Type},
 			}
 		} else {
 			idIndex := coll.IDIndex
 			if idIndex == nil {
 				idIndex, _ = bson.Marshal(bson.D{
-					{"v", int32(2)},
-					{"key", bson.D{{"_id", int32(1)}}},
-					{"name", "_id_"},
+					{Key: "v", Value: int32(2)},
+					{Key: "key", Value: bson.D{{Key: "_id", Value: int32(1)}}},
+					{Key: "name", Value: "_id_"},
 				})
 			}
 			options := coll.Options
@@ -166,13 +166,13 @@ func handleListCollections(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 				options, _ = bson.Marshal(bson.D{})
 			}
 			d = bson.D{
-				{"name", coll.Name},
-				{"type", coll.Type},
-				{"options", options},
-				{"info", bson.D{
-					{"readOnly", false},
+				{Key: "name", Value: coll.Name},
+				{Key: "type", Value: coll.Type},
+				{Key: "options", Value: options},
+				{Key: "info", Value: bson.D{
+					{Key: "readOnly", Value: false},
 				}},
-				{"idIndex", idIndex},
+				{Key: "idIndex", Value: idIndex},
 			}
 		}
 		raw, err := bson.Marshal(d)
@@ -190,12 +190,12 @@ func handleListCollections(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"cursor", bson.D{
-			{"id", int64(0)},
-			{"ns", ns},
-			{"firstBatch", firstBatch},
+		{Key: "cursor", Value: bson.D{
+			{Key: "id", Value: int64(0)},
+			{Key: "ns", Value: ns},
+			{Key: "firstBatch", Value: firstBatch},
 		}},
-		{"ok", float64(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 

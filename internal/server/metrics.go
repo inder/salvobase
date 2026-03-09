@@ -33,31 +33,6 @@ var (
 		Help:    "Command execution duration",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"command"})
-
-	metricDocumentsInserted = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "salvobase_documents_inserted_total",
-		Help: "Documents inserted",
-	}, []string{"db", "collection"})
-
-	metricDocumentsQueried = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "salvobase_documents_queried_total",
-		Help: "Documents returned by queries",
-	}, []string{"db", "collection"})
-
-	metricErrors = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "salvobase_errors_total",
-		Help: "Total command errors by type",
-	}, []string{"command"})
-
-	metricBytesSent = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "salvobase_bytes_sent_total",
-		Help: "Total bytes sent to clients",
-	})
-
-	metricBytesReceived = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "salvobase_bytes_received_total",
-		Help: "Total bytes received from clients",
-	})
 )
 
 // startHTTPServer starts the Prometheus + REST API HTTP server.
@@ -181,23 +156,3 @@ func (s *Server) handleRESTRequest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(statusCode)
 	_, _ = w.Write(jsonBytes)
 }
-
-// recordCommandMetrics records Prometheus metrics for a completed command.
-// db and coll may be empty for non-collection commands.
-func recordCommandMetrics(cmdName string, db, coll string, docCount int, isError bool) {
-	metricOpsTotal.WithLabelValues(cmdName).Inc()
-	if isError {
-		metricErrors.WithLabelValues(cmdName).Inc()
-	}
-	switch cmdName {
-	case "insert":
-		if docCount > 0 && db != "" && coll != "" {
-			metricDocumentsInserted.WithLabelValues(db, coll).Add(float64(docCount))
-		}
-	case "find", "aggregate":
-		if docCount > 0 && db != "" && coll != "" {
-			metricDocumentsQueried.WithLabelValues(db, coll).Add(float64(docCount))
-		}
-	}
-}
-

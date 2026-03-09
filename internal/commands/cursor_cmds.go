@@ -62,12 +62,12 @@ func handleGetMore(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"cursor", bson.D{
-			{"id", returnedCursorID},
-			{"ns", ns},
-			{"nextBatch", nextBatch},
+		{Key: "cursor", Value: bson.D{
+			{Key: "id", Value: returnedCursorID},
+			{Key: "ns", Value: ns},
+			{Key: "nextBatch", Value: nextBatch},
 		}},
-		{"ok", float64(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -125,11 +125,11 @@ func handleKillCursors(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"cursorsKilled", killed},
-		{"cursorsNotFound", notFound},
-		{"cursorsAlive", bson.A{}},
-		{"cursorsUnknown", bson.A{}},
-		{"ok", float64(1)},
+		{Key: "cursorsKilled", Value: killed},
+		{Key: "cursorsNotFound", Value: notFound},
+		{Key: "cursorsAlive", Value: bson.A{}},
+		{Key: "cursorsUnknown", Value: bson.A{}},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -150,11 +150,11 @@ func handleStartSession(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	ctx.Session = session
 
 	return marshalResponse(bson.D{
-		{"id", bson.D{
-			{"id", bson.Binary{Subtype: 0x04, Data: sessionBytes}},
+		{Key: "id", Value: bson.D{
+			{Key: "id", Value: bson.Binary{Subtype: 0x04, Data: sessionBytes}},
 		}},
-		{"timeoutMinutes", int32(30)},
-		{"ok", float64(1)},
+		{Key: "timeoutMinutes", Value: int32(30)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 

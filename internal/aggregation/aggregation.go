@@ -15,7 +15,7 @@ import (
 // It delegates to the Stage implementations in stages.go via buildStage.
 func applyStage(name string, val bson.RawValue, docs []bson.Raw, engine storage.Engine, db string) ([]bson.Raw, error) {
 	// Build a stage spec document from the name + value so we can use buildStage.
-	specD := bson.D{{name, val}}
+	specD := bson.D{{Key: name, Value: val}}
 	specRaw, err := bson.Marshal(specD)
 	if err != nil {
 		return nil, fmt.Errorf("applyStage: failed to marshal stage spec: %w", err)

@@ -237,8 +237,8 @@ func (c *bboltCollection) Find(filter bson.Raw, opts FindOptions) (Cursor, error
 	}
 
 	cur := &sliceCursor{
-		docs:    docs,
-		engine:  c.engine,
+		docs:   docs,
+		engine: c.engine,
 	}
 	c.engine.opQuery.Add(1)
 	return cur, nil

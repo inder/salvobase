@@ -83,12 +83,12 @@ func handleFind(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	resp := marshalResponse(bson.D{
-		{"cursor", bson.D{
-			{"id", cursorID},
-			{"ns", ns},
-			{"firstBatch", firstBatch},
+		{Key: "cursor", Value: bson.D{
+			{Key: "id", Value: cursorID},
+			{Key: "ns", Value: ns},
+			{Key: "firstBatch", Value: firstBatch},
 		}},
-		{"ok", float64(1)},
+		{Key: "ok", Value: float64(1)},
 	})
 	return resp, nil
 }
@@ -151,13 +151,13 @@ func handleInsert(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	if insertErr != nil {
 		if me, ok := insertErr.(*storage.MongoError); ok && me.Code == storage.ErrCodeDuplicateKey {
 			resp := marshalResponse(bson.D{
-				{"n", int32(0)},
-				{"writeErrors", bson.A{bson.D{
-					{"index", int32(0)},
-					{"code", me.Code},
-					{"errmsg", me.Message},
+				{Key: "n", Value: int32(0)},
+				{Key: "writeErrors", Value: bson.A{bson.D{
+					{Key: "index", Value: int32(0)},
+					{Key: "code", Value: me.Code},
+					{Key: "errmsg", Value: me.Message},
 				}}},
-				{"ok", float64(1)},
+				{Key: "ok", Value: float64(1)},
 			})
 			return resp, nil
 		}
@@ -165,8 +165,8 @@ func handleInsert(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	resp := marshalResponse(bson.D{
-		{"n", int32(len(docs))},
-		{"ok", float64(1)},
+		{Key: "n", Value: int32(len(docs))},
+		{Key: "ok", Value: float64(1)},
 	})
 	return resp, nil
 }
@@ -243,15 +243,15 @@ func handleUpdate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		totalUpserted += result.UpsertedCount
 		if result.UpsertedCount > 0 && result.UpsertedID != nil {
 			upsertedDocs = append(upsertedDocs, bson.D{
-				{"index", int32(i)},
-				{"_id", result.UpsertedID},
+				{Key: "index", Value: int32(i)},
+				{Key: "_id", Value: result.UpsertedID},
 			})
 		}
 	}
 
 	d := bson.D{
-		{"n", totalMatched},
-		{"nModified", totalModified},
+		{Key: "n", Value: totalMatched},
+		{Key: "nModified", Value: totalModified},
 	}
 	if len(upsertedDocs) > 0 {
 		d = append(d, bson.E{Key: "upserted", Value: upsertedDocs})
@@ -318,8 +318,8 @@ func handleDelete(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"n", totalDeleted},
-		{"ok", float64(1)},
+		{Key: "n", Value: totalDeleted},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -356,11 +356,11 @@ func handleFindAndModify(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	opts := storage.FindAndModifyOptions{
-		Sort:      sort,
+		Sort:       sort,
 		Projection: fields,
-		Upsert:    upsert,
-		ReturnNew: returnNew,
-		Remove:    remove,
+		Upsert:     upsert,
+		ReturnNew:  returnNew,
+		Remove:     remove,
 	}
 
 	var doc bson.Raw
@@ -386,8 +386,8 @@ func handleFindAndModify(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	lastErrorObj := bson.D{
-		{"n", n},
-		{"updatedExisting", updatedExisting},
+		{Key: "n", Value: n},
+		{Key: "updatedExisting", Value: updatedExisting},
 	}
 
 	var valueField interface{} = bson.RawValue{Type: bson.TypeNull}
@@ -396,9 +396,9 @@ func handleFindAndModify(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"value", valueField},
-		{"lastErrorObject", lastErrorObj},
-		{"ok", float64(1)},
+		{Key: "value", Value: valueField},
+		{Key: "lastErrorObject", Value: lastErrorObj},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -426,8 +426,8 @@ func handleCount(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"n", n},
-		{"ok", float64(1)},
+		{Key: "n", Value: n},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -464,12 +464,10 @@ func handleDistinct(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	bsonValues := make(bson.A, len(values))
-	for i, v := range values {
-		bsonValues[i] = v
-	}
+	copy(bsonValues, values)
 
 	return marshalResponse(bson.D{
-		{"values", bsonValues},
-		{"ok", float64(1)},
+		{Key: "values", Value: bsonValues},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }

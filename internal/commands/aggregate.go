@@ -110,11 +110,11 @@ func handleAggregate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"cursor", bson.D{
-			{"id", cursorID},
-			{"ns", ns},
-			{"firstBatch", firstBatch},
+		{Key: "cursor", Value: bson.D{
+			{Key: "id", Value: cursorID},
+			{Key: "ns", Value: ns},
+			{Key: "firstBatch", Value: firstBatch},
 		}},
-		{"ok", float64(1)},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }

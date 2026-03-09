@@ -13,23 +13,23 @@ import (
 // This is an improvement over MongoDB Community which requires MongoDB Enterprise
 // or third-party tools for audit logging.
 type AuditLogger struct {
-	mu     sync.Mutex
-	w      io.Writer
+	mu      sync.Mutex
+	w       io.Writer
 	enabled bool
 }
 
 // AuditEvent represents a single auditable action.
 type AuditEvent struct {
-	Timestamp time.Time         `json:"ts"`
-	ConnID    int64             `json:"connId"`
-	Username  string            `json:"user,omitempty"`
-	UserDB    string            `json:"userDB,omitempty"`
-	Action    string            `json:"action"`          // "authenticate", "createCollection", etc.
-	DB        string            `json:"db,omitempty"`
-	Collection string           `json:"collection,omitempty"`
-	Success   bool              `json:"ok"`
-	Error     string            `json:"error,omitempty"`
-	Details   map[string]interface{} `json:"details,omitempty"`
+	Timestamp  time.Time              `json:"ts"`
+	ConnID     int64                  `json:"connId"`
+	Username   string                 `json:"user,omitempty"`
+	UserDB     string                 `json:"userDB,omitempty"`
+	Action     string                 `json:"action"` // "authenticate", "createCollection", etc.
+	DB         string                 `json:"db,omitempty"`
+	Collection string                 `json:"collection,omitempty"`
+	Success    bool                   `json:"ok"`
+	Error      string                 `json:"error,omitempty"`
+	Details    map[string]interface{} `json:"details,omitempty"`
 }
 
 // NewAuditLogger creates an audit logger writing to the given path.

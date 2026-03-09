@@ -200,9 +200,9 @@ func (c *Connection) handleOpGetMore(msg *wire.OpGetMoreMessage) error {
 
 	// Build a synthetic getMore command.
 	cmdD := bson.D{
-		{"getMore", msg.CursorID},
-		{"collection", coll},
-		{"batchSize", batchSize},
+		{Key: "getMore", Value: msg.CursorID},
+		{Key: "collection", Value: coll},
+		{Key: "batchSize", Value: batchSize},
 	}
 	cmdRaw, err := bson.Marshal(cmdD)
 	if err != nil {
@@ -243,13 +243,13 @@ func (c *Connection) handleOpDelete(msg *wire.OpDeleteMessage) error {
 	}
 
 	deleteSpec := bson.D{
-		{"q", msg.Selector},
-		{"limit", limit},
+		{Key: "q", Value: msg.Selector},
+		{Key: "limit", Value: limit},
 	}
 
 	cmdD := bson.D{
-		{"delete", coll},
-		{"deletes", bson.A{deleteSpec}},
+		{Key: "delete", Value: coll},
+		{Key: "deletes", Value: bson.A{deleteSpec}},
 	}
 	cmdRaw, err := bson.Marshal(cmdD)
 	if err != nil {

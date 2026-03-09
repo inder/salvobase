@@ -51,10 +51,10 @@ func handleSASLStart(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"conversationId", convID},
-		{"done", false},
-		{"payload", bson.Binary{Data: serverFirst}},
-		{"ok", float64(1)},
+		{Key: "conversationId", Value: convID},
+		{Key: "done", Value: false},
+		{Key: "payload", Value: bson.Binary{Data: serverFirst}},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -111,10 +111,10 @@ func handleSASLContinue(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return marshalResponse(bson.D{
-		{"conversationId", convID},
-		{"done", done},
-		{"payload", bson.Binary{Data: serverMsg}},
-		{"ok", float64(1)},
+		{Key: "conversationId", Value: convID},
+		{Key: "done", Value: done},
+		{Key: "payload", Value: bson.Binary{Data: serverMsg}},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
@@ -309,22 +309,22 @@ func handleUsersInfo(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		rolesDocs := make(bson.A, 0, len(u.Roles))
 		for _, r := range u.Roles {
 			rolesDocs = append(rolesDocs, bson.D{
-				{"role", r.Role},
-				{"db", r.DB},
+				{Key: "role", Value: r.Role},
+				{Key: "db", Value: r.DB},
 			})
 		}
 		userDocs = append(userDocs, bson.D{
-			{"_id", u.DB + "." + u.Username},
-			{"userId", u.ID},
-			{"user", u.Username},
-			{"db", u.DB},
-			{"roles", rolesDocs},
+			{Key: "_id", Value: u.DB + "." + u.Username},
+			{Key: "userId", Value: u.ID},
+			{Key: "user", Value: u.Username},
+			{Key: "db", Value: u.DB},
+			{Key: "roles", Value: rolesDocs},
 		})
 	}
 
 	return marshalResponse(bson.D{
-		{"users", userDocs},
-		{"ok", float64(1)},
+		{Key: "users", Value: userDocs},
+		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 

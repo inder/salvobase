@@ -223,9 +223,9 @@ func applyProjectionStage(doc bson.Raw, spec bson.Raw) (bson.Raw, error) {
 	}
 
 	type field struct {
-		path     string
-		mode     int // 1=include, 0=exclude, 2=computed
-		exprVal  bson.RawValue
+		path    string
+		mode    int // 1=include, 0=exclude, 2=computed
+		exprVal bson.RawValue
 	}
 
 	var fields []field
@@ -734,9 +734,9 @@ func (s *skipStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 // ─── $unwind ──────────────────────────────────────────────────────────────────
 
 type unwindStage struct {
-	path                  string
-	includeArrayIndex     string
-	preserveNullAndEmpty  bool
+	path                 string
+	includeArrayIndex    string
+	preserveNullAndEmpty bool
 }
 
 func buildUnwindStage(v bson.RawValue) (*unwindStage, error) {
@@ -1123,12 +1123,12 @@ func (s *outStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 // ─── $merge ───────────────────────────────────────────────────────────────────
 
 type mergeStage struct {
-	into    string
-	on      []string
+	into           string
+	on             []string
 	whenMatched    string
 	whenNotMatched string
-	engine  storage.Engine
-	db      string
+	engine         storage.Engine
+	db             string
 }
 
 func buildMergeStage(v bson.RawValue, engine storage.Engine, db string) (*mergeStage, error) {
@@ -1319,10 +1319,10 @@ func (s *facetStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 // ─── $bucket ──────────────────────────────────────────────────────────────────
 
 type bucketStage struct {
-	groupBy  bson.RawValue
-	boundaries []interface{}
+	groupBy       bson.RawValue
+	boundaries    []interface{}
 	defaultBucket interface{}
-	output  bson.Raw
+	output        bson.Raw
 }
 
 func buildBucketStage(spec bson.Raw) (*bucketStage, error) {
@@ -1408,9 +1408,7 @@ func (s *bucketStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 			if err != nil {
 				return nil, err
 			}
-			for _, e := range outResult {
-				d = append(d, e)
-			}
+			d = append(d, outResult...)
 		}
 		b2, err := bson.Marshal(d)
 		if err != nil {
@@ -1571,9 +1569,7 @@ func (s *bucketAutoStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 			if err != nil {
 				return nil, err
 			}
-			for _, e := range outResult {
-				d = append(d, e)
-			}
+			d = append(d, outResult...)
 		}
 
 		b, err := bson.Marshal(d)
