@@ -71,7 +71,7 @@ func (s *Server) startHTTPServer() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"ok":1,"status":"healthy"}`))
+		_, _ = w.Write([]byte(`{"ok":1,"status":"healthy"}`))
 	})
 
 	// REST API.
@@ -179,7 +179,7 @@ func (s *Server) handleRESTRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(statusCode)
-	w.Write(jsonBytes)
+	_, _ = w.Write(jsonBytes)
 }
 
 // recordCommandMetrics records Prometheus metrics for a completed command.

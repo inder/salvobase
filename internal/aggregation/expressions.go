@@ -1060,7 +1060,7 @@ func evalIsArray(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 	case []interface{}, bson.A:
 		return true, nil
 	case bson.RawValue:
-		rv := val.(bson.RawValue)
+		rv, _ := val.(bson.RawValue)
 		return rv.Type == bson.TypeArray, nil
 	}
 	return false, nil

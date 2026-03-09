@@ -742,7 +742,7 @@ func rawToD(raw bson.Raw) (bson.D, error) {
 	return d, nil
 }
 
-// marshalWrap normalizes any Go value to bson.RawValue by marshalling it
+// marshalWrap normalizes any Go value to bson.RawValue by marshaling it
 // through a temporary wrapper document and extracting the raw value.
 // This handles the case where update operators store native Go types
 // (int32, float64, bson.A, etc.) after a setFieldD call.
@@ -750,7 +750,7 @@ func marshalWrap(v interface{}) (bson.RawValue, bool) {
 	if rv, ok := v.(bson.RawValue); ok {
 		return rv, true
 	}
-	wrapper, err := bson.Marshal(bson.D{{"v", v}})
+	wrapper, err := bson.Marshal(bson.D{{Key: "v", Value: v}})
 	if err != nil {
 		return bson.RawValue{Type: bson.TypeNull}, false
 	}

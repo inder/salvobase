@@ -49,10 +49,10 @@ const HeaderSize = 16
 
 // MongoDB version capabilities we advertise.
 const (
-	MaxWireVersion                 = int32(21) // MongoDB 7.0
-	MinWireVersion                 = int32(0)
-	MaxBSONObjectSize              = int32(16 * 1024 * 1024) // 16MB
-	MaxMessageSizeBytes            = int32(48 * 1024 * 1024) // 48MB
-	MaxWriteBatchSize              = int32(100000)
-	LogicalSessionTimeoutMinutes   = int32(30)
+	MaxWireVersion               = int32(21)              // MongoDB 7.0
+	MinWireVersion               = int32(0)
+	MaxBSONObjectSize            = int32(16 * 1024 * 1024) // 16MB
+	MaxMessageSizeBytes          = int32(48 * 1024 * 1024) // 48MB
+	MaxWriteBatchSize            = int32(100000)
+	LogicalSessionTimeoutMinutes = int32(30)
 )

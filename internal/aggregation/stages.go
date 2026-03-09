@@ -363,8 +363,6 @@ type groupStage struct {
 	spec bson.Raw
 }
 
-type groupKey = interface{}
-
 type groupAccumulator struct {
 	op     string
 	expr   bson.RawValue
@@ -690,37 +688,6 @@ func calcStdDev(values []interface{}, population bool) interface{} {
 		denom -= 1
 	}
 	return math.Sqrt(variance / denom)
-}
-
-func marshalValue(v interface{}) (bson.Raw, error) {
-	d := bson.D{{Key: "v", Value: v}}
-	b, err := bson.Marshal(d)
-	if err != nil {
-		return nil, err
-	}
-	raw := bson.Raw(b)
-	val, err := raw.LookupErr("v")
-	if err != nil {
-		return nil, err
-	}
-	// Return just the value bytes
-	b2, err := bson.Marshal(bson.D{{Key: "_id", Value: val}})
-	if err != nil {
-		return nil, err
-	}
-	raw2 := bson.Raw(b2)
-	idVal, err := raw2.LookupErr("_id")
-	if err != nil {
-		return nil, err
-	}
-	// We need to return the raw bytes for the _id value
-	// The simplest approach is to return the raw doc itself
-	wrapDoc := bson.D{{Key: "k", Value: idVal}}
-	wrapB, err := bson.Marshal(wrapDoc)
-	if err != nil {
-		return nil, err
-	}
-	return bson.Raw(wrapB), nil
 }
 
 // ─── $sort ────────────────────────────────────────────────────────────────────

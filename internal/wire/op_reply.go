@@ -19,55 +19,6 @@ type OpReplyMessage struct {
 	Documents      []bson.Raw
 }
 
-// readOpReply parses an OP_REPLY body from r. The header has already been read.
-//
-// Wire layout after the 16-byte header:
-//
-//	responseFlags   int32
-//	cursorID        int64
-//	startingFrom    int32
-//	numberReturned  int32
-//	documents       BSON docs × numberReturned
-func readOpReply(r io.Reader, hdr Header) (*OpReplyMessage, error) {
-	msg := &OpReplyMessage{Hdr: hdr}
-
-	responseFlags, err := readInt32(r)
-	if err != nil {
-		return nil, fmt.Errorf("readOpReply responseFlags: %w", err)
-	}
-	msg.ResponseFlags = responseFlags
-
-	cursorID, err := readInt64(r)
-	if err != nil {
-		return nil, fmt.Errorf("readOpReply cursorID: %w", err)
-	}
-	msg.CursorID = cursorID
-
-	startingFrom, err := readInt32(r)
-	if err != nil {
-		return nil, fmt.Errorf("readOpReply startingFrom: %w", err)
-	}
-	msg.StartingFrom = startingFrom
-
-	numberReturned, err := readInt32(r)
-	if err != nil {
-		return nil, fmt.Errorf("readOpReply numberReturned: %w", err)
-	}
-	msg.NumberReturned = numberReturned
-
-	docs := make([]bson.Raw, 0, int(numberReturned))
-	for i := int32(0); i < numberReturned; i++ {
-		doc, err := readBSONDoc(r)
-		if err != nil {
-			return nil, fmt.Errorf("readOpReply document %d: %w", i, err)
-		}
-		docs = append(docs, doc)
-	}
-	msg.Documents = docs
-
-	return msg, nil
-}
-
 // WriteOpReply encodes and writes an OP_REPLY message to w.
 //
 // Wire layout:

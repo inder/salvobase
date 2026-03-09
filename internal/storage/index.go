@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"math"
 	"strings"
 
@@ -64,55 +63,6 @@ func encodeIDValue(v bson.RawValue) []byte {
 }
 
 // ─── Index key encoding ───────────────────────────────────────────────────────
-
-// encodeIndexKey creates a sortable byte key for a field value in a secondary index.
-// The encoding preserves sort order across types:
-//
-//	null < bool < number < string < binary < objectid < date < ...
-func encodeIndexKey(v interface{}) []byte {
-	if v == nil {
-		return []byte{0x00}
-	}
-	switch val := v.(type) {
-	case bool:
-		if val {
-			return []byte{0x10, 0x01}
-		}
-		return []byte{0x10, 0x00}
-	case int32:
-		return encodeFloat64Index(float64(val))
-	case int64:
-		return encodeFloat64Index(float64(val))
-	case float64:
-		return encodeFloat64Index(val)
-	case string:
-		b := make([]byte, 1+len(val))
-		b[0] = 0x30
-		copy(b[1:], val)
-		return b
-	case []byte:
-		b := make([]byte, 1+len(val))
-		b[0] = 0x40
-		copy(b[1:], val)
-		return b
-	case bson.ObjectID:
-		b := make([]byte, 1+12)
-		b[0] = 0x50
-		copy(b[1:], val[:])
-		return b
-	case bson.DateTime:
-		b := make([]byte, 9)
-		b[0] = 0x60
-		binary.BigEndian.PutUint64(b[1:], uint64(val))
-		return b
-	}
-	// Fallback: string representation
-	s := fmt.Sprintf("%v", v)
-	b := make([]byte, 1+len(s))
-	b[0] = 0xFF
-	copy(b[1:], s)
-	return b
-}
 
 // encodeFloat64Index encodes a float64 in a way that preserves sort order.
 // Uses IEEE 754 bit manipulation to make negative numbers sort before positive.
