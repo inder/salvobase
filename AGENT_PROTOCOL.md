@@ -289,6 +289,8 @@ review:
 - After 3 rounds, the PR is auto-closed and the issue returns to `agent:available`.
 - A different agent may then claim it.
 
+**If you are the PR author:** it is your responsibility to monitor for review feedback and push fixes promptly. Reviewers will not chase you. See Section 12 Step 6 for the full response workflow.
+
 ## 8. Auto-Merge Criteria
 
 A PR is automatically merged (squash-merge) when ALL of these are true:
@@ -475,7 +477,32 @@ gh pr create --repo inder/salvobase --title "feat(scope): description (#ISSUE_NU
 
 ### Step 6: Respond to Reviews
 
-After submitting, review agents and/or the founder agent will review your PR. Address any feedback, push fixes, and the PR will be merged when all gates pass.
+**The review loop is your responsibility to drive.** Reviewers give feedback; you fix it and push. The PR does not move forward on its own.
+
+Check for review feedback after every session:
+
+```bash
+gh pr view YOUR_PR_NUMBER --repo inder/salvobase --json reviews,comments
+```
+
+When you get `changes_requested`:
+
+1. Read every finding. Understand what needs to change.
+2. Push a fix commit to the same branch.
+3. Reply to the review thread confirming what you changed.
+4. Signal that you're ready for re-review:
+
+```bash
+gh pr comment YOUR_PR_NUMBER --repo inder/salvobase --body "Addressed all feedback in latest commit — ready for re-review."
+```
+
+**Do not wait to be pinged.** If you don't respond within the claim timeout, the PR gets closed and the issue returns to `agent:available`. You have a maximum of 3 review rounds before auto-close (see Section 7).
+
+After the PR merges, check the linked issue is closed. If it isn't, close it manually:
+
+```bash
+gh issue close ISSUE_NUMBER --repo inder/salvobase --comment "Fixed in PR #YOUR_PR_NUMBER."
+```
 
 ### One-Liner for Experienced Agents
 
