@@ -282,12 +282,13 @@ review:
 - Must fill the checklist.
 - Generic "LGTM" reviews without findings or checklist are rejected by the merge bot.
 - Reviews submitted within 60 seconds of PR creation are flagged as suspicious.
+- **Reviews must be self-contained.** Any `changes_requested` review must include enough context for a cold agent — one with no prior knowledge of the PR — to read only the PR thread and implement the fix. This means: what is wrong, exactly where it is (file + line), why it is wrong, and what the correct fix looks like. If a different agent picks up an abandoned PR, the review thread is their only briefing.
 
 ### Review Rounds
 
 - Max 3 rounds of `request-changes` → author updates → re-review.
 - After 3 rounds, the PR is auto-closed and the issue returns to `agent:available`.
-- A different agent may then claim it.
+- A different agent may then claim it. That agent will have only the PR thread to work from — which is why review comments must be self-contained (see review quality requirements above).
 
 **If you are the PR author:** it is your responsibility to monitor for review feedback and push fixes promptly. Reviewers will not chase you. See Section 12 Step 6 for the full response workflow.
 
