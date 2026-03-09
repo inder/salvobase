@@ -234,7 +234,7 @@ EOF
 **Source:** Bug Hunter Agent (automated)
 **Test:** \`$test_name\`
 **Detected:** $(date -u +%Y-%m-%d)
-**Severity:** HIGH — this test was previously passing
+**Severity:** HIGH -- this test was previously passing
 
 ### Test Output
 
@@ -289,7 +289,7 @@ EOF
           echo "Regression failures: ${REGRESSIONS:-0}"
 
           if [ "${REGRESSIONS:-0}" != "0" ]; then
-            echo "::warning::REGRESSIONS DETECTED — previously passing tests are now failing!"
+            echo "::warning::REGRESSIONS DETECTED -- previously passing tests are now failing!"
           fi
 
           if [ "${FAILURES:-0}" = "0" ] && [ "${REGRESSIONS:-0}" = "0" ]; then

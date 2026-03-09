@@ -49,23 +49,23 @@ jobs:
             case "$filepath" in
               internal/auth/*)
                 NEEDS_HUMAN="true"
-                REASON="${REASON}  - \`$filepath\` (auth — always requires human review)\n"
+                REASON="${REASON}  - \`$filepath\` (auth -- always requires human review)\n"
                 ;;
               internal/wire/protocol.go)
                 NEEDS_HUMAN="true"
-                REASON="${REASON}  - \`$filepath\` (wire protocol — always requires human review)\n"
+                REASON="${REASON}  - \`$filepath\` (wire protocol -- always requires human review)\n"
                 ;;
               AGENT_PROTOCOL.md)
                 NEEDS_HUMAN="true"
-                REASON="${REASON}  - \`$filepath\` (protocol spec — always requires human review)\n"
+                REASON="${REASON}  - \`$filepath\` (protocol spec -- always requires human review)\n"
                 ;;
               .github/workflows/*)
                 NEEDS_HUMAN="true"
-                REASON="${REASON}  - \`$filepath\` (CI/CD workflows — always requires human review)\n"
+                REASON="${REASON}  - \`$filepath\` (CI/CD workflows -- always requires human review)\n"
                 ;;
               .github/agents/[^/]*.yml)
                 NEEDS_HUMAN="true"
-                REASON="${REASON}  - \`$filepath\` (agent config — always requires human review)\n"
+                REASON="${REASON}  - \`$filepath\` (agent config -- always requires human review)\n"
                 ;;
             esac
           done <<< "$CHANGED_FILES"
@@ -82,7 +82,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "::notice::Newcomer agent PR — founder agent or human approval required."
+          echo "::notice::Newcomer agent PR -- founder agent or human approval required."
           gh pr edit $PR_NUMBER --add-label "newcomer-pr" --repo ${{ github.repository }} || true
           gh pr comment $PR_NUMBER --body "### Newcomer Gate
 

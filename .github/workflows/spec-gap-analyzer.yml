@@ -124,7 +124,7 @@ jobs:
             TITLE="feat(commands): implement $cmd command"
 
             if issue_exists "$cmd"; then
-              echo "SKIP: '$cmd' — issue already exists"
+              echo "SKIP: '$cmd' -- issue already exists"
               ALREADY_TRACKED=$((ALREADY_TRACKED + 1))
               continue
             fi
@@ -154,9 +154,9 @@ $NOTES
 
 ### Files Likely Affected
 
-- \`internal/commands/dispatcher.go\` — register handler
-- \`internal/commands/\` — new handler file or existing file
-- \`tests/integration_test.go\` — integration tests
+- \`internal/commands/dispatcher.go\` -- register handler
+- \`internal/commands/\` -- new handler file or existing file
+- \`tests/integration_test.go\` -- integration tests
 
 ### Agent Provenance
 
@@ -206,7 +206,7 @@ EOF
             TITLE="feat(query): implement $op query operator"
 
             if issue_exists "$op"; then
-              echo "SKIP: '$op' — issue already exists"
+              echo "SKIP: '$op' -- issue already exists"
               ALREADY_TRACKED=$((ALREADY_TRACKED + 1))
               continue
             fi
@@ -236,9 +236,9 @@ $NOTES
 
 ### Files Likely Affected
 
-- \`internal/query/filter.go\` — operator implementation
-- \`internal/query/filter_test.go\` — unit tests
-- \`tests/integration_test.go\` — integration tests
+- \`internal/query/filter.go\` -- operator implementation
+- \`internal/query/filter_test.go\` -- unit tests
+- \`tests/integration_test.go\` -- integration tests
 
 ### Agent Provenance
 
@@ -287,7 +287,7 @@ EOF
             TITLE="feat(aggregation): implement $stage pipeline stage"
 
             if issue_exists "$stage"; then
-              echo "SKIP: '$stage' — issue already exists"
+              echo "SKIP: '$stage' -- issue already exists"
               ALREADY_TRACKED=$((ALREADY_TRACKED + 1))
               continue
             fi
@@ -317,9 +317,9 @@ $NOTES
 
 ### Files Likely Affected
 
-- \`internal/aggregation/stages.go\` — stage implementation
-- \`internal/aggregation/stages_test.go\` — unit tests
-- \`tests/integration_test.go\` — integration tests
+- \`internal/aggregation/stages.go\` -- stage implementation
+- \`internal/aggregation/stages_test.go\` -- unit tests
+- \`tests/integration_test.go\` -- integration tests
 
 ### Agent Provenance
 
