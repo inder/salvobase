@@ -237,6 +237,69 @@ func handleListIndexes(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}), nil
 }
 
+// handleReIndex handles the "reIndex" command.
+// Drops and rebuilds all non-_id indexes on a collection.
+func handleReIndex(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	collVal, err := cmd.LookupErr("reIndex")
+	if err != nil {
+		collVal, err = cmd.LookupErr("reindex")
+		if err != nil {
+			return nil, storage.Errorf(storage.ErrCodeBadValue, "reIndex: missing collection name")
+		}
+	}
+	collName, ok := collVal.StringValueOK()
+	if !ok {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "reIndex: collection name must be a string")
+	}
+
+	if !ctx.Engine.HasCollection(ctx.DB, collName) {
+		return nil, storage.Errorf(storage.ErrCodeNamespaceNotFound,
+			"ns not found: %s.%s", ctx.DB, collName)
+	}
+
+	indexes, err := ctx.Engine.ListIndexes(ctx.DB, collName)
+	if err != nil {
+		return nil, fmt.Errorf("reIndex: %w", err)
+	}
+
+	// Collect all non-_id indexes before dropping.
+	var toRebuild []storage.IndexInfo
+	for _, idx := range indexes {
+		if idx.Name != "_id_" {
+			toRebuild = append(toRebuild, idx)
+		}
+	}
+
+	// Drop all non-_id indexes.
+	for _, idx := range toRebuild {
+		if err := ctx.Engine.DropIndex(ctx.DB, collName, idx.Name); err != nil {
+			return nil, fmt.Errorf("reIndex: drop %s: %w", idx.Name, err)
+		}
+	}
+
+	// Recreate each dropped index.
+	for _, idx := range toRebuild {
+		spec := storage.IndexSpec{
+			Name:               idx.Name,
+			Keys:               idx.Key,
+			Unique:             idx.Unique,
+			Sparse:             idx.Sparse,
+			Background:         idx.Background,
+			Hidden:             idx.Hidden,
+			ExpireAfterSeconds: idx.ExpireAfterSeconds,
+			V:                  idx.V,
+		}
+		if _, err := ctx.Engine.CreateIndex(ctx.DB, collName, spec); err != nil {
+			return nil, fmt.Errorf("reIndex: recreate %s: %w", idx.Name, err)
+		}
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "nIndexesWas", Value: int32(len(indexes))},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
 // generateIndexName generates a MongoDB-style index name from a key spec,
 // e.g. {"field": 1, "other": -1} → "field_1_other_-1"
 func generateIndexName(keys bson.Raw) string {

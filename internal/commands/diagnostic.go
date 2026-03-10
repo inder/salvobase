@@ -240,6 +240,52 @@ func handleLogout(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
+// handleValidate handles the "validate" command.
+// Checks a collection for correctness and returns structural statistics.
+func handleValidate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	collVal, err := cmd.LookupErr("validate")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "validate: missing collection name")
+	}
+	collName, ok := collVal.StringValueOK()
+	if !ok {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "validate: collection name must be a string")
+	}
+
+	if !ctx.Engine.HasCollection(ctx.DB, collName) {
+		return nil, storage.Errorf(storage.ErrCodeNamespaceNotFound,
+			"Collection '%s.%s' does not exist to validate.", ctx.DB, collName)
+	}
+
+	stats, err := ctx.Engine.CollectionStats(ctx.DB, collName)
+	if err != nil {
+		return nil, fmt.Errorf("validate: %w", err)
+	}
+
+	indexes, err := ctx.Engine.ListIndexes(ctx.DB, collName)
+	if err != nil {
+		return nil, fmt.Errorf("validate: %w", err)
+	}
+
+	keysPerIndex := bson.D{}
+	for _, idx := range indexes {
+		keysPerIndex = append(keysPerIndex, bson.E{Key: idx.Name, Value: stats.Count})
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "ns", Value: ctx.DB + "." + collName},
+		{Key: "nInvalidDocuments", Value: int64(0)},
+		{Key: "nrecords", Value: stats.Count},
+		{Key: "nIndexes", Value: int32(len(indexes))},
+		{Key: "keysPerIndex", Value: keysPerIndex},
+		{Key: "indexDetails", Value: bson.D{}},
+		{Key: "valid", Value: true},
+		{Key: "errors", Value: bson.A{}},
+		{Key: "warnings", Value: bson.A{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
 // handleHostInfo handles the "hostInfo" command.
 // Returns system hardware and OS information.
 func handleHostInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {

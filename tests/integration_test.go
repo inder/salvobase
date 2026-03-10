@@ -2856,6 +2856,81 @@ func TestAllOperator(t *testing.T) {
 	}
 }
 
+// ─── validate / reIndex ───────────────────────────────────────────────────────
+
+func TestValidate(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	db := client.Database(testDB(t))
+	coll := db.Collection("items")
+
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "x", Value: 1}})
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "x", Value: 2}})
+
+	var result bson.M
+	err := db.RunCommand(ctx, bson.D{{Key: "validate", Value: "items"}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if valid, _ := result["valid"].(bool); !valid {
+		t.Error("validate: expected valid=true")
+	}
+	if ns, _ := result["ns"].(string); ns == "" {
+		t.Error("validate: expected non-empty 'ns' field")
+	}
+	nrecords, _ := result["nrecords"].(int64)
+	if nrecords != 2 {
+		t.Errorf("validate: expected nrecords=2, got %v", nrecords)
+	}
+}
+
+func TestValidateNonExistent(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	err := client.Database(testDB(t)).RunCommand(ctx, bson.D{{Key: "validate", Value: "nosuchcoll"}}).Err()
+	if err == nil {
+		t.Fatal("validate on non-existent collection should return an error")
+	}
+}
+
+func TestReIndex(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	db := client.Database(testDB(t))
+	coll := db.Collection("things")
+
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "y", Value: 1}})
+
+	// Create an extra index to verify it survives reIndex.
+	_, err := coll.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "y", Value: 1}},
+	})
+	if err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	var result bson.M
+	if err := db.RunCommand(ctx, bson.D{{Key: "reIndex", Value: "things"}}).Decode(&result); err != nil {
+		t.Fatalf("reIndex: %v", err)
+	}
+	if _, ok := result["nIndexesWas"]; !ok {
+		t.Error("reIndex: expected 'nIndexesWas' field")
+	}
+
+	// Verify the index still exists after reIndex.
+	cursor, err := coll.Indexes().List(ctx)
+	if err != nil {
+		t.Fatalf("ListIndexes after reIndex: %v", err)
+	}
+	var idxDocs []bson.M
+	if err := cursor.All(ctx, &idxDocs); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(idxDocs) < 2 {
+		t.Errorf("expected at least 2 indexes after reIndex, got %d", len(idxDocs))
+	}
+}
+
 // ─── hostInfo / getCmdLineOpts ────────────────────────────────────────────────
 
 func TestHostInfo(t *testing.T) {
