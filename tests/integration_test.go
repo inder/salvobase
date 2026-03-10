@@ -2766,6 +2766,96 @@ func TestTypeFilter(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// $size query operator
+// ---------------------------------------------------------------------------
+
+func TestSizeOperator(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "_id", Value: 1}, {Key: "tags", Value: bson.A{}}},
+		bson.D{{Key: "_id", Value: 2}, {Key: "tags", Value: bson.A{"a"}}},
+		bson.D{{Key: "_id", Value: 3}, {Key: "tags", Value: bson.A{"a", "b"}}},
+		bson.D{{Key: "_id", Value: 4}, {Key: "tags", Value: bson.A{"a", "b", "c"}}},
+		bson.D{{Key: "_id", Value: 5}, {Key: "name", Value: "no-tags"}},
+	})
+
+	cases := []struct {
+		label string
+		size  interface{}
+		want  int
+	}{
+		{"size 0", 0, 1},
+		{"size 1", 1, 1},
+		{"size 2", int32(2), 1},
+		{"size 3", int64(3), 1},
+		{"size 4", 4, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			n, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: tc.size}}}})
+			if err != nil {
+				t.Fatalf("$size %v: %v", tc.size, err)
+			}
+			if int(n) != tc.want {
+				t.Errorf("$size %v: expected %d docs, got %d", tc.size, tc.want, n)
+			}
+		})
+	}
+
+	// Fractional argument must return an error.
+	_, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: 2.5}}}})
+	if err == nil {
+		t.Error("$size 2.5: expected error for fractional argument, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// $all query operator
+// ---------------------------------------------------------------------------
+
+func TestAllOperator(t *testing.T) {
+	ctx := context.Background()
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+
+	coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "_id", Value: 1}, {Key: "tags", Value: bson.A{"ssl", "security", "network"}}},
+		bson.D{{Key: "_id", Value: 2}, {Key: "tags", Value: bson.A{"ssl", "network"}}},
+		bson.D{{Key: "_id", Value: 3}, {Key: "tags", Value: bson.A{"security"}}},
+		bson.D{{Key: "_id", Value: 4}, {Key: "tags", Value: bson.A{}}},
+	})
+
+	cases := []struct {
+		label string
+		all   bson.A
+		want  int
+	}{
+		{"ssl+security", bson.A{"ssl", "security"}, 1},
+		{"ssl only", bson.A{"ssl"}, 2},
+		{"all three", bson.A{"ssl", "security", "network"}, 1},
+		{"missing element", bson.A{"missing"}, 0},
+		{"empty $all", bson.A{}, 0},
+		{"reversed order", bson.A{"network", "ssl"}, 2},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			n, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: tc.all}}}})
+			if err != nil {
+				t.Fatalf("$all %v: %v", tc.all, err)
+			}
+			if int(n) != tc.want {
+				t.Errorf("$all %v: expected %d docs, got %d", tc.all, tc.want, n)
+			}
+		})
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
