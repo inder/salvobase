@@ -1,18 +1,18 @@
 version: "3.9"
 
 services:
-  mongoclone:
+  salvobase:
     build: .
-    container_name: mongoclone
+    container_name: salvobase
     ports:
       - "27017:27017"   # MongoDB wire protocol
       - "27080:27080"   # HTTP API + Prometheus metrics
     volumes:
-      - mongoclone-data:/var/lib/mongoclone
-      - ./configs/mongod.yaml:/etc/mongoclone/mongod.yaml:ro
+      - salvobase-data:/var/lib/salvobase
+      - ./configs/mongod.yaml:/etc/salvobase/mongod.yaml:ro
     environment:
-      # Override config via env vars (MONGOCLONE_ prefix)
-      - MONGOCLONE_AUTH_ADMIN_PASSWORD=${MONGOCLONE_ADMIN_PASSWORD:-changeme}
+      # Override config via env vars (SALVOBASE_ prefix)
+      - SALVOBASE_AUTH_ADMIN_PASSWORD=${SALVOBASE_ADMIN_PASSWORD:-changeme}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:27080/health"]
@@ -24,7 +24,7 @@ services:
   # Optional: Prometheus + Grafana for monitoring
   prometheus:
     image: prom/prometheus:v2.54.1
-    container_name: mongoclone-prometheus
+    container_name: salvobase-prometheus
     profiles: ["monitoring"]
     ports:
       - "9090:9090"
@@ -40,7 +40,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.2.0
-    container_name: mongoclone-grafana
+    container_name: salvobase-grafana
     profiles: ["monitoring"]
     ports:
       - "3000:3000"
@@ -53,6 +53,6 @@ services:
       - prometheus
 
 volumes:
-  mongoclone-data:
+  salvobase-data:
   prometheus-data:
   grafana-data:

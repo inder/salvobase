@@ -3,8 +3,8 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: 'mongoclone'
+  - job_name: 'salvobase'
     static_configs:
-      - targets: ['mongoclone:27080']
+      - targets: ['salvobase:27080']
     metrics_path: '/metrics'
     scrape_interval: 10s
