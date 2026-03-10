@@ -2933,31 +2933,48 @@ func TestReIndex(t *testing.T) {
 
 // ─── hostInfo / getCmdLineOpts ────────────────────────────────────────────────
 
+// hasKey reports whether doc contains an element with the given key.
+func hasKey(doc bson.D, key string) bool {
+	for _, e := range doc {
+		if e.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
 func TestHostInfo(t *testing.T) {
 	client := newClient(t)
 	ctx := context.Background()
 
-	var result bson.M
+	var result bson.D
 	err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "hostInfo", Value: 1}}).Decode(&result)
 	if err != nil {
 		t.Fatalf("hostInfo: %v", err)
 	}
 
-	system, ok := result["system"].(bson.M)
+	var sysVal interface{}
+	for _, e := range result {
+		if e.Key == "system" {
+			sysVal = e.Value
+			break
+		}
+	}
+	system, ok := sysVal.(bson.D)
 	if !ok {
 		t.Fatal("hostInfo: expected 'system' document")
 	}
-	if _, ok := system["hostname"]; !ok {
+	if !hasKey(system, "hostname") {
 		t.Error("hostInfo: expected 'system.hostname' field")
 	}
-	if _, ok := system["numCores"]; !ok {
+	if !hasKey(system, "numCores") {
 		t.Error("hostInfo: expected 'system.numCores' field")
 	}
-	if _, ok := system["cpuArch"]; !ok {
+	if !hasKey(system, "cpuArch") {
 		t.Error("hostInfo: expected 'system.cpuArch' field")
 	}
 
-	if _, ok := result["os"]; !ok {
+	if !hasKey(result, "os") {
 		t.Error("hostInfo: expected 'os' document")
 	}
 }
