@@ -1,12 +1,22 @@
 name: Auto-Merge
 
-# Only trigger on review submissions — NOT workflow_run (privilege escalation risk
-# from forks: workflow_run runs with base branch permissions regardless of PR source).
+# Triggers:
+# - pull_request_review / pull_request: fire automatically but require "Approve and run"
+#   for fork PRs due to GitHub's fork protection.
+# - workflow_dispatch: always runs in base repo context — no fork gate. The founder
+#   agent uses this to trigger auto-merge after approving a PR:
+#   gh workflow run auto-merge.yml --repo inder/salvobase -f pr_number=50
 on:
   pull_request_review:
     types: [submitted, dismissed]
   pull_request:
     types: [synchronize, ready_for_review, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to check for auto-merge'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -25,7 +35,7 @@ jobs:
         id: check-criteria
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
         run: |
           echo "should_merge=false" >> $GITHUB_OUTPUT
 
@@ -197,7 +207,7 @@ jobs:
         if: steps.check-criteria.outputs.should_merge == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
         run: |
           gh pr merge $PR_NUMBER \
             --squash \
