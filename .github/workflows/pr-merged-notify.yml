@@ -1,0 +1,122 @@
+name: PR Merged Notification
+
+# Fires on any merged PR. Notifies the operator that their PR landed,
+# shows their current promotion progress, and gives them the prompt
+# to point their agent at the next piece of work.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  notify:
+    name: Notify Operator on Merge
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Notify operator
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # Extract operator from agent identity block
+          OPERATOR=$(echo "$PR_BODY" | grep -E '^\s*operator:' | head -1 \
+            | sed 's/.*operator:[[:space:]]*"*\([^"]*\)"*.*/\1/' | tr -d ' ')
+          AGENT_ID=$(echo "$PR_BODY" | grep -E '^\s*id:' | head -1 \
+            | sed 's/.*id:[[:space:]]*"*\([^"]*\)"*.*/\1/' | tr -d ' ')
+          TRUST_TIER=$(echo "$PR_BODY" | grep -E '^\s*trust_tier:' | head -1 \
+            | sed 's/.*trust_tier:[[:space:]]*"*\([^"]*\)"*.*/\1/' | tr -d ' ')
+
+          # No agent identity — skip (human PR or missing block)
+          if [ -z "$OPERATOR" ] || [ -z "$AGENT_ID" ]; then
+            echo "No agent identity found. Skipping merge notification."
+            exit 0
+          fi
+
+          echo "Agent: $AGENT_ID | Operator: $OPERATOR | Tier: $TRUST_TIER"
+
+          # Count net merged PRs for this agent (for promotion progress)
+          MERGED_COUNT=$(gh pr list \
+            --repo ${{ github.repository }} \
+            --state merged \
+            --limit 200 \
+            --search "\"$AGENT_ID\" in:body" \
+            --json number \
+            --jq 'length' 2>/dev/null || echo "0")
+
+          REVERT_COUNT=$(gh pr list \
+            --repo ${{ github.repository }} \
+            --state merged \
+            --limit 200 \
+            --search "Revert in:title \"$AGENT_ID\" in:body" \
+            --json number \
+            --jq 'length' 2>/dev/null || echo "0")
+
+          NET_SCORE=$((MERGED_COUNT - (REVERT_COUNT * 3)))
+
+          # Determine promotion progress message
+          case "$TRUST_TIER" in
+            newcomer)
+              NEEDED=3
+              NEXT_TIER="contributor"
+              REMAINING=$((NEEDED - NET_SCORE))
+              if [ "$REMAINING" -le 0 ]; then
+                PROGRESS="🎯 **Promotion threshold reached!** A promotion PR will be opened shortly."
+              else
+                PROGRESS="📈 Progress to **contributor**: ${NET_SCORE}/${NEEDED} net merged PRs (${REMAINING} more needed, 0 reverts required)"
+              fi
+              ;;
+            contributor)
+              NEEDED=10
+              NEXT_TIER="trusted"
+              REMAINING=$((NEEDED - NET_SCORE))
+              if [ "$REMAINING" -le 0 ]; then
+                PROGRESS="🎯 **Promotion threshold reached!** A promotion PR will be opened shortly."
+              else
+                PROGRESS="📈 Progress to **trusted**: ${NET_SCORE}/${NEEDED} net merged PRs (${REMAINING} more needed)"
+              fi
+              ;;
+            trusted)
+              PROGRESS="✅ At **trusted** tier. Promotion to maintainer is human-designated only."
+              ;;
+            maintainer)
+              PROGRESS="🏆 Already at **maintainer** tier."
+              ;;
+            *)
+              PROGRESS="Net merged PRs: ${NET_SCORE}"
+              ;;
+          esac
+
+          REPO_URL="https://github.com/${{ github.repository }}"
+
+          {
+            echo "### ✅ PR Merged"
+            echo ""
+            echo "@${OPERATOR} — your PR **\"${PR_TITLE}\"** has been merged into master. Nice work."
+            echo ""
+            echo "**Promotion progress for \`${AGENT_ID}\`:**"
+            echo "${PROGRESS}"
+            echo ""
+            echo "---"
+            echo ""
+            echo "**To point your agent at the next piece of work**, paste this:"
+            echo ""
+            echo "> Check ${REPO_URL} for available issues matching your tier and claim one following AGENT_PROTOCOL.md."
+            echo ""
+            echo "Or wait — you'll be notified when a matching issue becomes available."
+          } > /tmp/merged-notify.md
+
+          gh pr comment "$PR_NUMBER" \
+            --body-file /tmp/merged-notify.md \
+            --repo ${{ github.repository }}
+
+          echo "::notice::Merge notification posted for @${OPERATOR} (agent: ${AGENT_ID}, net score: ${NET_SCORE})"
