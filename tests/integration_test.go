@@ -2997,6 +2997,131 @@ func TestGetCmdLineOpts(t *testing.T) {
 	}
 }
 
+// ─── $type query operator (#8) ────────────────────────────────────────────────
+
+func TestTypeQueryOperator(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	coll := db.Collection("type_test")
+	ctx := context.Background()
+
+	t.Cleanup(func() { _ = db.Drop(ctx) })
+
+	// Insert documents with various BSON types
+	docs := []interface{}{
+		bson.D{{Key: "label", Value: "string_val"}, {Key: "x", Value: "hello"}},
+		bson.D{{Key: "label", Value: "int32_val"}, {Key: "x", Value: int32(42)}},
+		bson.D{{Key: "label", Value: "int64_val"}, {Key: "x", Value: int64(9999)}},
+		bson.D{{Key: "label", Value: "double_val"}, {Key: "x", Value: float64(3.14)}},
+		bson.D{{Key: "label", Value: "bool_val"}, {Key: "x", Value: true}},
+		bson.D{{Key: "label", Value: "null_val"}, {Key: "x", Value: nil}},
+		bson.D{{Key: "label", Value: "object_val"}, {Key: "x", Value: bson.D{{Key: "nested", Value: 1}}}},
+		bson.D{{Key: "label", Value: "array_val"}, {Key: "x", Value: bson.A{1, 2, 3}}},
+		bson.D{{Key: "label", Value: "date_val"}, {Key: "x", Value: bson.DateTime(1609459200000)}},
+		bson.D{{Key: "label", Value: "no_x_field"}, {Key: "y", Value: 1}},
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	findLabels := func(filter bson.D) []string {
+		t.Helper()
+		cursor, err := coll.Find(ctx, filter)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		defer cursor.Close(ctx)
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		var labels []string
+		for _, r := range results {
+			if l, ok := r["label"].(string); ok {
+				labels = append(labels, l)
+			}
+		}
+		sort.Strings(labels)
+		return labels
+	}
+
+	assertLabels := func(name string, got, want []string) {
+		t.Helper()
+		sort.Strings(want)
+		if len(got) != len(want) {
+			t.Errorf("%s: got %v, want %v", name, got, want)
+			return
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Errorf("%s: got %v, want %v", name, got, want)
+				return
+			}
+		}
+	}
+
+	// String alias
+	labels := findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "string"}}}})
+	assertLabels("$type string", labels, []string{"string_val"})
+
+	// Int alias
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "int"}}}})
+	assertLabels("$type int", labels, []string{"int32_val"})
+
+	// Long alias
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "long"}}}})
+	assertLabels("$type long", labels, []string{"int64_val"})
+
+	// Double alias
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "double"}}}})
+	assertLabels("$type double", labels, []string{"double_val"})
+
+	// Bool alias
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "bool"}}}})
+	assertLabels("$type bool", labels, []string{"bool_val"})
+
+	// Null alias
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "null"}}}})
+	assertLabels("$type null", labels, []string{"null_val"})
+
+	// Object alias
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "object"}}}})
+	assertLabels("$type object", labels, []string{"object_val"})
+
+	// Array alias
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "array"}}}})
+	assertLabels("$type array", labels, []string{"array_val"})
+
+	// Date alias
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "date"}}}})
+	assertLabels("$type date", labels, []string{"date_val"})
+
+	// Numeric BSON type code: 2 = string
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(2)}}}})
+	assertLabels("$type code 2", labels, []string{"string_val"})
+
+	// Numeric BSON type code: 16 = int32
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(16)}}}})
+	assertLabels("$type code 16", labels, []string{"int32_val"})
+
+	// "number" alias matches int32, int64, double
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}})
+	assertLabels("$type number", labels, []string{"double_val", "int32_val", "int64_val"})
+
+	// Array of types: match string OR bool
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: bson.A{"string", "bool"}}}}})
+	assertLabels("$type [string, bool]", labels, []string{"bool_val", "string_val"})
+
+	// Missing field does not match any type
+	labels = findLabels(bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "null"}}}})
+	for _, l := range labels {
+		if l == "no_x_field" {
+			t.Error("$type null should not match documents where field is missing")
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
