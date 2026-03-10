@@ -490,3 +490,85 @@ func TestEvalAll(t *testing.T) {
 		})
 	}
 }
+
+// ─── Benchmarks ───────────────────────────────────────────────────────────────
+
+// BenchmarkFilterSimpleEq benchmarks a simple equality filter {"x": 42}.
+func BenchmarkFilterSimpleEq(b *testing.B) {
+	doc := mustMarshal(bson.D{{Key: "x", Value: int32(42)}, {Key: "y", Value: "hello"}})
+	filter := mustMarshal(bson.D{{Key: "x", Value: int32(42)}})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Filter(doc, filter)
+	}
+}
+
+// BenchmarkFilterComparisonOps benchmarks a filter with multiple comparison operators.
+func BenchmarkFilterComparisonOps(b *testing.B) {
+	doc := mustMarshal(bson.D{
+		{Key: "age", Value: int32(30)},
+		{Key: "score", Value: float64(88.5)},
+		{Key: "active", Value: true},
+	})
+	filter := mustMarshal(bson.D{
+		{Key: "age", Value: bson.D{{Key: "$gte", Value: int32(18)}}},
+		{Key: "score", Value: bson.D{{Key: "$lt", Value: float64(100)}}},
+		{Key: "active", Value: true},
+	})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Filter(doc, filter)
+	}
+}
+
+// BenchmarkFilterLogicalAnd benchmarks a $and filter with multiple conditions.
+func BenchmarkFilterLogicalAnd(b *testing.B) {
+	doc := mustMarshal(bson.D{
+		{Key: "status", Value: "active"},
+		{Key: "count", Value: int32(5)},
+	})
+	filter := mustMarshal(bson.D{{Key: "$and", Value: bson.A{
+		bson.D{{Key: "status", Value: "active"}},
+		bson.D{{Key: "count", Value: bson.D{{Key: "$gt", Value: int32(0)}}}},
+	}}})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Filter(doc, filter)
+	}
+}
+
+// BenchmarkFilterIn benchmarks a $in filter on an array of values.
+func BenchmarkFilterIn(b *testing.B) {
+	doc := mustMarshal(bson.D{{Key: "tag", Value: "go"}})
+	filter := mustMarshal(bson.D{{Key: "tag", Value: bson.D{
+		{Key: "$in", Value: bson.A{"python", "go", "rust", "java", "c++"}},
+	}}})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Filter(doc, filter)
+	}
+}
+
+// BenchmarkFilterNoMatch benchmarks a filter that does not match (early exit).
+func BenchmarkFilterNoMatch(b *testing.B) {
+	doc := mustMarshal(bson.D{{Key: "x", Value: int32(1)}})
+	filter := mustMarshal(bson.D{{Key: "x", Value: int32(999)}})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Filter(doc, filter)
+	}
+}
+
+// BenchmarkFilterManyFields benchmarks filtering a document with many fields.
+func BenchmarkFilterManyFields(b *testing.B) {
+	d := bson.D{}
+	for i := 0; i < 20; i++ {
+		d = append(d, bson.E{Key: bson.ObjectID{byte(i)}.Hex(), Value: int32(i)})
+	}
+	doc := mustMarshal(d)
+	filter := mustMarshal(bson.D{{Key: d[19].Key, Value: int32(19)}})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = Filter(doc, filter)
+	}
+}
