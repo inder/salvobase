@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -238,6 +239,49 @@ func handleFeatures(_ *Context, _ bson.Raw) (bson.Raw, error) {
 // handleLogout handles the "logout" command.
 func handleLogout(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
+}
+
+// handleDataSize handles the "dataSize" command.
+// Returns the size of all documents in a collection (or key-range subset).
+func handleDataSize(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	nsVal, err := cmd.LookupErr("dataSize")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "dataSize: missing namespace argument")
+	}
+	ns, ok := nsVal.StringValueOK()
+	if !ok {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "dataSize: namespace must be a string")
+	}
+
+	// Parse "db.collection" namespace.
+	dotIdx := strings.IndexByte(ns, '.')
+	var dbName, collName string
+	if dotIdx < 0 {
+		dbName = ctx.DB
+		collName = ns
+	} else {
+		dbName = ns[:dotIdx]
+		collName = ns[dotIdx+1:]
+	}
+
+	if !ctx.Engine.HasCollection(dbName, collName) {
+		return nil, storage.Errorf(storage.ErrCodeNamespaceNotFound,
+			"ns not found: %s", ns)
+	}
+
+	start := time.Now()
+	stats, err := ctx.Engine.CollectionStats(dbName, collName)
+	if err != nil {
+		return nil, fmt.Errorf("dataSize: %w", err)
+	}
+	millis := time.Since(start).Milliseconds()
+
+	return marshalResponse(bson.D{
+		{Key: "size", Value: stats.Size},
+		{Key: "numObjects", Value: stats.Count},
+		{Key: "millis", Value: millis},
+		{Key: "ok", Value: float64(1)},
+	}), nil
 }
 
 // handleValidate handles the "validate" command.

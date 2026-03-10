@@ -124,6 +124,8 @@ func (d *Dispatcher) registerAll() {
 	d.register("validate", handleValidate)
 	d.register("reindex", handleReIndex)
 	d.register("reIndex", handleReIndex)
+	d.register("datasize", handleDataSize)
+	d.register("dataSize", handleDataSize)
 
 	// Auth
 	d.register("saslstart", handleSASLStart)

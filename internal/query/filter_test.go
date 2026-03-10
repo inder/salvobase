@@ -110,6 +110,297 @@ func TestEvalSize(t *testing.T) {
 
 // ─── $all ─────────────────────────────────────────────────────────────────────
 
+// ─── Comparison operators (#1) ────────────────────────────────────────────────
+
+func TestComparisonOperators(t *testing.T) {
+	run := func(doc, filter bson.D) bool {
+		t.Helper()
+		match, err := Filter(mustMarshal(doc), mustMarshal(filter))
+		if err != nil {
+			t.Fatalf("Filter error: %v", err)
+		}
+		return match
+	}
+
+	// $eq
+	if !run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$eq", Value: int32(5)}}}}) {
+		t.Error("$eq: same value should match")
+	}
+	if run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$eq", Value: int32(6)}}}}) {
+		t.Error("$eq: different value should not match")
+	}
+
+	// $ne
+	if !run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$ne", Value: int32(6)}}}}) {
+		t.Error("$ne: different value should match")
+	}
+	if run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$ne", Value: int32(5)}}}}) {
+		t.Error("$ne: same value should not match")
+	}
+
+	// $gt / $gte
+	if !run(bson.D{{Key: "x", Value: int32(10)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$gt", Value: int32(5)}}}}) {
+		t.Error("$gt: 10 > 5 should match")
+	}
+	if run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$gt", Value: int32(5)}}}}) {
+		t.Error("$gt: 5 > 5 should not match")
+	}
+	if !run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$gte", Value: int32(5)}}}}) {
+		t.Error("$gte: 5 >= 5 should match")
+	}
+
+	// $lt / $lte
+	if !run(bson.D{{Key: "x", Value: int32(3)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$lt", Value: int32(5)}}}}) {
+		t.Error("$lt: 3 < 5 should match")
+	}
+	if run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$lt", Value: int32(5)}}}}) {
+		t.Error("$lt: 5 < 5 should not match")
+	}
+	if !run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$lte", Value: int32(5)}}}}) {
+		t.Error("$lte: 5 <= 5 should match")
+	}
+
+	// $in
+	if !run(bson.D{{Key: "x", Value: int32(2)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$in", Value: bson.A{int32(1), int32(2), int32(3)}}}}}) {
+		t.Error("$in: value in array should match")
+	}
+	if run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$in", Value: bson.A{int32(1), int32(2), int32(3)}}}}}) {
+		t.Error("$in: value not in array should not match")
+	}
+
+	// $nin
+	if !run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$nin", Value: bson.A{int32(1), int32(2), int32(3)}}}}}) {
+		t.Error("$nin: value not in array should match")
+	}
+	if run(bson.D{{Key: "x", Value: int32(2)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$nin", Value: bson.A{int32(1), int32(2), int32(3)}}}}}) {
+		t.Error("$nin: value in array should not match")
+	}
+
+	// $exists
+	if !run(bson.D{{Key: "x", Value: int32(1)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$exists", Value: true}}}}) {
+		t.Error("$exists: present field should match $exists:true")
+	}
+	if run(bson.D{{Key: "y", Value: int32(1)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$exists", Value: true}}}}) {
+		t.Error("$exists: missing field should not match $exists:true")
+	}
+	if !run(bson.D{{Key: "y", Value: int32(1)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$exists", Value: false}}}}) {
+		t.Error("$exists: missing field should match $exists:false")
+	}
+
+	// Array field — $in checks elements
+	if !run(
+		bson.D{{Key: "tags", Value: bson.A{"a", "b", "c"}}},
+		bson.D{{Key: "tags", Value: bson.D{{Key: "$in", Value: bson.A{"b", "z"}}}}},
+	) {
+		t.Error("$in: array element in candidate list should match")
+	}
+
+	// Cross-type numeric comparison (int32 vs float64)
+	if !run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$eq", Value: float64(5)}}}}) {
+		t.Error("$eq: int32(5) should equal float64(5)")
+	}
+}
+
+// ─── Logical operators (#2) ───────────────────────────────────────────────────
+
+func TestLogicalOperators(t *testing.T) {
+	run := func(doc, filter bson.D) bool {
+		t.Helper()
+		match, err := Filter(mustMarshal(doc), mustMarshal(filter))
+		if err != nil {
+			t.Fatalf("Filter error: %v", err)
+		}
+		return match
+	}
+
+	// $and
+	if !run(
+		bson.D{{Key: "x", Value: int32(5)}, {Key: "y", Value: int32(10)}},
+		bson.D{{Key: "$and", Value: bson.A{
+			bson.D{{Key: "x", Value: bson.D{{Key: "$gt", Value: int32(3)}}}},
+			bson.D{{Key: "y", Value: bson.D{{Key: "$lt", Value: int32(20)}}}},
+		}}},
+	) {
+		t.Error("$and: both conditions true should match")
+	}
+	if run(
+		bson.D{{Key: "x", Value: int32(5)}, {Key: "y", Value: int32(10)}},
+		bson.D{{Key: "$and", Value: bson.A{
+			bson.D{{Key: "x", Value: bson.D{{Key: "$gt", Value: int32(3)}}}},
+			bson.D{{Key: "y", Value: bson.D{{Key: "$gt", Value: int32(20)}}}},
+		}}},
+	) {
+		t.Error("$and: one condition false should not match")
+	}
+
+	// $or
+	if !run(
+		bson.D{{Key: "x", Value: int32(1)}},
+		bson.D{{Key: "$or", Value: bson.A{
+			bson.D{{Key: "x", Value: int32(1)}},
+			bson.D{{Key: "x", Value: int32(2)}},
+		}}},
+	) {
+		t.Error("$or: at least one true should match")
+	}
+	if run(
+		bson.D{{Key: "x", Value: int32(5)}},
+		bson.D{{Key: "$or", Value: bson.A{
+			bson.D{{Key: "x", Value: int32(1)}},
+			bson.D{{Key: "x", Value: int32(2)}},
+		}}},
+	) {
+		t.Error("$or: all false should not match")
+	}
+
+	// $nor
+	if !run(
+		bson.D{{Key: "x", Value: int32(5)}},
+		bson.D{{Key: "$nor", Value: bson.A{
+			bson.D{{Key: "x", Value: int32(1)}},
+			bson.D{{Key: "x", Value: int32(2)}},
+		}}},
+	) {
+		t.Error("$nor: all false should match")
+	}
+	if run(
+		bson.D{{Key: "x", Value: int32(1)}},
+		bson.D{{Key: "$nor", Value: bson.A{
+			bson.D{{Key: "x", Value: int32(1)}},
+			bson.D{{Key: "x", Value: int32(2)}},
+		}}},
+	) {
+		t.Error("$nor: any true should not match")
+	}
+
+	// $not
+	if !run(
+		bson.D{{Key: "x", Value: int32(5)}},
+		bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$eq", Value: int32(3)}}}}}},
+	) {
+		t.Error("$not: negation of false should match")
+	}
+	if run(
+		bson.D{{Key: "x", Value: int32(3)}},
+		bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$eq", Value: int32(3)}}}}}},
+	) {
+		t.Error("$not: negation of true should not match")
+	}
+
+	// Implicit $and (multiple top-level fields)
+	if !run(
+		bson.D{{Key: "a", Value: int32(1)}, {Key: "b", Value: int32(2)}},
+		bson.D{{Key: "a", Value: int32(1)}, {Key: "b", Value: int32(2)}},
+	) {
+		t.Error("implicit $and: all fields matching should match")
+	}
+	if run(
+		bson.D{{Key: "a", Value: int32(1)}, {Key: "b", Value: int32(9)}},
+		bson.D{{Key: "a", Value: int32(1)}, {Key: "b", Value: int32(2)}},
+	) {
+		t.Error("implicit $and: one field mismatch should not match")
+	}
+}
+
+// ─── $elemMatch and $type (#7, #8 — already implemented, coverage tests) ──────
+
+func TestEvalElemMatch(t *testing.T) {
+	run := func(doc, filter bson.D) bool {
+		t.Helper()
+		match, err := Filter(mustMarshal(doc), mustMarshal(filter))
+		if err != nil {
+			t.Fatalf("Filter error: %v", err)
+		}
+		return match
+	}
+
+	// Scalar array — comparison operators on elements
+	if !run(
+		bson.D{{Key: "results", Value: bson.A{int32(82), int32(70), int32(90)}}},
+		bson.D{{Key: "results", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
+			{Key: "$gte", Value: int32(80)},
+			{Key: "$lt", Value: int32(85)},
+		}}}}},
+	) {
+		t.Error("$elemMatch: 82 in [80,85) should match")
+	}
+	if run(
+		bson.D{{Key: "results", Value: bson.A{int32(70), int32(75)}}},
+		bson.D{{Key: "results", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
+			{Key: "$gte", Value: int32(80)},
+		}}}}},
+	) {
+		t.Error("$elemMatch: no element >= 80 should not match")
+	}
+
+	// Document array — sub-document filter
+	if !run(
+		bson.D{{Key: "items", Value: bson.A{
+			bson.D{{Key: "name", Value: "a"}, {Key: "qty", Value: int32(5)}},
+			bson.D{{Key: "name", Value: "b"}, {Key: "qty", Value: int32(2)}},
+		}}},
+		bson.D{{Key: "items", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
+			{Key: "name", Value: "a"},
+			{Key: "qty", Value: bson.D{{Key: "$gte", Value: int32(5)}}},
+		}}}}},
+	) {
+		t.Error("$elemMatch: matching sub-document should match")
+	}
+
+	// Non-array field never matches
+	if run(
+		bson.D{{Key: "x", Value: int32(5)}},
+		bson.D{{Key: "x", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "$gt", Value: int32(3)}}}}}},
+	) {
+		t.Error("$elemMatch: non-array field should not match")
+	}
+}
+
+func TestEvalType(t *testing.T) {
+	run := func(doc, filter bson.D) bool {
+		t.Helper()
+		match, err := Filter(mustMarshal(doc), mustMarshal(filter))
+		if err != nil {
+			t.Fatalf("Filter error: %v", err)
+		}
+		return match
+	}
+
+	// By string alias
+	if !run(bson.D{{Key: "x", Value: "hello"}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "string"}}}}) {
+		t.Error("$type: string alias should match string field")
+	}
+	if !run(bson.D{{Key: "x", Value: int32(1)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "int"}}}}) {
+		t.Error("$type: int alias should match int32 field")
+	}
+	if !run(bson.D{{Key: "x", Value: true}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "bool"}}}}) {
+		t.Error("$type: bool alias should match boolean field")
+	}
+
+	// By numeric code
+	if !run(bson.D{{Key: "x", Value: float64(3.14)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(1)}}}}) {
+		t.Error("$type: BSON type 1 should match double field")
+	}
+
+	// "number" alias matches int, long, double
+	if !run(bson.D{{Key: "x", Value: int32(1)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}}) {
+		t.Error("$type: number alias should match int32")
+	}
+	if !run(bson.D{{Key: "x", Value: float64(1.5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}}) {
+		t.Error("$type: number alias should match double")
+	}
+	if run(bson.D{{Key: "x", Value: "hello"}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}}) {
+		t.Error("$type: number alias should not match string")
+	}
+
+	// Array of types
+	if !run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: bson.A{"string", "int"}}}}}) {
+		t.Error("$type: array of types should match if any type matches")
+	}
+}
+
+// ─── $all ─────────────────────────────────────────────────────────────────────
+
 func TestEvalAll(t *testing.T) {
 	tests := []struct {
 		name      string
