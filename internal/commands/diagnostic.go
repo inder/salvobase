@@ -2,7 +2,9 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -237,6 +239,148 @@ func handleFeatures(_ *Context, _ bson.Raw) (bson.Raw, error) {
 // handleLogout handles the "logout" command.
 func handleLogout(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
+}
+
+// handleDataSize handles the "dataSize" command.
+// Returns the size of all documents in a collection (or key-range subset).
+func handleDataSize(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	nsVal, err := cmd.LookupErr("dataSize")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "dataSize: missing namespace argument")
+	}
+	ns, ok := nsVal.StringValueOK()
+	if !ok {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "dataSize: namespace must be a string")
+	}
+
+	// Parse "db.collection" namespace.
+	dotIdx := strings.IndexByte(ns, '.')
+	var dbName, collName string
+	if dotIdx < 0 {
+		dbName = ctx.DB
+		collName = ns
+	} else {
+		dbName = ns[:dotIdx]
+		collName = ns[dotIdx+1:]
+	}
+
+	if !ctx.Engine.HasCollection(dbName, collName) {
+		return nil, storage.Errorf(storage.ErrCodeNamespaceNotFound,
+			"ns not found: %s", ns)
+	}
+
+	start := time.Now()
+	stats, err := ctx.Engine.CollectionStats(dbName, collName)
+	if err != nil {
+		return nil, fmt.Errorf("dataSize: %w", err)
+	}
+	millis := time.Since(start).Milliseconds()
+
+	return marshalResponse(bson.D{
+		{Key: "size", Value: stats.Size},
+		{Key: "numObjects", Value: stats.Count},
+		{Key: "millis", Value: millis},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
+// handleValidate handles the "validate" command.
+// Checks a collection for correctness and returns structural statistics.
+func handleValidate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	collVal, err := cmd.LookupErr("validate")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "validate: missing collection name")
+	}
+	collName, ok := collVal.StringValueOK()
+	if !ok {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "validate: collection name must be a string")
+	}
+
+	if !ctx.Engine.HasCollection(ctx.DB, collName) {
+		return nil, storage.Errorf(storage.ErrCodeNamespaceNotFound,
+			"Collection '%s.%s' does not exist to validate.", ctx.DB, collName)
+	}
+
+	stats, err := ctx.Engine.CollectionStats(ctx.DB, collName)
+	if err != nil {
+		return nil, fmt.Errorf("validate: %w", err)
+	}
+
+	indexes, err := ctx.Engine.ListIndexes(ctx.DB, collName)
+	if err != nil {
+		return nil, fmt.Errorf("validate: %w", err)
+	}
+
+	keysPerIndex := bson.D{}
+	for _, idx := range indexes {
+		keysPerIndex = append(keysPerIndex, bson.E{Key: idx.Name, Value: stats.Count})
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "ns", Value: ctx.DB + "." + collName},
+		{Key: "nInvalidDocuments", Value: int64(0)},
+		{Key: "nrecords", Value: stats.Count},
+		{Key: "nIndexes", Value: int32(len(indexes))},
+		{Key: "keysPerIndex", Value: keysPerIndex},
+		{Key: "indexDetails", Value: bson.D{}},
+		{Key: "valid", Value: true},
+		{Key: "errors", Value: bson.A{}},
+		{Key: "warnings", Value: bson.A{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
+// handleHostInfo handles the "hostInfo" command.
+// Returns system hardware and OS information.
+func handleHostInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
+	hostname, _ := os.Hostname()
+	now := time.Now().UTC()
+
+	osType := runtime.GOOS
+	switch osType {
+	case "darwin":
+		osType = "Darwin"
+	case "linux":
+		osType = "Linux"
+	case "windows":
+		osType = "Windows"
+	default:
+		osType = "Unknown"
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "system", Value: bson.D{
+			{Key: "currentTime", Value: bson.DateTime(now.UnixMilli())},
+			{Key: "hostname", Value: hostname},
+			{Key: "cpuAddrSize", Value: int32(64)},
+			{Key: "memSizeMB", Value: int64(0)},
+			{Key: "numCores", Value: int32(runtime.NumCPU())},
+			{Key: "cpuArch", Value: runtime.GOARCH},
+			{Key: "numaEnabled", Value: false},
+		}},
+		{Key: "os", Value: bson.D{
+			{Key: "type", Value: osType},
+			{Key: "name", Value: runtime.GOOS},
+			{Key: "version", Value: "unknown"},
+		}},
+		{Key: "extra", Value: bson.D{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
+// handleGetCmdLineOpts handles the "getCmdLineOpts" command.
+// Returns the command-line arguments used to start the server and a parsed options document.
+func handleGetCmdLineOpts(_ *Context, _ bson.Raw) (bson.Raw, error) {
+	argv := bson.A{}
+	for _, arg := range os.Args {
+		argv = append(argv, arg)
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "argv", Value: argv},
+		{Key: "parsed", Value: bson.D{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
 }
 
 // handleExplain handles the "explain" command.
