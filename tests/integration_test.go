@@ -2856,6 +2856,55 @@ func TestAllOperator(t *testing.T) {
 	}
 }
 
+// ─── hostInfo / getCmdLineOpts ────────────────────────────────────────────────
+
+func TestHostInfo(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "hostInfo", Value: 1}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("hostInfo: %v", err)
+	}
+
+	system, ok := result["system"].(bson.M)
+	if !ok {
+		t.Fatal("hostInfo: expected 'system' document")
+	}
+	if _, ok := system["hostname"]; !ok {
+		t.Error("hostInfo: expected 'system.hostname' field")
+	}
+	if _, ok := system["numCores"]; !ok {
+		t.Error("hostInfo: expected 'system.numCores' field")
+	}
+	if _, ok := system["cpuArch"]; !ok {
+		t.Error("hostInfo: expected 'system.cpuArch' field")
+	}
+
+	if _, ok := result["os"]; !ok {
+		t.Error("hostInfo: expected 'os' document")
+	}
+}
+
+func TestGetCmdLineOpts(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "getCmdLineOpts", Value: 1}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("getCmdLineOpts: %v", err)
+	}
+
+	if _, ok := result["argv"]; !ok {
+		t.Error("getCmdLineOpts: expected 'argv' field")
+	}
+	if _, ok := result["parsed"]; !ok {
+		t.Error("getCmdLineOpts: expected 'parsed' field")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

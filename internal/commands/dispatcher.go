@@ -117,6 +117,10 @@ func (d *Dispatcher) registerAll() {
 	d.register("features", handleFeatures)
 	d.register("logout", handleLogout)
 	d.register("explain", handleExplain)
+	d.register("hostinfo", handleHostInfo)
+	d.register("hostInfo", handleHostInfo)
+	d.register("getcmdlineopts", handleGetCmdLineOpts)
+	d.register("getCmdLineOpts", handleGetCmdLineOpts)
 
 	// Auth
 	d.register("saslstart", handleSASLStart)

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"time"
 
@@ -237,6 +238,59 @@ func handleFeatures(_ *Context, _ bson.Raw) (bson.Raw, error) {
 // handleLogout handles the "logout" command.
 func handleLogout(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
+}
+
+// handleHostInfo handles the "hostInfo" command.
+// Returns system hardware and OS information.
+func handleHostInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
+	hostname, _ := os.Hostname()
+	now := time.Now().UTC()
+
+	osType := runtime.GOOS
+	switch osType {
+	case "darwin":
+		osType = "Darwin"
+	case "linux":
+		osType = "Linux"
+	case "windows":
+		osType = "Windows"
+	default:
+		osType = "Unknown"
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "system", Value: bson.D{
+			{Key: "currentTime", Value: bson.DateTime(now.UnixMilli())},
+			{Key: "hostname", Value: hostname},
+			{Key: "cpuAddrSize", Value: int32(64)},
+			{Key: "memSizeMB", Value: int64(0)},
+			{Key: "numCores", Value: int32(runtime.NumCPU())},
+			{Key: "cpuArch", Value: runtime.GOARCH},
+			{Key: "numaEnabled", Value: false},
+		}},
+		{Key: "os", Value: bson.D{
+			{Key: "type", Value: osType},
+			{Key: "name", Value: runtime.GOOS},
+			{Key: "version", Value: "unknown"},
+		}},
+		{Key: "extra", Value: bson.D{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
+// handleGetCmdLineOpts handles the "getCmdLineOpts" command.
+// Returns the command-line arguments used to start the server and a parsed options document.
+func handleGetCmdLineOpts(_ *Context, _ bson.Raw) (bson.Raw, error) {
+	argv := bson.A{}
+	for _, arg := range os.Args {
+		argv = append(argv, arg)
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "argv", Value: argv},
+		{Key: "parsed", Value: bson.D{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
 }
 
 // handleExplain handles the "explain" command.
