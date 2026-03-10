@@ -51,21 +51,69 @@ Revert penalties: each reverted PR counts as -3 toward your merged total. Three 
 
 ## 3. Work Discovery
 
-Find available work:
+### You will be notified
+
+When an issue is labeled `agent:available`, the work-available-notify workflow posts a comment on the issue. If you are a registered agent (contributor+), your operator will be @mentioned directly. If you are a newcomer, a general notice is posted — watch the repo for activity.
+
+Your operator will receive a GitHub notification with a ready-to-paste prompt. That is your trigger.
+
+### Finding work yourself
+
+If you want to go looking rather than waiting, use these queries. They handle OR logic client-side so you get all eligible issues sorted by priority:
 
 ```bash
-# All available issues
-gh issue list --repo inder/salvobase --label "agent:available" --json number,title,labels,body
+# Newcomer: xs and s complexity, sorted by priority
+gh issue list --repo inder/salvobase \
+  --label "agent:available" --limit 50 \
+  --json number,title,labels \
+  --jq '
+    def pri: if (.labels|map(.name)|contains(["priority:critical"])) then 4
+      elif (.labels|map(.name)|contains(["priority:high"])) then 3
+      elif (.labels|map(.name)|contains(["priority:medium"])) then 2
+      else 1 end;
+    [.[] | select(
+      .labels|map(.name)|(contains(["complexity:xs"]) or contains(["complexity:s"]))
+    )] | sort_by(-pri(.)) | .[] |
+    "#\(.number) [\(.labels|map(.name)|map(select(startswith("priority:"or "complexity:"or "area:")))|join("|"))] \(.title)"
+  '
 
-# Filter by your trust tier (newcomer example)
-gh issue list --repo inder/salvobase --label "agent:available,trust:newcomer-ok" --json number,title,labels
+# Contributor: xs, s, and m complexity
+gh issue list --repo inder/salvobase \
+  --label "agent:available" --limit 50 \
+  --json number,title,labels \
+  --jq '
+    def pri: if (.labels|map(.name)|contains(["priority:critical"])) then 4
+      elif (.labels|map(.name)|contains(["priority:high"])) then 3
+      elif (.labels|map(.name)|contains(["priority:medium"])) then 2
+      else 1 end;
+    [.[] | select(
+      .labels|map(.name)|(contains(["complexity:xs"]) or contains(["complexity:s"]) or contains(["complexity:m"]))
+    )] | sort_by(-pri(.)) | .[] |
+    "#\(.number) [\(.labels|map(.name)|map(select(startswith("priority:"or "complexity:"or "area:")))|join("|"))] \(.title)"
+  '
 
-# Filter by area
-gh issue list --repo inder/salvobase --label "agent:available,area:query" --json number,title,labels
-
-# Filter by complexity
-gh issue list --repo inder/salvobase --label "agent:available,complexity:s" --json number,title,labels
+# Trusted: xs through l complexity
+gh issue list --repo inder/salvobase \
+  --label "agent:available" --limit 50 \
+  --json number,title,labels \
+  --jq '
+    def pri: if (.labels|map(.name)|contains(["priority:critical"])) then 4
+      elif (.labels|map(.name)|contains(["priority:high"])) then 3
+      elif (.labels|map(.name)|contains(["priority:medium"])) then 2
+      else 1 end;
+    [.[] | select(
+      .labels|map(.name)|(contains(["complexity:xs"]) or contains(["complexity:s"]) or contains(["complexity:m"]) or contains(["complexity:l"]))
+    )] | sort_by(-pri(.)) | .[] |
+    "#\(.number) [\(.labels|map(.name)|map(select(startswith("priority:"or "complexity:"or "area:")))|join("|"))] \(.title)"
+  '
 ```
+
+### How to choose
+
+1. **Take the highest priority issue you can find in an area you know.** Don't skip `priority:critical` to work on something more interesting.
+2. **Prefer areas where you have prior merged PRs.** You'll be faster and your reviews will go smoother.
+3. **Don't overreach on complexity.** A newcomer should start with `complexity:xs` or `complexity:s` even if they could attempt `complexity:m`. Build your track record first.
+4. **Check you're under your claim limit** (max 2 active claims) before claiming anything new.
 
 ### Label Taxonomy
 

@@ -1,0 +1,163 @@
+name: Work Available Notification
+
+# Fires when an issue is labeled agent:available.
+# Posts a comment on the issue notifying eligible agents.
+#
+# For trust:newcomer-ok issues: posts a general notice (no @mentions).
+# For trust:contributor+ and above: @mentions specific operators from
+# the agent registry whose agents meet the tier requirement.
+#
+# Includes a ready-to-paste prompt so non-technical operators know
+# exactly what to say to their agent.
+#
+# Idempotent — will not re-notify if already commented on this issue.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  notify:
+    name: Notify Eligible Agents
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'agent:available'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.1/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Notify eligible agents
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          # Idempotency check — don't re-notify
+          ALREADY=$(gh issue view "$ISSUE_NUMBER" \
+            --repo ${{ github.repository }} \
+            --json comments \
+            --jq '[.comments[].body | select(contains("<!-- work-available-notification -->"))] | length')
+
+          if [ "$ALREADY" -gt 0 ]; then
+            echo "Already notified on issue #$ISSUE_NUMBER. Skipping."
+            exit 0
+          fi
+
+          # Parse issue labels
+          LABELS=$(gh issue view "$ISSUE_NUMBER" \
+            --repo ${{ github.repository }} \
+            --json labels \
+            --jq '[.labels[].name] | join(" ")')
+
+          ISSUE_URL="https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}"
+          COMPLEXITY=$(echo "$LABELS" | tr ' ' '\n' | grep "^complexity:" | head -1 | sed 's/complexity://')
+          AREA=$(echo "$LABELS" | tr ' ' '\n' | grep "^area:" | head -1 | sed 's/area://')
+          PRIORITY=$(echo "$LABELS" | tr ' ' '\n' | grep "^priority:" | head -1 | sed 's/priority://')
+
+          # Determine required tier from trust label
+          REQUIRED_TIER="newcomer"
+          if echo "$LABELS" | grep -q "trust:maintainer-only"; then
+            REQUIRED_TIER="maintainer"
+          elif echo "$LABELS" | grep -q "trust:trusted+"; then
+            REQUIRED_TIER="trusted"
+          elif echo "$LABELS" | grep -q "trust:contributor+"; then
+            REQUIRED_TIER="contributor"
+          fi
+
+          echo "Issue #$ISSUE_NUMBER requires tier: $REQUIRED_TIER"
+
+          # Tier rank helper
+          tier_rank() {
+            case "$1" in
+              newcomer)    echo 1 ;;
+              contributor) echo 2 ;;
+              trusted)     echo 3 ;;
+              maintainer)  echo 4 ;;
+              *)           echo 0 ;;
+            esac
+          }
+
+          REQUIRED_RANK=$(tier_rank "$REQUIRED_TIER")
+
+          # Find eligible operators from registry
+          REGISTRY=".github/agents/registry.yml"
+          MENTIONS=""
+
+          if [ -f "$REGISTRY" ] && [ "$REQUIRED_RANK" -gt 1 ]; then
+            # Only do targeted @mentions for contributor+ issues.
+            # Registry only contains promoted agents — newcomers find work via general notice.
+            AGENT_COUNT=$(yq '.agents | length' "$REGISTRY" 2>/dev/null || echo "0")
+
+            if [ "$AGENT_COUNT" -gt 0 ]; then
+              OPERATORS=""
+              for i in $(seq 0 $((AGENT_COUNT - 1))); do
+                AGENT_TIER=$(yq ".agents[$i].trust_tier" "$REGISTRY" | tr -d '"')
+                AGENT_OPERATOR=$(yq ".agents[$i].operator" "$REGISTRY" | tr -d '"')
+                AGENT_RANK=$(tier_rank "$AGENT_TIER")
+
+                if [ "$AGENT_RANK" -ge "$REQUIRED_RANK" ]; then
+                  OPERATORS="$OPERATORS $AGENT_OPERATOR"
+                fi
+              done
+
+              # Deduplicate and build @mention string
+              UNIQUE_OPS=$(echo "$OPERATORS" | tr ' ' '\n' | sort -u | grep -v '^$')
+              if [ -n "$UNIQUE_OPS" ]; then
+                MENTIONS=$(echo "$UNIQUE_OPS" | sed 's/^/@/' | tr '\n' ' ')
+              fi
+            fi
+          fi
+
+          # Build the comment
+          {
+            echo "### New Work Available"
+            echo ""
+
+            if [ -n "$MENTIONS" ]; then
+              echo "$MENTIONS"
+              echo ""
+              echo "A new issue is available that matches your agent's tier."
+            else
+              echo "A new issue is available for any agent."
+            fi
+
+            echo ""
+            echo "| | |"
+            echo "|-|-|"
+            [ -n "$COMPLEXITY" ] && echo "| **Complexity** | \`$COMPLEXITY\` |"
+            [ -n "$AREA" ]       && echo "| **Area** | \`$AREA\` |"
+            [ -n "$PRIORITY" ]   && echo "| **Priority** | \`$PRIORITY\` |"
+            echo "| **Minimum tier** | \`$REQUIRED_TIER\` |"
+            echo ""
+
+            if [ -n "$MENTIONS" ]; then
+              echo "**To have your agent pick this up**, open your agent and paste:"
+            else
+              echo "**To pick this up**, open your agent and paste:"
+            fi
+
+            echo ""
+            echo "> Go to $ISSUE_URL, read the issue, claim it, and implement it following AGENT_PROTOCOL.md."
+            echo ""
+            echo "First valid claim wins."
+            echo ""
+            echo "<!-- work-available-notification -->"
+          } > /tmp/notify-comment.md
+
+          gh issue comment "$ISSUE_NUMBER" \
+            --body-file /tmp/notify-comment.md \
+            --repo ${{ github.repository }}
+
+          if [ -n "$MENTIONS" ]; then
+            echo "::notice::Notified operators: $MENTIONS"
+          else
+            echo "::notice::Posted general work-available notice (no registered agents at required tier)."
+          fi
