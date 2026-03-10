@@ -357,45 +357,348 @@ func TestEvalElemMatch(t *testing.T) {
 }
 
 func TestEvalType(t *testing.T) {
-	run := func(doc, filter bson.D) bool {
-		t.Helper()
-		match, err := Filter(mustMarshal(doc), mustMarshal(filter))
-		if err != nil {
-			t.Fatalf("Filter error: %v", err)
-		}
-		return match
+	tests := []struct {
+		name      string
+		doc       bson.D
+		filter    bson.D
+		wantMatch bool
+	}{
+		// ── String aliases ─────────────────────────────────────────────
+		{
+			name:      "string alias matches string field",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "string"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "int alias matches int32 field",
+			doc:       bson.D{{Key: "x", Value: int32(1)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "int"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "long alias matches int64 field",
+			doc:       bson.D{{Key: "x", Value: int64(999)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "long"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "double alias matches double field",
+			doc:       bson.D{{Key: "x", Value: float64(3.14)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "double"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "bool alias matches boolean field",
+			doc:       bson.D{{Key: "x", Value: true}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "bool"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "object alias matches embedded document",
+			doc:       bson.D{{Key: "x", Value: bson.D{{Key: "nested", Value: 1}}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "object"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "array alias matches array field",
+			doc:       bson.D{{Key: "x", Value: bson.A{1, 2, 3}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "array"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "null alias matches null field",
+			doc:       bson.D{{Key: "x", Value: nil}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "null"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "objectId alias matches ObjectID field",
+			doc:       bson.D{{Key: "x", Value: bson.NewObjectID()}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "objectId"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "date alias matches DateTime field",
+			doc:       bson.D{{Key: "x", Value: bson.DateTime(1609459200000)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "date"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "regex alias matches regex field",
+			doc:       bson.D{{Key: "x", Value: bson.Regex{Pattern: "abc", Options: "i"}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "regex"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "decimal alias matches decimal128 field",
+			doc:       bson.D{{Key: "x", Value: bson.NewDecimal128(0, 100)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "decimal"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "timestamp alias matches timestamp field",
+			doc:       bson.D{{Key: "x", Value: bson.Timestamp{T: 1, I: 1}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "timestamp"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "minKey alias matches minKey field",
+			doc:       bson.D{{Key: "x", Value: bson.MinKey{}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "minKey"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "maxKey alias matches maxKey field",
+			doc:       bson.D{{Key: "x", Value: bson.MaxKey{}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "maxKey"}}}},
+			wantMatch: true,
+		},
+
+		// ── Mismatches ─────────────────────────────────────────────────
+		{
+			name:      "string alias does not match int field",
+			doc:       bson.D{{Key: "x", Value: int32(5)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "string"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "int alias does not match string field",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "int"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "bool alias does not match int field",
+			doc:       bson.D{{Key: "x", Value: int32(1)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "bool"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "object alias does not match array field",
+			doc:       bson.D{{Key: "x", Value: bson.A{1, 2}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "object"}}}},
+			wantMatch: false,
+		},
+
+		// ── Numeric BSON type codes ────────────────────────────────────
+		{
+			name:      "type 1 matches double",
+			doc:       bson.D{{Key: "x", Value: float64(3.14)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(1)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 2 matches string",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(2)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 3 matches object",
+			doc:       bson.D{{Key: "x", Value: bson.D{{Key: "a", Value: 1}}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(3)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 4 matches array",
+			doc:       bson.D{{Key: "x", Value: bson.A{1}}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(4)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 7 matches objectId",
+			doc:       bson.D{{Key: "x", Value: bson.NewObjectID()}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(7)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 8 matches boolean",
+			doc:       bson.D{{Key: "x", Value: false}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(8)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 9 matches date",
+			doc:       bson.D{{Key: "x", Value: bson.DateTime(0)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(9)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 10 matches null",
+			doc:       bson.D{{Key: "x", Value: nil}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(10)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 16 matches int32",
+			doc:       bson.D{{Key: "x", Value: int32(42)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(16)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type 18 matches int64",
+			doc:       bson.D{{Key: "x", Value: int64(42)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(18)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type code as int64 also works",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int64(2)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type code as double also works",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: float64(2)}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "wrong numeric type code does not match",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(1)}}}},
+			wantMatch: false,
+		},
+
+		// ── "number" alias ─────────────────────────────────────────────
+		{
+			name:      "number alias matches int32",
+			doc:       bson.D{{Key: "x", Value: int32(1)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "number alias matches int64",
+			doc:       bson.D{{Key: "x", Value: int64(999)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "number alias matches double",
+			doc:       bson.D{{Key: "x", Value: float64(1.5)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "number alias matches decimal128",
+			doc:       bson.D{{Key: "x", Value: bson.NewDecimal128(0, 100)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "number alias does not match string",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "number alias does not match bool",
+			doc:       bson.D{{Key: "x", Value: true}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "number alias does not match null",
+			doc:       bson.D{{Key: "x", Value: nil}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}},
+			wantMatch: false,
+		},
+
+		// ── Array of types ─────────────────────────────────────────────
+		{
+			name:      "array of types matches if any type matches",
+			doc:       bson.D{{Key: "x", Value: int32(5)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: bson.A{"string", "int"}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "array of types no match if none matches",
+			doc:       bson.D{{Key: "x", Value: true}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: bson.A{"string", "int"}}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "array of numeric type codes",
+			doc:       bson.D{{Key: "x", Value: float64(1.0)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: bson.A{int32(1), int32(2)}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "array mixing string aliases and numeric codes",
+			doc:       bson.D{{Key: "x", Value: nil}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: bson.A{int32(2), "null"}}}}},
+			wantMatch: true,
+		},
+
+		// ── Missing field ──────────────────────────────────────────────
+		{
+			name:      "missing field has undefined type, does not match string",
+			doc:       bson.D{{Key: "other", Value: 1}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "string"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "missing field does not match null",
+			doc:       bson.D{{Key: "other", Value: 1}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "null"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "missing field does not match number",
+			doc:       bson.D{{Key: "other", Value: 1}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}},
+			wantMatch: false,
+		},
+
+		// ── Nested fields with dot notation ────────────────────────────
+		{
+			name:      "dot notation field type check",
+			doc:       bson.D{{Key: "a", Value: bson.D{{Key: "b", Value: int32(42)}}}},
+			filter:    bson.D{{Key: "a.b", Value: bson.D{{Key: "$type", Value: "int"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "dot notation field wrong type",
+			doc:       bson.D{{Key: "a", Value: bson.D{{Key: "b", Value: "hello"}}}},
+			filter:    bson.D{{Key: "a.b", Value: bson.D{{Key: "$type", Value: "int"}}}},
+			wantMatch: false,
+		},
+
+		// ── Combined with other operators ──────────────────────────────
+		{
+			name: "$type combined with $exists",
+			doc:  bson.D{{Key: "x", Value: int32(5)}},
+			filter: bson.D{{Key: "x", Value: bson.D{
+				{Key: "$exists", Value: true},
+				{Key: "$type", Value: "int"},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$not $type inverts the match",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$type", Value: "int"}}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$not $type non-match becomes match",
+			doc:       bson.D{{Key: "x", Value: int32(5)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$type", Value: "int"}}}}}},
+			wantMatch: false,
+		},
 	}
 
-	// By string alias
-	if !run(bson.D{{Key: "x", Value: "hello"}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "string"}}}}) {
-		t.Error("$type: string alias should match string field")
-	}
-	if !run(bson.D{{Key: "x", Value: int32(1)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "int"}}}}) {
-		t.Error("$type: int alias should match int32 field")
-	}
-	if !run(bson.D{{Key: "x", Value: true}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "bool"}}}}) {
-		t.Error("$type: bool alias should match boolean field")
-	}
-
-	// By numeric code
-	if !run(bson.D{{Key: "x", Value: float64(3.14)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: int32(1)}}}}) {
-		t.Error("$type: BSON type 1 should match double field")
-	}
-
-	// "number" alias matches int, long, double
-	if !run(bson.D{{Key: "x", Value: int32(1)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}}) {
-		t.Error("$type: number alias should match int32")
-	}
-	if !run(bson.D{{Key: "x", Value: float64(1.5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}}) {
-		t.Error("$type: number alias should match double")
-	}
-	if run(bson.D{{Key: "x", Value: "hello"}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: "number"}}}}) {
-		t.Error("$type: number alias should not match string")
-	}
-
-	// Array of types
-	if !run(bson.D{{Key: "x", Value: int32(5)}}, bson.D{{Key: "x", Value: bson.D{{Key: "$type", Value: bson.A{"string", "int"}}}}}) {
-		t.Error("$type: array of types should match if any type matches")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			match, err := Filter(mustMarshal(tc.doc), mustMarshal(tc.filter))
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if match != tc.wantMatch {
+				t.Errorf("got match=%v, want %v", match, tc.wantMatch)
+			}
+		})
 	}
 }
 
