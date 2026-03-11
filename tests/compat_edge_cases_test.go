@@ -636,6 +636,347 @@ func TestCompatProjectionExcludeID(t *testing.T) {
 	}
 }
 
+// ─── Array Query Operator Edge Cases ─────────────────────────────────────────
+
+// TestCompatInEmptyArray verifies that $in with an empty array matches nothing.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/in/
+func TestCompatInEmptyArray(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_in_empty")
+	ctx := context.Background()
+
+	_, err := coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "v", Value: 1}},
+		bson.D{{Key: "v", Value: 2}},
+		bson.D{{Key: "v", Value: 3}},
+	})
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	// $in: [] should match no documents
+	n, err := coll.CountDocuments(ctx, bson.D{{Key: "v", Value: bson.D{{Key: "$in", Value: bson.A{}}}}})
+	if err != nil {
+		t.Fatalf("CountDocuments with $in []: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("$in [] expected 0 matches, got %d", n)
+	}
+}
+
+// TestCompatNinEmptyArray verifies that $nin with an empty array matches all documents.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/nin/
+func TestCompatNinEmptyArray(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_nin_empty")
+	ctx := context.Background()
+
+	_, err := coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "v", Value: 1}},
+		bson.D{{Key: "v", Value: 2}},
+		bson.D{{Key: "v", Value: 3}},
+	})
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	// $nin: [] should match all documents
+	n, err := coll.CountDocuments(ctx, bson.D{{Key: "v", Value: bson.D{{Key: "$nin", Value: bson.A{}}}}})
+	if err != nil {
+		t.Fatalf("CountDocuments with $nin []: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("$nin [] expected 3 matches (all docs), got %d", n)
+	}
+}
+
+// TestCompatElemMatchOnScalarArray verifies $elemMatch on an array of scalars.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/elemMatch/
+func TestCompatElemMatchOnScalarArray(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_elemmatch_scalar")
+	ctx := context.Background()
+
+	_, err := coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "_id", Value: 1}, {Key: "scores", Value: bson.A{10, 50, 95}}},
+		bson.D{{Key: "_id", Value: 2}, {Key: "scores", Value: bson.A{20, 40, 60}}},
+		bson.D{{Key: "_id", Value: 3}, {Key: "scores", Value: bson.A{80, 85, 90}}},
+	})
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	// $elemMatch: at least one score >= 90
+	n, err := coll.CountDocuments(ctx, bson.D{{Key: "scores", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "$gte", Value: 90}}}}}})
+	if err != nil {
+		t.Fatalf("CountDocuments: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("$elemMatch $gte 90: expected 2, got %d", n)
+	}
+}
+
+// TestCompatAllOrderIndependence verifies that $all does not require a
+// specific order of elements in the array field.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/all/
+func TestCompatAllOrderIndependence(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_all_order")
+	ctx := context.Background()
+
+	_, err := coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "_id", Value: 1}, {Key: "tags", Value: bson.A{"c", "a", "b"}}},
+		bson.D{{Key: "_id", Value: 2}, {Key: "tags", Value: bson.A{"a", "b"}}},
+		bson.D{{Key: "_id", Value: 3}, {Key: "tags", Value: bson.A{"b", "c"}}},
+	})
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	n, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{"b", "a"}}}}})
+	if err != nil {
+		t.Fatalf("CountDocuments: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("$all [b,a]: expected 2, got %d", n)
+	}
+}
+
+// ─── Update Operator Edge Cases ──────────────────────────────────────────────
+
+// TestCompatSetDotNotation verifies that $set with dot notation updates
+// nested fields without overwriting sibling fields.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/update/set/
+func TestCompatSetDotNotation(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_set_dot")
+	ctx := context.Background()
+
+	_, err := coll.InsertOne(ctx, bson.D{
+		{Key: "user", Value: bson.D{
+			{Key: "name", Value: "alice"},
+			{Key: "city", Value: "portland"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("InsertOne: %v", err)
+	}
+
+	// Update only the nested city field
+	_, err = coll.UpdateOne(ctx,
+		bson.D{},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "user.city", Value: "seattle"}}}},
+	)
+	if err != nil {
+		t.Fatalf("UpdateOne $set dot notation: %v", err)
+	}
+
+	var doc bson.D
+	if err := coll.FindOne(ctx, bson.D{}).Decode(&doc); err != nil {
+		t.Fatalf("FindOne: %v", err)
+	}
+
+	userVal := getFieldValue(doc, "user")
+	userDoc, ok := userVal.(bson.D)
+	if !ok {
+		t.Fatalf("expected user to be a document, got %T", userVal)
+	}
+
+	city := getFieldValue(userDoc, "city")
+	name := getFieldValue(userDoc, "name")
+
+	if city != "seattle" {
+		t.Errorf("expected user.city=seattle, got %v", city)
+	}
+	// Sibling field must still be present
+	if name != "alice" {
+		t.Errorf("expected user.name=alice (unchanged), got %v", name)
+	}
+}
+
+// TestCompatUnsetNonexistentField verifies that $unset on a missing field
+// is a no-op — it must not return an error.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/update/unset/
+func TestCompatUnsetNonexistentField(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_unset_missing")
+	ctx := context.Background()
+
+	_, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}})
+	if err != nil {
+		t.Fatalf("InsertOne: %v", err)
+	}
+
+	// $unset a field that doesn't exist — must not error
+	res, err := coll.UpdateOne(ctx,
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "$unset", Value: bson.D{{Key: "nonexistent", Value: ""}}}},
+	)
+	if err != nil {
+		t.Fatalf("$unset nonexistent field: %v", err)
+	}
+	if res.MatchedCount != 1 {
+		t.Errorf("expected MatchedCount=1, got %d", res.MatchedCount)
+	}
+}
+
+// TestCompatSetCreatesNestedPath verifies that $set creates intermediate
+// documents when they don't exist (deep dot-notation path).
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/update/set/
+func TestCompatSetCreatesNestedPath(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_set_create_nested")
+	ctx := context.Background()
+
+	_, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}})
+	if err != nil {
+		t.Fatalf("InsertOne: %v", err)
+	}
+
+	_, err = coll.UpdateOne(ctx,
+		bson.D{{Key: "name", Value: "alice"}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "a.b.c", Value: int32(42)}}}},
+	)
+	if err != nil {
+		t.Fatalf("$set a.b.c: %v", err)
+	}
+
+	var doc bson.D
+	if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "alice"}}).Decode(&doc); err != nil {
+		t.Fatalf("FindOne: %v", err)
+	}
+
+	aVal := getFieldValue(doc, "a")
+	aDoc, ok := aVal.(bson.D)
+	if !ok {
+		t.Fatalf("expected 'a' to be a document, got %T", aVal)
+	}
+	bVal := getFieldValue(aDoc, "b")
+	bDoc, ok := bVal.(bson.D)
+	if !ok {
+		t.Fatalf("expected 'a.b' to be a document, got %T", bVal)
+	}
+	cVal := getFieldValue(bDoc, "c")
+	if toInt64(cVal) != 42 {
+		t.Errorf("expected a.b.c=42, got %v", cVal)
+	}
+}
+
+// ─── findAndModify Edge Cases ─────────────────────────────────────────────────
+
+// TestCompatFindAndModifyUpsert verifies that findAndModify with upsert:true
+// creates a document when no match is found and returns the correct result.
+// Ref: https://www.mongodb.com/docs/manual/reference/command/findAndModify/
+func TestCompatFindAndModifyUpsert(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_fam_upsert")
+	ctx := context.Background()
+
+	// findAndModify with upsert on an empty collection
+	var result bson.M
+	err := db.RunCommand(ctx, bson.D{
+		{Key: "findAndModify", Value: "compat_fam_upsert"},
+		{Key: "query", Value: bson.D{{Key: "name", Value: "nobody"}}},
+		{Key: "update", Value: bson.D{{Key: "$set", Value: bson.D{{Key: "created", Value: true}}}}},
+		{Key: "upsert", Value: true},
+		{Key: "new", Value: false}, // return pre-update doc (MongoDB default)
+	}).Decode(&result)
+	if err != nil {
+		t.Fatalf("findAndModify upsert: %v", err)
+	}
+
+	// When upsert creates a new document, the pre-update doc is null
+	value, ok := result["value"]
+	if !ok {
+		t.Fatal("findAndModify result missing 'value' field")
+	}
+	if value != nil {
+		t.Errorf("upsert: expected value=null (no pre-existing doc), got %v", value)
+	}
+
+	// Verify the document was actually created
+	n, err := coll.CountDocuments(ctx, bson.D{{Key: "name", Value: "nobody"}})
+	if err != nil {
+		t.Fatalf("CountDocuments: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("upsert: expected 1 document created, got %d", n)
+	}
+}
+
+// TestCompatFindAndModifyReturnNew verifies that findAndModify with new:true
+// returns the modified document (post-update state).
+// Ref: https://www.mongodb.com/docs/manual/reference/command/findAndModify/
+func TestCompatFindAndModifyReturnNew(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_fam_new")
+	ctx := context.Background()
+
+	_, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: int32(10)}})
+	if err != nil {
+		t.Fatalf("InsertOne: %v", err)
+	}
+
+	var result bson.M
+	err = db.RunCommand(ctx, bson.D{
+		{Key: "findAndModify", Value: "compat_fam_new"},
+		{Key: "query", Value: bson.D{{Key: "name", Value: "alice"}}},
+		{Key: "update", Value: bson.D{{Key: "$inc", Value: bson.D{{Key: "score", Value: int32(5)}}}}},
+		{Key: "new", Value: true}, // return post-update doc
+	}).Decode(&result)
+	if err != nil {
+		t.Fatalf("findAndModify new=true: %v", err)
+	}
+
+	value, ok := result["value"]
+	if !ok {
+		t.Fatal("findAndModify result missing 'value' field")
+	}
+	retDoc, ok := value.(bson.D)
+	if !ok {
+		t.Fatalf("expected value to be a document, got %T", value)
+	}
+
+	score := getFieldValue(retDoc, "score")
+	if toInt64(score) != 15 {
+		t.Errorf("new=true: expected score=15 (post-update), got %v", score)
+	}
+}
+
+// TestCompatFindAndModifyNoMatch verifies that findAndModify returns
+// null value (not an error) when no document matches and upsert is false.
+// Ref: https://www.mongodb.com/docs/manual/reference/command/findAndModify/
+func TestCompatFindAndModifyNoMatch(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	ctx := context.Background()
+
+	var result bson.M
+	err := db.RunCommand(ctx, bson.D{
+		{Key: "findAndModify", Value: "compat_fam_nomatch"},
+		{Key: "query", Value: bson.D{{Key: "name", Value: "ghost"}}},
+		{Key: "update", Value: bson.D{{Key: "$set", Value: bson.D{{Key: "found", Value: true}}}}},
+		{Key: "upsert", Value: false},
+	}).Decode(&result)
+	if err != nil {
+		t.Fatalf("findAndModify no-match: %v", err)
+	}
+
+	value := result["value"]
+	if value != nil {
+		t.Errorf("expected value=null for no-match, got %v", value)
+	}
+}
+
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
 func toInt64(v interface{}) int64 {
