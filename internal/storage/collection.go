@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -332,6 +334,261 @@ func extractIDEquality(filter bson.Raw) (bson.RawValue, bool) {
 	return v, true
 }
 
+// extractEqualityPredicates extracts simple equality conditions from a filter.
+// Returns a map of field → value for conditions of the form:
+//   - {field: scalar}          (direct equality)
+//   - {field: {$eq: scalar}}   (explicit $eq operator)
+//
+// Top-level logical operators ($and, $or, $nor) and range operators are ignored.
+// Array values are not treated as equalities (multi-key index matching is out of scope for v1).
+func extractEqualityPredicates(filter bson.Raw) map[string]bson.RawValue {
+	result := make(map[string]bson.RawValue)
+	if len(filter) == 0 {
+		return result
+	}
+	elems, err := filter.Elements()
+	if err != nil {
+		return result
+	}
+	for _, elem := range elems {
+		key := elem.Key()
+		if len(key) > 0 && key[0] == '$' {
+			continue // skip $and, $or, $nor, etc.
+		}
+		val := elem.Value()
+		switch val.Type {
+		case bson.TypeEmbeddedDocument:
+			// Could be {$eq: v} or a range predicate.
+			subElems, err := val.Document().Elements()
+			if err != nil || len(subElems) == 0 {
+				continue
+			}
+			if len(subElems) == 1 && subElems[0].Key() == "$eq" {
+				eq := subElems[0].Value()
+				if eq.Type != bson.TypeArray && eq.Type != bson.TypeEmbeddedDocument {
+					result[key] = eq
+				}
+			}
+		case bson.TypeArray:
+			// Array value — not a simple equality; skip.
+		default:
+			result[key] = val
+		}
+	}
+	return result
+}
+
+// chooseIndex selects the best secondary index to use for a filter, if any.
+// Returns (spec, prefixKey, true) when a suitable index is found.
+// The prefixKey is the encoded equality prefix to seek in the index bucket.
+//
+// An index is eligible when every field in its key has an equality predicate in
+// the filter (full-coverage only; partial compound coverage is deferred to v2).
+// Hidden indexes are skipped. The _id_ index is never stored in _meta.indexes.
+//
+// When multiple eligible indexes exist, the one with the most fields is preferred
+// (most specific wins).
+func (c *bboltCollection) chooseIndex(tx *bolt.Tx, filter bson.Raw) (IndexSpec, []byte, bool) {
+	meta := tx.Bucket([]byte(bucketMetaIndexes))
+	if meta == nil {
+		return IndexSpec{}, nil, false
+	}
+	equalities := extractEqualityPredicates(filter)
+	if len(equalities) == 0 {
+		return IndexSpec{}, nil, false
+	}
+
+	prefix := metaIdxPrefix(c.coll)
+	cur := meta.Cursor()
+
+	var bestSpec IndexSpec
+	var bestPrefix []byte
+	bestCoverage := 0
+
+	for k, v := cur.Seek(prefix); k != nil && hasPrefix(k, prefix); k, v = cur.Next() {
+		var spec IndexSpec
+		if err := json.Unmarshal(v, &spec); err != nil {
+			continue
+		}
+		if spec.Hidden {
+			continue
+		}
+		elems, err := spec.Keys.Elements()
+		if err != nil || len(elems) == 0 {
+			continue
+		}
+
+		// Count leading fields with equality predicates (must be contiguous).
+		coverage := 0
+		for _, elem := range elems {
+			if _, ok := equalities[elem.Key()]; ok {
+				coverage++
+			} else {
+				break
+			}
+		}
+
+		// Require ALL fields to be covered (full coverage only in v1).
+		// Partial coverage would require key-escaping to safely do range scans;
+		// that is deferred to v2.
+		if coverage == 0 || coverage < len(elems) {
+			continue
+		}
+
+		if coverage > bestCoverage {
+			bestCoverage = coverage
+			bestSpec = spec
+			bestPrefix = encodeEqualityPrefix(spec.Keys, equalities)
+		}
+	}
+
+	if bestCoverage == 0 {
+		return IndexSpec{}, nil, false
+	}
+	return bestSpec, bestPrefix, true
+}
+
+// fetchDoc retrieves and optionally filters/projects one document from a collection bucket
+// using its raw _id key (as stored in non-unique index entries).
+// Returns nil if the document is missing (stale index entry), doesn't match the filter,
+// or projection produces an empty result.
+func (c *bboltCollection) fetchDoc(collB *bolt.Bucket, idBytes []byte, filter bson.Raw, projection bson.Raw) (bson.Raw, error) {
+	v := collB.Get(idBytes)
+	if v == nil {
+		return nil, nil // stale index entry; skip
+	}
+	raw, err := c.engine.decompress(v)
+	if err != nil {
+		return nil, err
+	}
+	doc := bson.Raw(raw)
+
+	if len(filter) > 0 {
+		match, err := query.Filter(doc, filter)
+		if err != nil {
+			return nil, err
+		}
+		if !match {
+			return nil, nil
+		}
+	}
+	if len(projection) > 0 {
+		doc, err = query.Project(doc, projection)
+		if err != nil {
+			return nil, err
+		}
+	}
+	cp := make([]byte, len(doc))
+	copy(cp, doc)
+	return bson.Raw(cp), nil
+}
+
+// indexScanTx performs an index-backed scan within an existing read transaction.
+// For unique indexes it does a single key lookup; for non-unique indexes it does
+// a bounded range scan using the 0xFF separator byte to identify exact-match entries.
+// Any filter predicates not covered by the index are applied via fetchDoc.
+func (c *bboltCollection) indexScanTx(
+	tx *bolt.Tx,
+	spec IndexSpec,
+	prefixKey []byte,
+	filter bson.Raw,
+	projection bson.Raw,
+	so scanOpts,
+) ([]bson.Raw, error) {
+	idxB := tx.Bucket([]byte(idxBucket(c.coll, spec.Name)))
+	if idxB == nil {
+		// Index bucket is missing (should not happen after CreateIndex, but be safe).
+		return c.collectionScanTx(tx, filter, projection, so)
+	}
+	collB := tx.Bucket([]byte(collBucket(c.coll)))
+	if collB == nil {
+		return nil, nil
+	}
+
+	var docs []bson.Raw
+
+	if spec.Unique {
+		// Unique index: exact key → value is the doc's _id bytes.
+		idBytes := idxB.Get(prefixKey)
+		if idBytes == nil {
+			return nil, nil
+		}
+		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
+		if err != nil {
+			return nil, err
+		}
+		if doc != nil {
+			docs = append(docs, doc)
+		}
+		return docs, nil
+	}
+
+	// Non-unique index: keys are prefixKey + 0xFF + idBytes.
+	// We scan from prefixKey and accept only keys where k[len(prefixKey)] == 0xFF.
+	// This correctly distinguishes "foo" (prefix) from "foobar" (longer string) because
+	// the 0xFF separator byte cannot be part of a partial field encoding.
+	cur := idxB.Cursor()
+	for k, _ := cur.Seek(prefixKey); k != nil && bytes.HasPrefix(k, prefixKey); k, _ = cur.Next() {
+		if len(k) <= len(prefixKey) || k[len(prefixKey)] != 0xFF {
+			// Longer field value shares our byte prefix — not an exact match.
+			continue
+		}
+		idBytes := k[len(prefixKey)+1:]
+		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
+		if err != nil {
+			return nil, err
+		}
+		if doc != nil {
+			docs = append(docs, doc)
+			if !so.hasSort && so.limit > 0 && int64(len(docs)) >= so.limit {
+				break
+			}
+		}
+	}
+	return docs, nil
+}
+
+// collectionScanTx performs a full collection scan within an existing read transaction.
+// This is the fallback path when no index applies.
+func (c *bboltCollection) collectionScanTx(tx *bolt.Tx, filter bson.Raw, projection bson.Raw, so scanOpts) ([]bson.Raw, error) {
+	b := tx.Bucket([]byte(collBucket(c.coll)))
+	if b == nil {
+		return nil, nil
+	}
+	var docs []bson.Raw
+	err := b.ForEach(func(k, v []byte) error {
+		raw, err := c.engine.decompress(v)
+		if err != nil {
+			return err
+		}
+		doc := bson.Raw(raw)
+		match, err := query.Filter(doc, filter)
+		if err != nil {
+			return err
+		}
+		if !match {
+			return nil
+		}
+		if len(projection) > 0 {
+			doc, err = query.Project(doc, projection)
+			if err != nil {
+				return err
+			}
+		}
+		cp := make([]byte, len(doc))
+		copy(cp, doc)
+		docs = append(docs, bson.Raw(cp))
+		if !so.hasSort && so.limit > 0 && int64(len(docs)) >= so.limit {
+			return errStopIteration
+		}
+		return nil
+	})
+	if err != nil && err != errStopIteration {
+		return nil, err
+	}
+	return docs, nil
+}
+
 // scanOpts controls early-exit behaviour during a collection scan.
 // When limit > 0 and hasSort is false, the scan stops as soon as limit
 // matching documents have been collected, avoiding a full collection walk.
@@ -340,16 +597,20 @@ type scanOpts struct {
 	hasSort bool  // true = all docs must be visited to sort correctly
 }
 
-// scanFilter does a full (or limited) collection scan and applies filter + projection.
-// When the filter is a simple {_id: value} equality, it uses a direct key lookup.
-// When so.limit > 0 and so.hasSort is false, the scan stops after so.limit matches.
+// scanFilter returns matching documents for filter with optional projection.
+//
+// Execution strategy (in priority order):
+//  1. {_id: <scalar>} equality → direct key lookup in the collection bucket (O(log N)).
+//  2. Filter has equality predicates that fully cover a secondary index → index scan
+//     (O(log N + k) where k = matching docs).
+//  3. Otherwise → full collection scan (O(N)).
 func (c *bboltCollection) scanFilter(filter bson.Raw, projection bson.Raw, so scanOpts) ([]bson.Raw, error) {
 	boltDB, err := c.engine.getDB(c.db)
 	if err != nil {
 		return nil, err
 	}
 
-	// Fast path: direct _id key lookup.
+	// Fast path 1: direct _id key lookup.
 	if idVal, ok := extractIDEquality(filter); ok {
 		key := encodeIDValue(idVal)
 		var docs []bson.Raw
@@ -383,41 +644,18 @@ func (c *bboltCollection) scanFilter(filter bson.Raw, projection bson.Raw, so sc
 		return docs, nil
 	}
 
+	// Fast path 2 + fallback: choose index or full scan inside a single transaction.
 	var docs []bson.Raw
 	if err := boltDB.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(collBucket(c.coll)))
-		if b == nil {
-			return nil
+		if spec, prefixKey, ok := c.chooseIndex(tx, filter); ok {
+			var scanErr error
+			docs, scanErr = c.indexScanTx(tx, spec, prefixKey, filter, projection, so)
+			return scanErr
 		}
-		return b.ForEach(func(k, v []byte) error {
-			raw, err := c.engine.decompress(v)
-			if err != nil {
-				return err
-			}
-			doc := bson.Raw(raw)
-			match, err := query.Filter(doc, filter)
-			if err != nil {
-				return err
-			}
-			if !match {
-				return nil
-			}
-			if len(projection) > 0 {
-				doc, err = query.Project(doc, projection)
-				if err != nil {
-					return err
-				}
-			}
-			cp := make([]byte, len(doc))
-			copy(cp, doc)
-			docs = append(docs, bson.Raw(cp))
-			// Early exit: stop scanning once we have enough docs (only safe without a sort).
-			if !so.hasSort && so.limit > 0 && int64(len(docs)) >= so.limit {
-				return errStopIteration
-			}
-			return nil
-		})
-	}); err != nil && err != errStopIteration {
+		var scanErr error
+		docs, scanErr = c.collectionScanTx(tx, filter, projection, so)
+		return scanErr
+	}); err != nil {
 		return nil, err
 	}
 	return docs, nil

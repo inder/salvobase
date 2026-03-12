@@ -148,9 +148,12 @@ func encodeIndexKeyFromRaw(v bson.RawValue) []byte {
 		copy(b[1:], v.Value)
 		return b
 	}
-	// Unknown type: use raw bytes
+	// Unknown type: use 0xFE as the type tag.
+	// 0xFF is reserved as the separator between encoded field keys and the _id suffix
+	// in non-unique index entries (buildIndexKey). Using 0xFF here would make the
+	// separator indistinguishable from a leading byte of an unknown-type field value.
 	b := make([]byte, 1+len(v.Value))
-	b[0] = 0xFF
+	b[0] = 0xFE
 	copy(b[1:], v.Value)
 	return b
 }
@@ -255,6 +258,9 @@ func buildUniqueIndexKey(keys bson.Raw, doc bson.Raw) []byte {
 }
 
 // buildFieldKeys builds the encoded key for a compound index from a document.
+// Uses encodeIndexField for each field so that the encoding is identical to
+// encodeEqualityPrefix — the two functions MUST produce the same bytes for the
+// same field value or index scans will silently miss documents.
 func buildFieldKeys(keys bson.Raw, doc bson.Raw) []byte {
 	if len(keys) == 0 {
 		return nil
@@ -264,48 +270,73 @@ func buildFieldKeys(keys bson.Raw, doc bson.Raw) []byte {
 		return nil
 	}
 
-	var parts [][]byte
-	for _, elem := range elems {
-		// Lookup the field value in the doc (supports dot notation)
-		fieldVal := lookupIndexField(doc, elem.Key())
-		encoded := encodeIndexKeyFromRaw(fieldVal)
-
-		// For descending indexes, flip the bytes
-		dirVal := elem.Value()
-		dir := float64(1)
-		switch dirVal.Type {
-		case bson.TypeDouble:
-			f, _ := dirVal.DoubleOK()
-			dir = f
-		case bson.TypeInt32:
-			n, _ := dirVal.Int32OK()
-			dir = float64(n)
-		case bson.TypeInt64:
-			n, _ := dirVal.Int64OK()
-			dir = float64(n)
-		}
-		if dir < 0 {
-			// Flip bytes to reverse sort order
-			flipped := make([]byte, len(encoded))
-			for i, b := range encoded {
-				flipped[i] = 0xFF ^ b
-			}
-			encoded = flipped
-		}
-		parts = append(parts, encoded)
-	}
-
-	// Join parts with a separator that can't appear in encoded field values
-	// Use null bytes between parts since our encodings start with a type byte
-	if len(parts) == 0 {
-		return nil
-	}
 	var result []byte
-	for i, p := range parts {
+	for i, elem := range elems {
+		fieldVal := lookupIndexField(doc, elem.Key())
+		encoded := encodeIndexField(elem.Value(), fieldVal)
 		if i > 0 {
 			result = append(result, 0x01) // field separator
 		}
-		result = append(result, p...)
+		result = append(result, encoded...)
+	}
+	return result
+}
+
+// encodeIndexField encodes a single index field value and applies the direction
+// flip for descending index specifications (dir < 0). This is the shared encoding
+// kernel used by both buildFieldKeys and encodeEqualityPrefix to guarantee that
+// the two functions produce identical byte sequences for the same input.
+//
+// dirVal is the direction element from the index key spec (e.g. Int32(1) or Int32(-1)).
+// fieldVal is the document field value to encode.
+func encodeIndexField(dirVal, fieldVal bson.RawValue) []byte {
+	encoded := encodeIndexKeyFromRaw(fieldVal)
+
+	dir := float64(1)
+	switch dirVal.Type {
+	case bson.TypeDouble:
+		f, _ := dirVal.DoubleOK()
+		dir = f
+	case bson.TypeInt32:
+		n, _ := dirVal.Int32OK()
+		dir = float64(n)
+	case bson.TypeInt64:
+		n, _ := dirVal.Int64OK()
+		dir = float64(n)
+	}
+	if dir < 0 {
+		flipped := make([]byte, len(encoded))
+		for i, b := range encoded {
+			flipped[i] = 0xFF ^ b
+		}
+		return flipped
+	}
+	return encoded
+}
+
+// encodeEqualityPrefix builds the index key prefix for a set of equality predicates.
+// It uses encodeIndexField (the same kernel as buildFieldKeys) to guarantee that
+// the generated prefix exactly matches the keys stored in the index bucket.
+// Encoding stops at the first index field not present in equalities.
+func encodeEqualityPrefix(keys bson.Raw, equalities map[string]bson.RawValue) []byte {
+	if len(keys) == 0 {
+		return nil
+	}
+	elems, err := keys.Elements()
+	if err != nil {
+		return nil
+	}
+	var result []byte
+	for i, elem := range elems {
+		val, ok := equalities[elem.Key()]
+		if !ok {
+			break
+		}
+		encoded := encodeIndexField(elem.Value(), val)
+		if i > 0 {
+			result = append(result, 0x01) // field separator (same as buildFieldKeys)
+		}
+		result = append(result, encoded...)
 	}
 	return result
 }

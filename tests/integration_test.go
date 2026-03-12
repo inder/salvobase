@@ -3163,6 +3163,156 @@ func TestTypeQueryOperator(t *testing.T) {
 	}
 }
 
+// TestIndexQueryPlanner verifies that secondary-index equality lookups return
+// correct results — both for string equality and integer equality predicates,
+// and that the {$eq: v} operator form also resolves through the index.
+func TestIndexQueryPlanner(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	coll := db.Collection("users")
+	ctx := context.Background()
+
+	// Insert 200 docs: 100 active, 100 inactive, each with a unique username.
+	var activeDocs []interface{}
+	var inactiveDocs []interface{}
+	for i := 0; i < 100; i++ {
+		activeDocs = append(activeDocs, bson.D{
+			{Key: "username", Value: fmt.Sprintf("active_user_%d", i)},
+			{Key: "status", Value: "active"},
+			{Key: "score", Value: int32(i)},
+		})
+		inactiveDocs = append(inactiveDocs, bson.D{
+			{Key: "username", Value: fmt.Sprintf("inactive_user_%d", i)},
+			{Key: "status", Value: "inactive"},
+			{Key: "score", Value: int32(i + 100)},
+		})
+	}
+	_, err := coll.InsertMany(ctx, append(activeDocs, inactiveDocs...))
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	// Create a single-field index on "status".
+	idxModel := mongo.IndexModel{Keys: bson.D{{Key: "status", Value: 1}}}
+	if _, err := coll.Indexes().CreateOne(ctx, idxModel); err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	// Create a unique index on "username".
+	uniqModel := mongo.IndexModel{
+		Keys:    bson.D{{Key: "username", Value: 1}},
+		Options: options.Index().SetUnique(true),
+	}
+	if _, err := coll.Indexes().CreateOne(ctx, uniqModel); err != nil {
+		t.Fatalf("CreateIndex (unique): %v", err)
+	}
+
+	// Create a compound index on {status, score}.
+	compModel := mongo.IndexModel{Keys: bson.D{
+		{Key: "status", Value: 1},
+		{Key: "score", Value: 1},
+	}}
+	if _, err := coll.Indexes().CreateOne(ctx, compModel); err != nil {
+		t.Fatalf("CreateIndex (compound): %v", err)
+	}
+
+	t.Run("non-unique single-field equality", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "status", Value: "active"}})
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 100 {
+			t.Errorf("expected 100 active docs, got %d", len(results))
+		}
+		for _, r := range results {
+			if r["status"] != "active" {
+				t.Errorf("expected status=active, got %v", r["status"])
+			}
+		}
+	})
+
+	t.Run("$eq operator form", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "status", Value: bson.D{{Key: "$eq", Value: "inactive"}}}})
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 100 {
+			t.Errorf("expected 100 inactive docs, got %d", len(results))
+		}
+	})
+
+	t.Run("unique index equality", func(t *testing.T) {
+		result := coll.FindOne(ctx, bson.D{{Key: "username", Value: "active_user_42"}})
+		if result.Err() != nil {
+			t.Fatalf("FindOne: %v", result.Err())
+		}
+		var doc bson.M
+		if err := result.Decode(&doc); err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if doc["username"] != "active_user_42" {
+			t.Errorf("wrong doc: %v", doc)
+		}
+	})
+
+	t.Run("compound index full equality", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{
+			{Key: "status", Value: "active"},
+			{Key: "score", Value: int32(7)},
+		})
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 doc, got %d", len(results))
+		}
+		if len(results) == 1 && results[0]["username"] != "active_user_7" {
+			t.Errorf("wrong doc: %v", results[0])
+		}
+	})
+
+	t.Run("index with limit (early exit)", func(t *testing.T) {
+		opts := options.Find().SetLimit(10)
+		cursor, err := coll.Find(ctx, bson.D{{Key: "status", Value: "active"}}, opts)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 10 {
+			t.Errorf("expected 10 docs with limit=10, got %d", len(results))
+		}
+	})
+
+	t.Run("no match returns empty", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "status", Value: "deleted"}})
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 docs, got %d", len(results))
+		}
+	})
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
