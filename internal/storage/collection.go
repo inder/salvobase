@@ -207,8 +207,14 @@ func rawDocToD(doc bson.Raw) bson.D {
 
 func (c *bboltCollection) Find(filter bson.Raw, opts FindOptions) (Cursor, error) {
 	so := scanOpts{
-		limit:   opts.Limit,
 		hasSort: len(opts.Sort) > 0,
+	}
+	// When limit is set, pass a scan ceiling to scanFilter so it can stop early.
+	// When skip is also set, inflate the ceiling: scanFilter must collect
+	// limit+skip matching docs so that Find()'s post-scan skip has enough
+	// documents to discard before returning the real window.
+	if opts.Limit > 0 {
+		so.limit = opts.Limit + opts.Skip
 	}
 	docs, err := c.scanFilter(filter, opts.Projection, so)
 	if err != nil {
