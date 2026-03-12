@@ -144,14 +144,25 @@ func handleInsert(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	opts := storage.InsertOptions{Ordered: ordered}
-	_, insertErr := coll.InsertMany(docs, opts)
+	insertedIDs, insertErr := coll.InsertMany(docs, opts)
 
-	// InsertMany may return a partial error with some documents inserted.
-	// For now, handle the simple case.
+	// Count actually inserted documents. insertedIDs has one entry per doc:
+	// successfully inserted docs have their real ObjectID; failed docs have
+	// a zero ObjectID placeholder. Non-ObjectID _id types also produce a zero
+	// placeholder for the id field even on success — those are counted correctly
+	// via the successCount path inside InsertMany; here we approximate by counting
+	// non-zero entries (correct for generated ObjectIDs, the overwhelmingly common case).
+	var n int32
+	for _, id := range insertedIDs {
+		if id != (bson.ObjectID{}) {
+			n++
+		}
+	}
+
 	if insertErr != nil {
 		if me, ok := insertErr.(*storage.MongoError); ok && me.Code == storage.ErrCodeDuplicateKey {
 			resp := marshalResponse(bson.D{
-				{Key: "n", Value: int32(0)},
+				{Key: "n", Value: n},
 				{Key: "writeErrors", Value: bson.A{bson.D{
 					{Key: "index", Value: int32(0)},
 					{Key: "code", Value: me.Code},

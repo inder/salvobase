@@ -28,87 +28,126 @@ func (c *bboltCollection) InsertOne(doc bson.Raw) (bson.ObjectID, error) {
 	if err != nil {
 		return bson.ObjectID{}, err
 	}
+	if len(ids) == 0 {
+		return bson.ObjectID{}, fmt.Errorf("insertOne: no id returned")
+	}
 	return ids[0], nil
 }
 
+// preparedInsert holds a document that has been prepared (ID assigned, compressed)
+// and is ready to be written inside a bbolt transaction.
+type preparedInsert struct {
+	id         bson.ObjectID
+	key        []byte
+	finalDoc   bson.Raw
+	compressed []byte
+}
+
+// prepareInsertDoc assigns an _id (if missing), encodes the bbolt key, and compresses
+// the document. All of this work happens outside any transaction.
+func (c *bboltCollection) prepareInsertDoc(rawDoc bson.Raw) (preparedInsert, error) {
+	var p preparedInsert
+	idVal := rawDoc.Lookup("_id")
+	if idVal.Type == 0 || idVal.Type == bson.TypeNull {
+		p.id = bson.NewObjectID()
+		var err error
+		p.finalDoc, err = prependID(rawDoc, p.id)
+		if err != nil {
+			return preparedInsert{}, fmt.Errorf("prepareInsertDoc: prepend _id: %w", err)
+		}
+	} else {
+		if oid2, ok := idVal.ObjectIDOK(); ok {
+			p.id = oid2
+		}
+		p.finalDoc = rawDoc
+	}
+	p.key = encodeIDValue(p.finalDoc.Lookup("_id"))
+	var err error
+	p.compressed, err = c.engine.compress(p.finalDoc)
+	if err != nil {
+		return preparedInsert{}, fmt.Errorf("prepareInsertDoc: compress: %w", err)
+	}
+	return p, nil
+}
+
+// InsertMany inserts multiple documents in a single bbolt transaction.
+//
+// Behavioral note for ordered=true: when a duplicate-key error occurs at position N,
+// the entire batch (including documents 0..N-1) is rolled back. This differs from
+// MongoDB Community, which commits documents before the first error. For error-free
+// inserts (the common case) behavior is identical.
 func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bson.ObjectID, error) {
 	boltDB, err := c.engine.getDB(c.db)
 	if err != nil {
 		return nil, err
 	}
 
+	// Step 1: Prepare all documents outside the transaction (CPU work, no lock needed).
+	type docResult struct {
+		prep preparedInsert
+		err  error
+	}
+	results := make([]docResult, len(docs))
+	for i, rawDoc := range docs {
+		p, prepErr := c.prepareInsertDoc(rawDoc)
+		results[i] = docResult{prep: p, err: prepErr}
+		if prepErr != nil && opts.Ordered {
+			return nil, fmt.Errorf("insert at index %d: %w", i, prepErr)
+		}
+	}
+
+	// Step 2: Write all prepared documents in one transaction.
 	ids := make([]bson.ObjectID, 0, len(docs))
 	var insertErr error
+	var successCount int64
 
-	for i, rawDoc := range docs {
-		id, err := c.insertOne(boltDB, rawDoc)
-		if err != nil {
-			if opts.Ordered {
-				return ids, fmt.Errorf("insert at index %d: %w", i, err)
-			}
-			insertErr = err
-			ids = append(ids, bson.ObjectID{}) // placeholder
-			continue
-		}
-		ids = append(ids, id)
-	}
-	return ids, insertErr
-}
-
-func (c *bboltCollection) insertOne(boltDB *bolt.DB, rawDoc bson.Raw) (bson.ObjectID, error) {
-	// Determine _id
-	idVal := rawDoc.Lookup("_id")
-	var oid bson.ObjectID
-	var finalDoc bson.Raw
-
-	if idVal.Type == 0 || idVal.Type == bson.TypeNull {
-		// Generate new ObjectID
-		oid = bson.NewObjectID()
-		// Prepend _id to the document
-		var err error
-		finalDoc, err = prependID(rawDoc, oid)
-		if err != nil {
-			return bson.ObjectID{}, fmt.Errorf("insertOne: prepend _id: %w", err)
-		}
-	} else {
-		if oid2, ok := idVal.ObjectIDOK(); ok {
-			oid = oid2
-		}
-		finalDoc = rawDoc
-	}
-
-	key := encodeIDValue(finalDoc.Lookup("_id"))
-
-	compressed, err := c.engine.compress(finalDoc)
-	if err != nil {
-		return bson.ObjectID{}, fmt.Errorf("insertOne: compress: %w", err)
-	}
-
-	if err := boltDB.Update(func(tx *bolt.Tx) error {
+	txErr := boltDB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(collBucket(c.coll)))
 		if b == nil {
-			// Auto-create collection bucket
-			var err error
-			b, err = tx.CreateBucket([]byte(collBucket(c.coll)))
-			if err != nil {
-				return fmt.Errorf("insertOne: create bucket: %w", err)
+			var createErr error
+			b, createErr = tx.CreateBucket([]byte(collBucket(c.coll)))
+			if createErr != nil {
+				return fmt.Errorf("InsertMany: create bucket: %w", createErr)
 			}
 		}
-		if existing := b.Get(key); existing != nil {
-			return Errorf(ErrCodeDuplicateKey, "E11000 duplicate key error collection: %s.%s index: _id_ dup key: %v",
-				c.db, c.coll, idVal)
+		for i, r := range results {
+			if r.err != nil {
+				if opts.Ordered {
+					return fmt.Errorf("insert at index %d: %w", i, r.err)
+				}
+				insertErr = r.err
+				ids = append(ids, bson.ObjectID{})
+				continue
+			}
+			if existing := b.Get(r.prep.key); existing != nil {
+				idVal := r.prep.finalDoc.Lookup("_id")
+				dupErr := Errorf(ErrCodeDuplicateKey,
+					"E11000 duplicate key error collection: %s.%s index: _id_ dup key: %v",
+					c.db, c.coll, idVal)
+				if opts.Ordered {
+					return fmt.Errorf("insert at index %d: %w", i, dupErr)
+				}
+				insertErr = dupErr
+				ids = append(ids, bson.ObjectID{})
+				continue
+			}
+			if putErr := b.Put(r.prep.key, r.prep.compressed); putErr != nil {
+				return putErr
+			}
+			if idxErr := c.engine.insertIntoIndexes(tx, c.db, c.coll, r.prep.key, r.prep.finalDoc); idxErr != nil {
+				return idxErr
+			}
+			ids = append(ids, r.prep.id)
+			successCount++
 		}
-		if err := b.Put(key, compressed); err != nil {
-			return err
-		}
-		// Update secondary indexes
-		return c.engine.insertIntoIndexes(tx, c.db, c.coll, key, finalDoc)
-	}); err != nil {
-		return bson.ObjectID{}, err
+		return nil
+	})
+	if txErr != nil {
+		return ids, txErr
 	}
 
-	c.engine.opInsert.Add(1)
-	return oid, nil
+	c.engine.opInsert.Add(successCount)
+	return ids, insertErr
 }
 
 // prependID creates a new BSON document with _id as the first field.
