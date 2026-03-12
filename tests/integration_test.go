@@ -3313,6 +3313,112 @@ func TestIndexQueryPlanner(t *testing.T) {
 	})
 }
 
+// TestIndexQueryPlannerDescending exercises the descending index path in
+// encodeIndexField (dir < 0 branch) to ensure the bit-flip logic produces
+// consistent keys on both insert and query sides.
+func TestIndexQueryPlannerDescending(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("scores")
+	ctx := context.Background()
+
+	for i := 0; i < 20; i++ {
+		_, err := coll.InsertOne(ctx, bson.D{
+			{Key: "score", Value: int32(i)},
+			{Key: "label", Value: fmt.Sprintf("doc_%d", i)},
+		})
+		if err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+	}
+
+	// Create descending index on score.
+	idxModel := mongo.IndexModel{Keys: bson.D{{Key: "score", Value: -1}}}
+	if _, err := coll.Indexes().CreateOne(ctx, idxModel); err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	// Direct equality on a descending-indexed field.
+	result := coll.FindOne(ctx, bson.D{{Key: "score", Value: int32(7)}})
+	if result.Err() != nil {
+		t.Fatalf("FindOne: %v", result.Err())
+	}
+	var doc bson.M
+	if err := result.Decode(&doc); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if doc["label"] != "doc_7" {
+		t.Errorf("expected label=doc_7, got %v", doc["label"])
+	}
+
+	// $eq form on descending index.
+	cursor, err := coll.Find(ctx, bson.D{{Key: "score", Value: bson.D{{Key: "$eq", Value: int32(15)}}}})
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 1 || results[0]["label"] != "doc_15" {
+		t.Errorf("expected 1 doc with label=doc_15, got %v", results)
+	}
+}
+
+// TestIndexQueryPlannerPartialCompoundFallback verifies that a query with
+// equality on only the FIRST field of a two-field compound index correctly
+// falls back to a full collection scan (partial compound coverage is not
+// supported in v1) and still returns correct results.
+func TestIndexQueryPlannerPartialCompoundFallback(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("items")
+	ctx := context.Background()
+
+	for i := 0; i < 10; i++ {
+		_, err := coll.InsertOne(ctx, bson.D{
+			{Key: "category", Value: "books"},
+			{Key: "rank", Value: int32(i)},
+		})
+		if err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+	}
+	_, err := coll.InsertOne(ctx, bson.D{
+		{Key: "category", Value: "electronics"},
+		{Key: "rank", Value: int32(99)},
+	})
+	if err != nil {
+		t.Fatalf("InsertOne electronics: %v", err)
+	}
+
+	// Compound index on {category, rank}.
+	compModel := mongo.IndexModel{Keys: bson.D{
+		{Key: "category", Value: 1},
+		{Key: "rank", Value: 1},
+	}}
+	if _, err := coll.Indexes().CreateOne(ctx, compModel); err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	// Query only on "category" (partial coverage — must fall back to full scan).
+	// The result must still be correct regardless of which scan path was taken.
+	cursor, err := coll.Find(ctx, bson.D{{Key: "category", Value: "books"}})
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 10 {
+		t.Errorf("expected 10 books docs, got %d", len(results))
+	}
+	for _, r := range results {
+		if r["category"] != "books" {
+			t.Errorf("expected category=books, got %v", r["category"])
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
