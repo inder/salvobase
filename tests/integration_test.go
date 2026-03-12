@@ -343,6 +343,47 @@ func TestSortSkipLimit(t *testing.T) {
 	}
 }
 
+// TestSkipLimitNoSort verifies that skip+limit without a sort returns the correct
+// document window. This is a regression test for a bug where scanFilter's early-exit
+// optimisation would stop after `limit` matches before skip was applied, causing
+// paginated queries to return empty or incorrect results.
+func TestSkipLimitNoSort(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	// Insert 20 documents with n=0..19.
+	for i := 0; i < 20; i++ {
+		_, err := coll.InsertOne(ctx, bson.D{{Key: "n", Value: i}})
+		if err != nil {
+			t.Fatalf("InsertOne %d: %v", i, err)
+		}
+	}
+
+	// skip=10, limit=5, no sort → expect 5 docs (insertion order docs 10-14).
+	findOpts := options.Find().SetSkip(10).SetLimit(5)
+	cursor, err := coll.Find(ctx, bson.D{}, findOpts)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+
+	if len(results) != 5 {
+		t.Fatalf("skip+limit: expected 5 results, got %d", len(results))
+	}
+	// bbolt iterates in key order (ObjectID insertion order = n=10..14).
+	for i, r := range results {
+		got := int(r["n"].(int32))
+		want := 10 + i
+		if got != want {
+			t.Errorf("result[%d]: expected n=%d, got n=%d", i, want, got)
+		}
+	}
+}
+
 // ─── Aggregation ─────────────────────────────────────────────────────────────
 
 func TestAggregateMatch(t *testing.T) {
