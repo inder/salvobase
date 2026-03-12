@@ -206,7 +206,11 @@ func rawDocToD(doc bson.Raw) bson.D {
 // ─── Find ─────────────────────────────────────────────────────────────────────
 
 func (c *bboltCollection) Find(filter bson.Raw, opts FindOptions) (Cursor, error) {
-	docs, err := c.scanFilter(filter, opts.Projection)
+	so := scanOpts{
+		limit:   opts.Limit,
+		hasSort: len(opts.Sort) > 0,
+	}
+	docs, err := c.scanFilter(filter, opts.Projection, so)
 	if err != nil {
 		return nil, err
 	}
@@ -283,10 +287,18 @@ func extractIDEquality(filter bson.Raw) (bson.RawValue, bool) {
 	return v, true
 }
 
-// scanFilter does a full collection scan and applies filter + projection.
-// When the filter is a simple {_id: value} equality, it uses a direct key
-// lookup instead of scanning the entire collection.
-func (c *bboltCollection) scanFilter(filter bson.Raw, projection bson.Raw) ([]bson.Raw, error) {
+// scanOpts controls early-exit behaviour during a collection scan.
+// When limit > 0 and hasSort is false, the scan stops as soon as limit
+// matching documents have been collected, avoiding a full collection walk.
+type scanOpts struct {
+	limit   int64 // 0 = no limit
+	hasSort bool  // true = all docs must be visited to sort correctly
+}
+
+// scanFilter does a full (or limited) collection scan and applies filter + projection.
+// When the filter is a simple {_id: value} equality, it uses a direct key lookup.
+// When so.limit > 0 and so.hasSort is false, the scan stops after so.limit matches.
+func (c *bboltCollection) scanFilter(filter bson.Raw, projection bson.Raw, so scanOpts) ([]bson.Raw, error) {
 	boltDB, err := c.engine.getDB(c.db)
 	if err != nil {
 		return nil, err
@@ -354,9 +366,13 @@ func (c *bboltCollection) scanFilter(filter bson.Raw, projection bson.Raw) ([]bs
 			cp := make([]byte, len(doc))
 			copy(cp, doc)
 			docs = append(docs, bson.Raw(cp))
+			// Early exit: stop scanning once we have enough docs (only safe without a sort).
+			if !so.hasSort && so.limit > 0 && int64(len(docs)) >= so.limit {
+				return errStopIteration
+			}
 			return nil
 		})
-	}); err != nil {
+	}); err != nil && err != errStopIteration {
 		return nil, err
 	}
 	return docs, nil

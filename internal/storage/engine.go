@@ -877,6 +877,16 @@ func (e *BBoltEngine) decompress(data []byte) ([]byte, error) {
 	return decompress(data, e.compression)
 }
 
+// snappyDstPool holds reusable decode-destination buffers for snappy decompression.
+// snappy.Decode writes into the provided dst slice when it is large enough, avoiding
+// a new allocation on each call. The pool entry is updated when snappy grows it.
+var snappyDstPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 0, 8192)
+		return &b
+	},
+}
+
 func compress(data []byte, alg string) ([]byte, error) {
 	switch alg {
 	case "snappy":
@@ -889,7 +899,21 @@ func compress(data []byte, alg string) ([]byte, error) {
 func decompress(data []byte, alg string) ([]byte, error) {
 	switch alg {
 	case "snappy":
-		return snappy.Decode(nil, data)
+		dstPtr := snappyDstPool.Get().(*[]byte)
+		decoded, err := snappy.Decode(*dstPtr, data)
+		if err != nil {
+			snappyDstPool.Put(dstPtr)
+			return nil, err
+		}
+		// decoded may point into dstPtr's backing array (reused) or a new allocation
+		// if the compressed payload is larger than the pool buffer. Either way we must
+		// return a caller-owned copy because the pool buffer will be reused.
+		result := make([]byte, len(decoded))
+		copy(result, decoded)
+		// Update the pool entry so it grows over time to fit typical document sizes.
+		*dstPtr = decoded[:0]
+		snappyDstPool.Put(dstPtr)
+		return result, nil
 	default:
 		return data, nil
 	}
