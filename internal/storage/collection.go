@@ -28,6 +28,9 @@ func (c *bboltCollection) InsertOne(doc bson.Raw) (bson.ObjectID, error) {
 	if err != nil {
 		return bson.ObjectID{}, err
 	}
+	if len(ids) == 0 {
+		return bson.ObjectID{}, fmt.Errorf("insertOne: no id returned")
+	}
 	return ids[0], nil
 }
 
