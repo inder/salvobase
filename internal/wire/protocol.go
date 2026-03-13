@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -45,8 +46,24 @@ func readInt64(r io.Reader) (int64, error) {
 }
 
 // readCString reads a null-terminated UTF-8 string from r.
-// It reads one byte at a time until it finds the null terminator.
+// When r implements io.ByteReader (e.g. *bufio.Reader), it uses ReadByte()
+// to read from an internal buffer, avoiding one syscall per character.
+// Falls back to reading one byte at a time via io.ReadFull for plain readers.
 func readCString(r io.Reader) (string, error) {
+	if br, ok := r.(io.ByteReader); ok {
+		var result []byte
+		for {
+			b, err := br.ReadByte()
+			if err != nil {
+				return "", fmt.Errorf("readCString: %w", err)
+			}
+			if b == 0x00 {
+				break
+			}
+			result = append(result, b)
+		}
+		return string(result), nil
+	}
 	var result []byte
 	buf := make([]byte, 1)
 	for {
@@ -122,40 +139,45 @@ func ReadMessage(conn net.Conn) (interface{}, error) {
 	}
 
 	// Use an io.LimitedReader so individual parsers cannot read past the
-	// declared message boundary.
+	// declared message boundary, then wrap it in a bufio.Reader so that
+	// readCString and the fixed-width int readers pull from a 4 KiB in-memory
+	// buffer instead of making one syscall per byte / per field.
+	// The bufio.Reader also satisfies io.ByteReader, enabling the fast path in
+	// readCString that avoids the per-byte allocation.
 	lr := &io.LimitedReader{R: conn, N: int64(bodyLen)}
+	br := bufio.NewReaderSize(lr, 4096)
 
 	switch hdr.OpCode {
 	case OpMsg:
-		msg, err := readOpMsg(lr, hdr)
+		msg, err := readOpMsg(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_MSG: %w", err)
 		}
 		return msg, nil
 
 	case OpQuery:
-		msg, err := readOpQuery(lr, hdr)
+		msg, err := readOpQuery(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_QUERY: %w", err)
 		}
 		return msg, nil
 
 	case OpGetMore:
-		msg, err := readOpGetMore(lr, hdr)
+		msg, err := readOpGetMore(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_GETMORE: %w", err)
 		}
 		return msg, nil
 
 	case OpKillCursors:
-		msg, err := readOpKillCursors(lr, hdr)
+		msg, err := readOpKillCursors(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_KILL_CURSORS: %w", err)
 		}
 		return msg, nil
 
 	case OpDelete:
-		msg, err := readOpDelete(lr, hdr)
+		msg, err := readOpDelete(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_DELETE: %w", err)
 		}
