@@ -100,6 +100,22 @@ func readBSONDoc(r io.Reader) (bson.Raw, error) {
 	return bson.Raw(doc), nil
 }
 
+// hasRemainingBytes reports whether there are any unread bytes left in r.
+// Supports *bufio.Reader (via Peek) and *io.LimitedReader (via lr.N > 0).
+// Used by parsers to detect optional trailing fields (e.g. OP_QUERY's
+// returnFieldsSelector) without a direct type assertion on the reader type.
+func hasRemainingBytes(r io.Reader) bool {
+	type peeker interface{ Peek(int) ([]byte, error) }
+	switch v := r.(type) {
+	case *io.LimitedReader:
+		return v.N > 0
+	case peeker:
+		_, err := v.Peek(1)
+		return err == nil
+	}
+	return false
+}
+
 // ReadHeader reads and parses the 16-byte MongoDB message header from r.
 func ReadHeader(r io.Reader) (Header, error) {
 	var buf [HeaderSize]byte
@@ -149,7 +165,7 @@ func ReadMessage(conn net.Conn) (interface{}, error) {
 
 	switch hdr.OpCode {
 	case OpMsg:
-		msg, err := readOpMsg(br, hdr)
+		msg, err := readOpMsg(br, hdr, bodyLen)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_MSG: %w", err)
 		}
