@@ -747,7 +747,14 @@ func tryFastSetOnly(doc bson.Raw, update bson.Raw) (bson.Raw, bool) {
 	newVals := make(map[string]setVal, len(setElems))
 	for _, e := range setElems {
 		rv := e.Value()
-		newVals[e.Key()] = setVal{typ: byte(rv.Type), val: rv.Value}
+		// Copy rv.Value: it is a sub-slice of the update document, which may be
+		// a sub-slice of the wire-protocol read buffer. Holding a reference to it
+		// across the bbolt transaction (which outlives this call) is unsafe if the
+		// socket layer reuses the read buffer. A copy ensures the stored bytes are
+		// owned by this cursor and not affected by network I/O on the connection.
+		valCopy := make([]byte, len(rv.Value))
+		copy(valCopy, rv.Value)
+		newVals[e.Key()] = setVal{typ: byte(rv.Type), val: valCopy}
 	}
 
 	docElems, err := doc.Elements()
@@ -889,9 +896,10 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 		for _, item := range toUpdate {
 			newDoc, fastOK := tryFastSetOnly(item.doc, update)
 			if !fastOK {
-				newDoc, err = query.Apply(item.doc, update, false)
-				if err != nil {
-					return fmt.Errorf("apply update: %w", err)
+				var applyErr error
+				newDoc, applyErr = query.Apply(item.doc, update, false)
+				if applyErr != nil {
+					return fmt.Errorf("apply update: %w", applyErr)
 				}
 			}
 			newKey := encodeIDValue(newDoc.Lookup("_id"))
@@ -1439,7 +1447,10 @@ func (c *bboltCollection) findAndModify(
 		if replacement != nil {
 			newDoc, applyErr = prependIDRaw(replacement, target.doc.Lookup("_id"))
 		} else {
-			newDoc, applyErr = query.Apply(target.doc, update, false)
+			var fastOK bool
+			if newDoc, fastOK = tryFastSetOnly(target.doc, update); !fastOK {
+				newDoc, applyErr = query.Apply(target.doc, update, false)
+			}
 		}
 		if applyErr != nil {
 			return applyErr
