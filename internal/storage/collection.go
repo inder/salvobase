@@ -782,14 +782,16 @@ func tryFastSetOnly(doc bson.Raw, update bson.Raw) (bson.Raw, bool) {
 	}
 
 	// Append fields from $set that were not already in the document.
+	// Use newVals (which holds copied bytes) rather than setElems directly to
+	// avoid aliasing the wire-protocol read buffer (same hazard as above).
 	for _, e := range setElems {
 		key := e.Key()
 		if !usedKeys[key] {
-			rv := e.Value()
-			dst = append(dst, byte(rv.Type))
+			nv := newVals[key]
+			dst = append(dst, nv.typ)
 			dst = append(dst, []byte(key)...)
 			dst = append(dst, 0x00)
-			dst = append(dst, rv.Value...)
+			dst = append(dst, nv.val...)
 		}
 	}
 
