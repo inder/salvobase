@@ -164,7 +164,7 @@ storage:
   # One .db file per database is created here
   dataDir: "/var/lib/salvobase"
   # Document compression: none | snappy | zstd
-  compression: "snappy"
+  compression: "none"
   # Sync writes to disk before acknowledging (safer but ~30% slower)
   syncOnWrite: true
   # Maximum database file size in bytes (0 = unlimited)
@@ -209,7 +209,7 @@ replication:
 | `--bind_ip` | `0.0.0.0` | IP address to listen on |
 | `--maxConns` | `1000` | Maximum concurrent connections |
 | `--datadir` | `./data` | Directory for database files |
-| `--compression` | `snappy` | Document compression: `none`, `snappy`, `zstd` |
+| `--compression` | `none` | Document compression: `none`, `snappy`, `zstd` |
 | `--syncOnWrite` | `true` | Sync writes before acknowledging |
 | `--noauth` | `false` | Disable authentication (dev only) |
 | `--logLevel` | `info` | Log level: `debug`, `info`, `warn`, `error` |

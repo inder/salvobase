@@ -56,7 +56,7 @@ Improvements over MongoDB Community:
 
 	// Storage flags
 	cmd.Flags().StringVar(&cfg.DataDir, "datadir", "./data", "Directory for database files")
-	cmd.Flags().StringVar(&cfg.Compression, "compression", "snappy", "Document compression: none, snappy, zstd")
+	cmd.Flags().StringVar(&cfg.Compression, "compression", "none", "Document compression: none, snappy, zstd")
 	cmd.Flags().BoolVar(&cfg.SyncOnWrite, "syncOnWrite", true, "Sync writes to disk before acknowledging")
 
 	// Auth flags
