@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	bolt "go.etcd.io/bbolt"
@@ -757,6 +758,103 @@ var errStopIteration = fmt.Errorf("stop iteration")
 
 // ─── Update ───────────────────────────────────────────────────────────────────
 
+// tryFastSetOnly applies a {$set: {field: value, ...}} update without going
+// through the rawToD → applyOperators → dToRaw round-trip in query.Apply.
+//
+// It is eligible when:
+//   - the update document has exactly one operator key: "$set"
+//   - every field in the $set is top-level (no dots) and not "_id"
+//
+// If eligible, it rebuilds the BSON document in a single pass over the raw
+// bytes: existing elements are copied verbatim; set-targeted fields are
+// replaced in-place; new fields are appended. No bson.D is allocated.
+// Returns (newDoc, true) on success, (nil, false) when not applicable.
+func tryFastSetOnly(doc bson.Raw, update bson.Raw) (bson.Raw, bool) {
+	updateElems, err := update.Elements()
+	if err != nil || len(updateElems) != 1 || updateElems[0].Key() != "$set" {
+		return nil, false
+	}
+	if updateElems[0].Value().Type != bson.TypeEmbeddedDocument {
+		return nil, false
+	}
+	setDoc := updateElems[0].Value().Document()
+	setElems, err := setDoc.Elements()
+	if err != nil || len(setElems) == 0 {
+		return nil, false
+	}
+	for _, e := range setElems {
+		k := e.Key()
+		if k == "_id" || strings.IndexByte(k, '.') >= 0 {
+			return nil, false
+		}
+	}
+
+	// Build a lookup: field name → (type byte, raw value bytes).
+	type setVal struct {
+		typ byte
+		val []byte
+	}
+	newVals := make(map[string]setVal, len(setElems))
+	for _, e := range setElems {
+		rv := e.Value()
+		// Copy rv.Value: it is a sub-slice of the update document, which may be
+		// a sub-slice of the wire-protocol read buffer. Holding a reference to it
+		// across the bbolt transaction (which outlives this call) is unsafe if the
+		// socket layer reuses the read buffer. A copy ensures the stored bytes are
+		// owned by this cursor and not affected by network I/O on the connection.
+		valCopy := make([]byte, len(rv.Value))
+		copy(valCopy, rv.Value)
+		newVals[e.Key()] = setVal{typ: byte(rv.Type), val: valCopy}
+	}
+
+	docElems, err := doc.Elements()
+	if err != nil {
+		return nil, false
+	}
+
+	// Allocate output: existing doc length + headroom for any new fields.
+	dst := make([]byte, 4, len(doc)+len(setDoc))
+
+	usedKeys := make(map[string]bool, len(setElems))
+	for _, e := range docElems {
+		key := e.Key()
+		if nv, ok := newVals[key]; ok {
+			usedKeys[key] = true
+			// Emit updated value for this field.
+			dst = append(dst, nv.typ)
+			dst = append(dst, []byte(key)...)
+			dst = append(dst, 0x00)
+			dst = append(dst, nv.val...)
+		} else {
+			// Copy existing element verbatim (type + cstring key + value).
+			dst = append(dst, []byte(e)...)
+		}
+	}
+
+	// Append fields from $set that were not already in the document.
+	// Use newVals (which holds copied bytes) rather than setElems directly to
+	// avoid aliasing the wire-protocol read buffer (same hazard as above).
+	for _, e := range setElems {
+		key := e.Key()
+		if !usedKeys[key] {
+			nv := newVals[key]
+			dst = append(dst, nv.typ)
+			dst = append(dst, []byte(key)...)
+			dst = append(dst, 0x00)
+			dst = append(dst, nv.val...)
+		}
+	}
+
+	dst = append(dst, 0x00) // BSON document null terminator
+	n := uint32(len(dst))
+	dst[0] = byte(n)
+	dst[1] = byte(n >> 8)
+	dst[2] = byte(n >> 16)
+	dst[3] = byte(n >> 24)
+
+	return bson.Raw(dst), true
+}
+
 func (c *bboltCollection) UpdateOne(filter, update bson.Raw, opts UpdateOptions) (UpdateResult, error) {
 	return c.updateDocs(filter, update, opts, false)
 }
@@ -848,9 +946,13 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 
 		result.MatchedCount = int64(len(toUpdate))
 		for _, item := range toUpdate {
-			newDoc, err := query.Apply(item.doc, update, false)
-			if err != nil {
-				return fmt.Errorf("apply update: %w", err)
+			newDoc, fastOK := tryFastSetOnly(item.doc, update)
+			if !fastOK {
+				var applyErr error
+				newDoc, applyErr = query.Apply(item.doc, update, false)
+				if applyErr != nil {
+					return fmt.Errorf("apply update: %w", applyErr)
+				}
 			}
 			newKey := encodeIDValue(newDoc.Lookup("_id"))
 			compressed, err := c.engine.compress(newDoc)
@@ -1397,7 +1499,10 @@ func (c *bboltCollection) findAndModify(
 		if replacement != nil {
 			newDoc, applyErr = prependIDRaw(replacement, target.doc.Lookup("_id"))
 		} else {
-			newDoc, applyErr = query.Apply(target.doc, update, false)
+			var fastOK bool
+			if newDoc, fastOK = tryFastSetOnly(target.doc, update); !fastOK {
+				newDoc, applyErr = query.Apply(target.doc, update, false)
+			}
 		}
 		if applyErr != nil {
 			return applyErr
