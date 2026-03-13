@@ -1514,7 +1514,7 @@ func (c *bboltScanCursor) ID() int64 {
 	return c.id
 }
 
-func (c *bboltScanCursor) NextBatch(batchSize int) ([]bson.Raw, bool, error) {
+func (c *bboltScanCursor) NextBatch(batchSize int) (docs []bson.Raw, exhausted bool, retErr error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1522,9 +1522,25 @@ func (c *bboltScanCursor) NextBatch(batchSize int) ([]bson.Raw, bool, error) {
 		return nil, true, nil
 	}
 
-	var docs []bson.Raw
-	var k, v []byte
+	// Guard against callers passing batchSize=0, which would disable the
+	// per-batch ceiling and scan the entire collection in one call, defeating
+	// the streaming goal. Default to 101 (MongoDB's standard first-batch size).
+	if batchSize <= 0 {
+		batchSize = 101
+	}
 
+	// Release the read transaction on any error or natural exhaustion.
+	// Named returns let the defer inspect retErr set by error paths.
+	defer func() {
+		if retErr != nil || c.exhausted {
+			if c.tx != nil {
+				c.tx.Rollback() //nolint:errcheck
+				c.tx = nil
+			}
+		}
+	}()
+
+	var k, v []byte
 	if !c.started {
 		c.started = true
 		k, v = c.cur.First()
@@ -1568,7 +1584,7 @@ func (c *bboltScanCursor) NextBatch(batchSize int) ([]bson.Raw, bool, error) {
 		}
 		// Break without advancing: the next NextBatch call begins with cur.Next()
 		// to move past this key before processing the next batch.
-		if batchSize > 0 && len(docs) >= batchSize {
+		if len(docs) >= batchSize {
 			break
 		}
 		k, v = c.cur.Next()
@@ -1576,10 +1592,6 @@ func (c *bboltScanCursor) NextBatch(batchSize int) ([]bson.Raw, bool, error) {
 
 	if k == nil {
 		c.exhausted = true
-	}
-	if c.exhausted {
-		c.tx.Rollback() //nolint:errcheck
-		c.tx = nil
 	}
 	return docs, c.exhausted, nil
 }
