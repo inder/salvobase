@@ -26,6 +26,9 @@ type DocumentSeq struct {
 }
 
 // readOpMsg parses an OP_MSG body from r. The header has already been read.
+// bodyLen is the total message body length in bytes (hdr.MessageLength -
+// HeaderSize); it is used to bound section parsing without asserting on the
+// concrete reader type (which may be a *bufio.Reader).
 //
 // Wire layout after the 16-byte header:
 //
@@ -36,10 +39,6 @@ type DocumentSeq struct {
 //
 //	0 → Body section: one BSON document
 //	1 → Document Sequence: int32 size, cstring identifier, BSON docs
-// readOpMsg parses an OP_MSG body from r. bodyLen is the total message body
-// length in bytes (hdr.MessageLength - HeaderSize); it is used to bound section
-// parsing without asserting on the concrete reader type, which may be a
-// *bufio.Reader rather than a *io.LimitedReader after the buffered-reads PR.
 func readOpMsg(r io.Reader, hdr Header, bodyLen int) (*OpMsgMessage, error) {
 	msg := &OpMsgMessage{Hdr: hdr}
 
