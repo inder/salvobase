@@ -603,7 +603,7 @@ Within each bbolt database:
 ```
 Bucket "col.<collectionName>"
     Key: _id (12-byte ObjectID or user-provided key bytes)
-    Value: BSON document (optionally snappy-compressed)
+    Value: BSON document (optionally compressed: snappy or zstd; default: none)
 
 Bucket "idx.<collectionName>.<indexName>"
     Key: <indexed value bytes> + <_id bytes>
