@@ -17,7 +17,7 @@ storage:
   # Directory for database files (one .db file per database)
   dataDir: "/var/lib/mongoclone"
   # Document compression: none, snappy, zstd
-  compression: "snappy"
+  compression: "none"
   # Sync writes to disk before acknowledging (safer but slower)
   syncOnWrite: true
   # Maximum database file size in bytes (0 = unlimited)
