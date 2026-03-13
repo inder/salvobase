@@ -899,7 +899,11 @@ func compress(data []byte, alg string) ([]byte, error) {
 func decompress(data []byte, alg string) ([]byte, error) {
 	switch alg {
 	case "snappy":
-		dstPtr := snappyDstPool.Get().(*[]byte)
+		dstPtr, ok := snappyDstPool.Get().(*[]byte)
+		if !ok || dstPtr == nil {
+			empty := make([]byte, 0, len(data))
+			dstPtr = &empty
+		}
 		decoded, err := snappy.Decode(*dstPtr, data)
 		if err != nil {
 			snappyDstPool.Put(dstPtr)

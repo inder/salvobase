@@ -306,7 +306,7 @@ func (c *bboltCollection) Find(filter bson.Raw, opts FindOptions) (Cursor, error
 
 	// Full collection scan: streaming cursor keeps the tx open and pages
 	// through the bucket on NextBatch calls. Only one batch worth of documents
-	// is materialised in memory at a time.
+	// is materialized in memory at a time.
 	collB := tx.Bucket([]byte(collBucket(c.coll)))
 	if collB == nil {
 		tx.Rollback() //nolint:errcheck
@@ -640,7 +640,7 @@ func (c *bboltCollection) collectionScanTx(tx *bolt.Tx, filter bson.Raw, project
 	return docs, nil
 }
 
-// scanOpts controls early-exit behaviour during a collection scan.
+// scanOpts controls early-exit behavior during a collection scan.
 // When limit > 0 and hasSort is false, the scan stops as soon as limit
 // matching documents have been collected, avoiding a full collection walk.
 type scanOpts struct {
