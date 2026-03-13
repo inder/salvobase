@@ -100,6 +100,43 @@ func readBSONDoc(r io.Reader) (bson.Raw, error) {
 	return bson.Raw(doc), nil
 }
 
+// boundedBufReader wraps a *bufio.Reader with a remaining-byte counter,
+// implementing both io.Reader and io.ByteReader.  It is used inside OP_MSG
+// section parsing so that readCString's io.ByteReader fast path (which avoids
+// per-byte allocation) stays active even when sections are bounded to a
+// sub-slice of the message body.
+//
+// Unlike io.LimitedReader, which does NOT implement io.ByteReader, this type
+// forwards ReadByte() directly to the underlying bufio.Reader and decrements
+// the counter itself, keeping reads in the buffer and off the network.
+type boundedBufReader struct {
+	r *bufio.Reader
+	n int64 // bytes remaining in this section
+}
+
+func (b *boundedBufReader) Read(p []byte) (int, error) {
+	if b.n <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > b.n {
+		p = p[:b.n]
+	}
+	n, err := b.r.Read(p)
+	b.n -= int64(n)
+	return n, err
+}
+
+func (b *boundedBufReader) ReadByte() (byte, error) {
+	if b.n <= 0 {
+		return 0, io.EOF
+	}
+	c, err := b.r.ReadByte()
+	if err == nil {
+		b.n--
+	}
+	return c, err
+}
+
 // hasRemainingBytes reports whether there are any unread bytes left in r.
 // Supports *bufio.Reader (via Peek) and *io.LimitedReader (via lr.N > 0).
 // Used by parsers to detect optional trailing fields (e.g. OP_QUERY's

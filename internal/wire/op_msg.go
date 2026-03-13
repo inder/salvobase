@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -69,9 +70,17 @@ func readOpMsg(r io.Reader, hdr Header, bodyLen int) (*OpMsgMessage, error) {
 	// that case we fall through to the EOF-driven loop termination below.
 
 	// Build a reader that is limited to section bytes only.
+	// Use boundedBufReader (rather than io.LimitedReader) so that the
+	// underlying *bufio.Reader's io.ByteReader interface is preserved,
+	// keeping readCString on the fast path (no per-byte allocation) inside
+	// OP_MSG section parsing.
 	var sectionReader io.Reader
 	if sectionBytes > 0 {
-		sectionReader = &io.LimitedReader{R: r, N: sectionBytes}
+		if br, ok := r.(*bufio.Reader); ok {
+			sectionReader = &boundedBufReader{r: br, n: sectionBytes}
+		} else {
+			sectionReader = &io.LimitedReader{R: r, N: sectionBytes}
+		}
 	} else {
 		// No explicit bound — rely on EOF from the underlying reader.
 		sectionReader = r
