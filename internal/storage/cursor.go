@@ -24,8 +24,13 @@ type cursorEntry struct {
 func (s *cursorStore) Register(c Cursor) int64 {
 	id := s.nextID.Add(1)
 
-	// Update the cursor's internal id if it's a sliceCursor
-	if sc, ok := c.(*sliceCursor); ok {
+	// Update the cursor's internal id field so ID() reflects the assigned value.
+	switch sc := c.(type) {
+	case *sliceCursor:
+		sc.mu.Lock()
+		sc.id = id
+		sc.mu.Unlock()
+	case *bboltScanCursor:
 		sc.mu.Lock()
 		sc.id = id
 		sc.mu.Unlock()

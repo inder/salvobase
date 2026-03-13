@@ -247,52 +247,102 @@ func rawDocToD(doc bson.Raw) bson.D {
 // ─── Find ─────────────────────────────────────────────────────────────────────
 
 func (c *bboltCollection) Find(filter bson.Raw, opts FindOptions) (Cursor, error) {
-	so := scanOpts{
-		hasSort: len(opts.Sort) > 0,
+	hasSort := len(opts.Sort) > 0
+
+	// Sort or _id-equality queries use the existing eager path:
+	//  - Sort requires all matching docs in memory before ordering.
+	//  - _id equality is already an O(log N) point-lookup; streaming adds no benefit.
+	if hasSort || isIDEquality(filter) {
+		so := scanOpts{hasSort: hasSort}
+		if opts.Limit > 0 {
+			so.limit = opts.Limit + opts.Skip
+		}
+		docs, err := c.scanFilter(filter, opts.Projection, so)
+		if err != nil {
+			return nil, err
+		}
+		if hasSort {
+			sortFn, err := query.SortFunc(opts.Sort)
+			if err != nil {
+				return nil, fmt.Errorf("find: sort: %w", err)
+			}
+			sort.SliceStable(docs, func(i, j int) bool {
+				return sortFn(docs[i], docs[j]) < 0
+			})
+		}
+		docs = applySkipLimit(docs, opts.Skip, opts.Limit)
+		c.engine.opQuery.Add(1)
+		return &sliceCursor{docs: docs, engine: c.engine}, nil
 	}
-	// When limit is set, pass a scan ceiling to scanFilter so it can stop early.
-	// When skip is also set, inflate the ceiling: scanFilter must collect
-	// limit+skip matching docs so that Find()'s post-scan skip has enough
-	// documents to discard before returning the real window.
-	if opts.Limit > 0 {
-		so.limit = opts.Limit + opts.Skip
+
+	// No sort. Open a manual bbolt read transaction to: (a) check for an
+	// applicable secondary index (eager, then roll back), or (b) hand a
+	// streaming cursor to the caller that pages through the collection on
+	// demand across getMore calls (holds the tx open as an MVCC snapshot).
+	boltDB, err := c.engine.getDB(c.db)
+	if err != nil {
+		return nil, err
 	}
-	docs, err := c.scanFilter(filter, opts.Projection, so)
+	tx, err := boltDB.Begin(false)
 	if err != nil {
 		return nil, err
 	}
 
-	// Apply sort
-	if len(opts.Sort) > 0 {
-		sortFn, err := query.SortFunc(opts.Sort)
-		if err != nil {
-			return nil, fmt.Errorf("find: sort: %w", err)
+	if spec, prefixKey, ok := c.chooseIndex(tx, filter); ok {
+		so := scanOpts{}
+		if opts.Limit > 0 {
+			so.limit = opts.Limit + opts.Skip
 		}
-		sort.SliceStable(docs, func(i, j int) bool {
-			return sortFn(docs[i], docs[j]) < 0
-		})
-	}
-
-	// Apply skip
-	if opts.Skip > 0 {
-		if opts.Skip >= int64(len(docs)) {
-			docs = docs[:0]
-		} else {
-			docs = docs[opts.Skip:]
+		docs, scanErr := c.indexScanTx(tx, spec, prefixKey, filter, opts.Projection, so)
+		tx.Rollback() //nolint:errcheck
+		if scanErr != nil {
+			return nil, scanErr
 		}
+		docs = applySkipLimit(docs, opts.Skip, opts.Limit)
+		c.engine.opQuery.Add(1)
+		return &sliceCursor{docs: docs, engine: c.engine}, nil
 	}
 
-	// Apply limit
-	if opts.Limit > 0 && int64(len(docs)) > opts.Limit {
-		docs = docs[:opts.Limit]
+	// Full collection scan: streaming cursor keeps the tx open and pages
+	// through the bucket on NextBatch calls. Only one batch worth of documents
+	// is materialised in memory at a time.
+	collB := tx.Bucket([]byte(collBucket(c.coll)))
+	if collB == nil {
+		tx.Rollback() //nolint:errcheck
+		c.engine.opQuery.Add(1)
+		return &sliceCursor{engine: c.engine}, nil
 	}
-
-	cur := &sliceCursor{
-		docs:   docs,
-		engine: c.engine,
+	sc := &bboltScanCursor{
+		tx:         tx,
+		cur:        collB.Cursor(),
+		filter:     filter,
+		projection: opts.Projection,
+		engine:     c.engine,
+		skip:       opts.Skip,
+		limit:      opts.Limit,
 	}
 	c.engine.opQuery.Add(1)
-	return cur, nil
+	return sc, nil
+}
+
+// isIDEquality reports whether filter is a single {_id: <scalar>} equality.
+func isIDEquality(filter bson.Raw) bool {
+	_, ok := extractIDEquality(filter)
+	return ok
+}
+
+// applySkipLimit trims a slice of documents according to skip and limit.
+func applySkipLimit(docs []bson.Raw, skip, limit int64) []bson.Raw {
+	if skip > 0 {
+		if skip >= int64(len(docs)) {
+			return docs[:0]
+		}
+		docs = docs[skip:]
+	}
+	if limit > 0 && int64(len(docs)) > limit {
+		docs = docs[:limit]
+	}
+	return docs
 }
 
 func (c *bboltCollection) FindOne(filter bson.Raw, opts FindOptions) (bson.Raw, error) {
@@ -1424,5 +1474,135 @@ func (c *sliceCursor) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pos = len(c.docs) // mark exhausted
+	return nil
+}
+
+// ─── Cursor (bboltScanCursor) ─────────────────────────────────────────────────
+
+// bboltScanCursor is a streaming cursor for full collection scans.
+// It holds an open bbolt read-only transaction and pages through the bucket
+// on successive NextBatch calls. Only one batch worth of documents is live in
+// memory at a time, making it suitable for large collections.
+//
+// Lifecycle: Find() opens boltDB.Begin(false) and hands ownership to this
+// cursor. The transaction is rolled back (released) when either:
+//   - the scan is exhausted (k == nil or limit reached), or
+//   - Close() is called explicitly (e.g. cursor eviction, client disconnect).
+//
+// Invariant: when started=true and exhausted=false, cur is positioned at the
+// last key returned to the caller. The next NextBatch call advances with
+// cur.Next() before processing.
+type bboltScanCursor struct {
+	id         int64
+	mu         sync.Mutex
+	tx         *bolt.Tx     // nil after Close or natural exhaustion
+	cur        *bolt.Cursor // positioned within tx; valid while tx != nil
+	filter     bson.Raw
+	projection bson.Raw
+	engine     *BBoltEngine
+	skip       int64
+	limit      int64
+	skipped    int64
+	returned   int64
+	started    bool
+	exhausted  bool
+}
+
+func (c *bboltScanCursor) ID() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.id
+}
+
+func (c *bboltScanCursor) NextBatch(batchSize int) (docs []bson.Raw, exhausted bool, retErr error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.exhausted || c.tx == nil {
+		return nil, true, nil
+	}
+
+	// Guard against callers passing batchSize=0, which would disable the
+	// per-batch ceiling and scan the entire collection in one call, defeating
+	// the streaming goal. Default to 101 (MongoDB's standard first-batch size).
+	if batchSize <= 0 {
+		batchSize = 101
+	}
+
+	// Release the read transaction on any error or natural exhaustion.
+	// Named returns let the defer inspect retErr set by error paths.
+	defer func() {
+		if retErr != nil || c.exhausted {
+			if c.tx != nil {
+				c.tx.Rollback() //nolint:errcheck
+				c.tx = nil
+			}
+		}
+	}()
+
+	var k, v []byte
+	if !c.started {
+		c.started = true
+		k, v = c.cur.First()
+	} else {
+		k, v = c.cur.Next()
+	}
+
+	for k != nil {
+		raw, err := c.engine.decompress(v)
+		if err != nil {
+			return nil, false, err
+		}
+		doc := bson.Raw(raw)
+		match, err := query.Filter(doc, c.filter)
+		if err != nil {
+			return nil, false, err
+		}
+		if !match {
+			k, v = c.cur.Next()
+			continue
+		}
+		if c.skipped < c.skip {
+			c.skipped++
+			k, v = c.cur.Next()
+			continue
+		}
+		if len(c.projection) > 0 {
+			doc, err = query.Project(doc, c.projection)
+			if err != nil {
+				return nil, false, err
+			}
+		}
+		cp := make([]byte, len(doc))
+		copy(cp, doc)
+		docs = append(docs, bson.Raw(cp))
+		c.returned++
+
+		if c.limit > 0 && c.returned >= c.limit {
+			c.exhausted = true
+			break
+		}
+		// Break without advancing: the next NextBatch call begins with cur.Next()
+		// to move past this key before processing the next batch.
+		if len(docs) >= batchSize {
+			break
+		}
+		k, v = c.cur.Next()
+	}
+
+	if k == nil {
+		c.exhausted = true
+	}
+	return docs, c.exhausted, nil
+}
+
+func (c *bboltScanCursor) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.tx != nil {
+		err := c.tx.Rollback()
+		c.tx = nil
+		return err
+	}
 	return nil
 }
