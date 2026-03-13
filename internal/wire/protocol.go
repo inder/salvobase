@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -45,8 +46,24 @@ func readInt64(r io.Reader) (int64, error) {
 }
 
 // readCString reads a null-terminated UTF-8 string from r.
-// It reads one byte at a time until it finds the null terminator.
+// When r implements io.ByteReader (e.g. *bufio.Reader), it uses ReadByte()
+// to read from an internal buffer, avoiding one syscall per character.
+// Falls back to reading one byte at a time via io.ReadFull for plain readers.
 func readCString(r io.Reader) (string, error) {
+	if br, ok := r.(io.ByteReader); ok {
+		var result []byte
+		for {
+			b, err := br.ReadByte()
+			if err != nil {
+				return "", fmt.Errorf("readCString: %w", err)
+			}
+			if b == 0x00 {
+				break
+			}
+			result = append(result, b)
+		}
+		return string(result), nil
+	}
 	var result []byte
 	buf := make([]byte, 1)
 	for {
@@ -81,6 +98,59 @@ func readBSONDoc(r io.Reader) (bson.Raw, error) {
 		return nil, fmt.Errorf("readBSONDoc body: %w", err)
 	}
 	return bson.Raw(doc), nil
+}
+
+// boundedBufReader wraps a *bufio.Reader with a remaining-byte counter,
+// implementing both io.Reader and io.ByteReader.  It is used inside OP_MSG
+// section parsing so that readCString's io.ByteReader fast path (which avoids
+// per-byte allocation) stays active even when sections are bounded to a
+// sub-slice of the message body.
+//
+// Unlike io.LimitedReader, which does NOT implement io.ByteReader, this type
+// forwards ReadByte() directly to the underlying bufio.Reader and decrements
+// the counter itself, keeping reads in the buffer and off the network.
+type boundedBufReader struct {
+	r *bufio.Reader
+	n int64 // bytes remaining in this section
+}
+
+func (b *boundedBufReader) Read(p []byte) (int, error) {
+	if b.n <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > b.n {
+		p = p[:b.n]
+	}
+	n, err := b.r.Read(p)
+	b.n -= int64(n)
+	return n, err
+}
+
+func (b *boundedBufReader) ReadByte() (byte, error) {
+	if b.n <= 0 {
+		return 0, io.EOF
+	}
+	c, err := b.r.ReadByte()
+	if err == nil {
+		b.n--
+	}
+	return c, err
+}
+
+// hasRemainingBytes reports whether there are any unread bytes left in r.
+// Supports *bufio.Reader (via Peek) and *io.LimitedReader (via lr.N > 0).
+// Used by parsers to detect optional trailing fields (e.g. OP_QUERY's
+// returnFieldsSelector) without a direct type assertion on the reader type.
+func hasRemainingBytes(r io.Reader) bool {
+	type peeker interface{ Peek(int) ([]byte, error) }
+	switch v := r.(type) {
+	case *io.LimitedReader:
+		return v.N > 0
+	case peeker:
+		_, err := v.Peek(1)
+		return err == nil
+	}
+	return false
 }
 
 // ReadHeader reads and parses the 16-byte MongoDB message header from r.
@@ -122,40 +192,45 @@ func ReadMessage(conn net.Conn) (interface{}, error) {
 	}
 
 	// Use an io.LimitedReader so individual parsers cannot read past the
-	// declared message boundary.
+	// declared message boundary, then wrap it in a bufio.Reader so that
+	// readCString and the fixed-width int readers pull from a 4 KiB in-memory
+	// buffer instead of making one syscall per byte / per field.
+	// The bufio.Reader also satisfies io.ByteReader, enabling the fast path in
+	// readCString that avoids the per-byte allocation.
 	lr := &io.LimitedReader{R: conn, N: int64(bodyLen)}
+	br := bufio.NewReaderSize(lr, 4096)
 
 	switch hdr.OpCode {
 	case OpMsg:
-		msg, err := readOpMsg(lr, hdr)
+		msg, err := readOpMsg(br, hdr, bodyLen)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_MSG: %w", err)
 		}
 		return msg, nil
 
 	case OpQuery:
-		msg, err := readOpQuery(lr, hdr)
+		msg, err := readOpQuery(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_QUERY: %w", err)
 		}
 		return msg, nil
 
 	case OpGetMore:
-		msg, err := readOpGetMore(lr, hdr)
+		msg, err := readOpGetMore(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_GETMORE: %w", err)
 		}
 		return msg, nil
 
 	case OpKillCursors:
-		msg, err := readOpKillCursors(lr, hdr)
+		msg, err := readOpKillCursors(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_KILL_CURSORS: %w", err)
 		}
 		return msg, nil
 
 	case OpDelete:
-		msg, err := readOpDelete(lr, hdr)
+		msg, err := readOpDelete(br, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_DELETE: %w", err)
 		}

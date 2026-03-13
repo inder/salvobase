@@ -1,6 +1,7 @@
 package wire
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -35,7 +36,11 @@ type DocumentSeq struct {
 //
 //	0 → Body section: one BSON document
 //	1 → Document Sequence: int32 size, cstring identifier, BSON docs
-func readOpMsg(r io.Reader, hdr Header) (*OpMsgMessage, error) {
+// readOpMsg parses an OP_MSG body from r. bodyLen is the total message body
+// length in bytes (hdr.MessageLength - HeaderSize); it is used to bound section
+// parsing without asserting on the concrete reader type, which may be a
+// *bufio.Reader rather than a *io.LimitedReader after the buffered-reads PR.
+func readOpMsg(r io.Reader, hdr Header, bodyLen int) (*OpMsgMessage, error) {
 	msg := &OpMsgMessage{Hdr: hdr}
 
 	flagBits, err := readUint32(r)
@@ -50,22 +55,32 @@ func readOpMsg(r io.Reader, hdr Header) (*OpMsgMessage, error) {
 	checksumPresent := (flagBits & MsgFlagChecksumPresent) != 0
 
 	// Determine how many bytes are available for sections.
-	// When the checksum flag is set we must leave the last 4 bytes for the
-	// CRC-32C trailer and not pass them to the section parser.
-	var sectionBytes int64
-	if lr, ok := r.(*io.LimitedReader); ok {
-		sectionBytes = lr.N
-		if checksumPresent {
-			sectionBytes -= 4
-		}
+	// bodyLen is the total body (after the 16-byte header). Subtract flagBits
+	// (already consumed, 4 bytes) and the optional CRC trailer (4 bytes).
+	// Derived arithmetically instead of inspecting lr.N so this works with any
+	// reader type (including *bufio.Reader).
+	sectionBytes := int64(bodyLen) - 4 // subtract flagBits already consumed
+	if checksumPresent {
+		sectionBytes -= 4
 	}
-	// sectionBytes == 0 means we got a bare reader (unit tests, etc.); in that
-	// case we fall through to the EOF-driven loop termination below.
+	if sectionBytes < 0 {
+		sectionBytes = 0
+	}
+	// sectionBytes == 0 means malformed or bare-reader (unit tests, etc.); in
+	// that case we fall through to the EOF-driven loop termination below.
 
 	// Build a reader that is limited to section bytes only.
+	// Use boundedBufReader (rather than io.LimitedReader) so that the
+	// underlying *bufio.Reader's io.ByteReader interface is preserved,
+	// keeping readCString on the fast path (no per-byte allocation) inside
+	// OP_MSG section parsing.
 	var sectionReader io.Reader
 	if sectionBytes > 0 {
-		sectionReader = &io.LimitedReader{R: r, N: sectionBytes}
+		if br, ok := r.(*bufio.Reader); ok {
+			sectionReader = &boundedBufReader{r: br, n: sectionBytes}
+		} else {
+			sectionReader = &io.LimitedReader{R: r, N: sectionBytes}
+		}
 	} else {
 		// No explicit bound — rely on EOF from the underlying reader.
 		sectionReader = r

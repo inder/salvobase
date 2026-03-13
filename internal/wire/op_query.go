@@ -65,8 +65,9 @@ func readOpQuery(r io.Reader, hdr Header) (*OpQueryMessage, error) {
 	msg.Query = query
 
 	// returnFieldsSelector is optional — present only when bytes remain in the
-	// message. We detect this by peeking at the LimitedReader's remaining count.
-	if lr, ok := r.(*io.LimitedReader); ok && lr.N > 0 {
+	// message. hasRemainingBytes works with both *bufio.Reader (via Peek) and
+	// *io.LimitedReader (via lr.N), so this survives the buffered-reads PR.
+	if hasRemainingBytes(r) {
 		selector, err := readBSONDoc(r)
 		if err != nil {
 			return nil, fmt.Errorf("readOpQuery returnFieldsSelector: %w", err)
