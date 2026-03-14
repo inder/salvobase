@@ -31,6 +31,12 @@ mongosh mongodb://localhost:27017
 client, _ := mongo.Connect(options.Client().ApplyURI("mongodb://localhost:27017"))
 ```
 
+## Benchmarks
+
+Live results vs MongoDB Community: [inder.github.io/salvobase/benchmarks](https://inder.github.io/salvobase/benchmarks/)
+
+Nightly go-ycsb runs (workloads A–F) committed to [`benchmarks/`](benchmarks/). Rolling 30-day median reported.
+
 ## Improvements Over MongoDB Community
 
 | Feature | MongoDB Community | Salvobase |
