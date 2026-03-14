@@ -59,7 +59,11 @@ jobs:
           done
 
       - name: Install go-ycsb
-        run: go install github.com/pingcap/go-ycsb/cmd/go-ycsb@latest
+        run: |
+          # go install fails because go-ycsb uses replace directives in go.mod.
+          # Clone and build from source instead.
+          git clone --depth=1 https://github.com/pingcap/go-ycsb.git /tmp/go-ycsb
+          cd /tmp/go-ycsb && go build -o /usr/local/bin/go-ycsb ./cmd/go-ycsb
 
       - name: Run benchmarks
         run: |
