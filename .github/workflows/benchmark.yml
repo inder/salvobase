@@ -8,6 +8,12 @@ on:
 permissions:
   contents: write   # needed to commit results back
 
+env:
+  # Reduced from 100k — CI runners are shared, 100k records × 2 dbs × 24 combos = hours.
+  # 10k records still produces statistically meaningful ratios.
+  RECORD_COUNT: "10000"
+  OPERATION_COUNT: "10000"
+
 jobs:
   benchmark:
     runs-on: ubuntu-latest
@@ -75,31 +81,49 @@ jobs:
             for THREADS in 1 4 8 16; do
               echo "--- Workload ${WORKLOAD} / ${THREADS} threads ---"
 
-              # Salvobase
+              # Salvobase — tee raw output to a debug file so failures are diagnosable
+              RECORD_COUNT=$RECORD_COUNT \
+              OPERATION_COUNT=$OPERATION_COUNT \
               TARGET_URL=mongodb://localhost:27017 \
               WORKLOAD=$WORKLOAD \
               THREADS=$THREADS \
-                bash scripts/bench/run_ycsb.sh 2>/dev/null | \
-                python3 scripts/bench/parse_ycsb.py \
+                bash scripts/bench/run_ycsb.sh \
+                2>/tmp/ycsb_stderr_salvobase_${WORKLOAD}_${THREADS}.txt \
+                | tee /tmp/ycsb_raw_salvobase_${WORKLOAD}_${THREADS}.txt \
+                | python3 scripts/bench/parse_ycsb.py \
                   --target salvobase \
                   --workload "$WORKLOAD" \
                   --threads "$THREADS" \
                   --commit "$COMMIT" \
                   --date "$DATE" \
-                >> "benchmarks/results/${DATE}.jsonl"
+                >> "benchmarks/results/${DATE}.jsonl" \
+                || { echo "WARN: salvobase W${WORKLOAD}/T${THREADS} parse failed"; \
+                     echo "=== stderr ===" >&2; \
+                     cat /tmp/ycsb_stderr_salvobase_${WORKLOAD}_${THREADS}.txt >&2; \
+                     echo "=== raw stdout ===" >&2; \
+                     cat /tmp/ycsb_raw_salvobase_${WORKLOAD}_${THREADS}.txt >&2; }
 
               # MongoDB Community
+              RECORD_COUNT=$RECORD_COUNT \
+              OPERATION_COUNT=$OPERATION_COUNT \
               TARGET_URL=mongodb://localhost:27018 \
               WORKLOAD=$WORKLOAD \
               THREADS=$THREADS \
-                bash scripts/bench/run_ycsb.sh 2>/dev/null | \
-                python3 scripts/bench/parse_ycsb.py \
+                bash scripts/bench/run_ycsb.sh \
+                2>/tmp/ycsb_stderr_mongodb_${WORKLOAD}_${THREADS}.txt \
+                | tee /tmp/ycsb_raw_mongodb_${WORKLOAD}_${THREADS}.txt \
+                | python3 scripts/bench/parse_ycsb.py \
                   --target mongodb \
                   --workload "$WORKLOAD" \
                   --threads "$THREADS" \
                   --commit "$COMMIT" \
                   --date "$DATE" \
-                >> "benchmarks/results/${DATE}.jsonl"
+                >> "benchmarks/results/${DATE}.jsonl" \
+                || { echo "WARN: mongodb W${WORKLOAD}/T${THREADS} parse failed"; \
+                     echo "=== stderr ===" >&2; \
+                     cat /tmp/ycsb_stderr_mongodb_${WORKLOAD}_${THREADS}.txt >&2; \
+                     echo "=== raw stdout ===" >&2; \
+                     cat /tmp/ycsb_raw_mongodb_${WORKLOAD}_${THREADS}.txt >&2; }
             done
           done
 
