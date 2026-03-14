@@ -34,7 +34,7 @@ def load_report(path: str) -> dict[str, str]:
 
 def main() -> None:
     if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <base_report.json> <current_report.json}", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} <base_report.json> <current_report.json>", file=sys.stderr)
         sys.exit(2)
 
     base_path, current_path = sys.argv[1], sys.argv[2]
