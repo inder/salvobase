@@ -1,0 +1,54 @@
+version: "3.9"
+
+services:
+  salvobase:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: bench-salvobase
+    profiles: ["bench"]
+    ports:
+      - "27017:27017"
+      - "27080:27080"
+    environment:
+      - SALVOBASE_AUTH_ADMIN_PASSWORD=benchpass
+    command:
+      - "--datadir"
+      - "/var/lib/salvobase"
+      - "--port"
+      - "27017"
+      - "--httpPort"
+      - "27080"
+      - "--bind_ip"
+      - "0.0.0.0"
+      - "--noauth"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:27080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  mongodb:
+    image: mongo:7.0
+    container_name: bench-mongodb
+    profiles: ["bench"]
+    ports:
+      - "27018:27017"
+    command:
+      - "mongod"
+      - "--noauth"
+      - "--bind_ip_all"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mongosh",
+          "--eval",
+          "db.runCommand({ping:1})",
+          "--quiet",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
