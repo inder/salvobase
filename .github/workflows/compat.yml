@@ -1,0 +1,61 @@
+name: Compatibility Matrix
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  compat:
+    name: MongoDB Compatibility Matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need base commit for regression diff
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build salvobase
+        run: go build -o ./bin/salvobase ./cmd/mongod
+
+      - name: Start salvobase (no auth)
+        run: |
+          ./bin/salvobase --port 27017 --datadir /tmp/compat-ci --noauth --logLevel error &
+          echo $! > /tmp/salvobase-compat.pid
+          for i in $(seq 1 30); do
+            if nc -z localhost 27017 2>/dev/null; then
+              echo "Salvobase ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run compat probe
+        run: go run ./tools/compat/... -uri mongodb://localhost:27017 -outdir docs
+
+      - name: Check for regressions
+        run: |
+          git show HEAD~1:docs/compat_report.json > /tmp/base_report.json 2>/dev/null \
+            || echo '{"results":[]}' > /tmp/base_report.json
+          python3 tools/compat/check_regression.py /tmp/base_report.json docs/compat_report.json
+
+      - name: Stop salvobase
+        if: always()
+        run: |
+          if [ -f /tmp/salvobase-compat.pid ]; then
+            kill "$(cat /tmp/salvobase-compat.pid)" || true
+          fi
+
+      - name: Upload compatibility matrix
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-matrix
+          path: docs/compatibility.md
