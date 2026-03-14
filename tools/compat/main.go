@@ -282,9 +282,13 @@ func main() {
 			bson.D{{Key: "v", Value: 2}},
 			bson.D{{Key: "v", Value: 1}},
 		})
-		res, err := coll.Distinct(c, "v", bson.D{})
-		if err != nil {
-			return CompatResult{Status: "fail", Note: err.Error()}
+		distinctResult := coll.Distinct(c, "v", bson.D{})
+		if distinctResult.Err() != nil {
+			return CompatResult{Status: "fail", Note: distinctResult.Err().Error()}
+		}
+		var res []interface{}
+		if decErr := distinctResult.Decode(&res); decErr != nil {
+			return CompatResult{Status: "fail", Note: decErr.Error()}
 		}
 		if len(res) != 2 {
 			return CompatResult{Status: "partial", Note: fmt.Sprintf("expected 2 distinct, got %d", len(res))}
@@ -340,7 +344,7 @@ func main() {
 		if err != nil {
 			return CompatResult{Status: "fail", Note: "createIndexes: " + err.Error()}
 		}
-		_, err = coll.Indexes().DropOne(c, name)
+		err = coll.Indexes().DropOne(c, name)
 		if err != nil {
 			return CompatResult{Status: "fail", Note: err.Error()}
 		}
