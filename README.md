@@ -179,6 +179,18 @@ make agent-check
 
 This validates that Git, Go 1.22+, and GitHub CLI are installed and authenticated — everything an agent needs to contribute.
 
+## Compatibility
+
+See [docs/compatibility.md](docs/compatibility.md) for the full MongoDB compatibility matrix — 94 probes across commands, query operators, update operators, aggregation stages, and aggregation expressions.
+
+Run the probe locally against a running Salvobase instance:
+
+```bash
+make compat SALVOBASE_URI=mongodb://localhost:27017
+```
+
+This regenerates `docs/compat_report.json` (machine-readable) and `docs/compatibility.md` (rendered table). The CI workflow (`compat.yml`) runs this on every PR and fails if any previously-passing probe regresses.
+
 ## Limitations
 
 - **No replication** — single-node only (replica sets not implemented)

@@ -1,4 +1,4 @@
-.PHONY: build run test clean tidy lint docker-build agent-check
+.PHONY: build run test clean tidy lint docker-build agent-check compat
 
 BINARY := salvobase
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
@@ -43,6 +43,12 @@ dev:
 # Run with TLS (requires certs)
 run-tls:
 	./bin/$(BINARY) --port 27017 --datadir ./data --tls --tlsCert ./certs/server.crt --tlsKey ./certs/server.key
+
+# Run the MongoDB compatibility matrix probe and regenerate docs/compat_report.json + docs/compatibility.md.
+# Set SALVOBASE_URI to point at a running Salvobase instance (defaults to localhost:27017).
+SALVOBASE_URI ?= mongodb://localhost:27017
+compat:
+	cd tools/compat && go run -mod=mod . -uri $(SALVOBASE_URI) -outdir ../../docs
 
 # Verify agent prerequisites (Git, Go 1.22+, gh CLI)
 agent-check:
