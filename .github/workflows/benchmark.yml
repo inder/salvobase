@@ -1,0 +1,118 @@
+name: Nightly Benchmark
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to commit results back
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build salvobase
+        run: go build -o ./bin/salvobase ./cmd/mongod
+
+      - name: Start bench stack
+        run: |
+          docker compose -f deployments/bench/docker-compose.yml --profile bench up -d
+
+      - name: Wait for services
+        run: |
+          echo "Waiting for Salvobase health endpoint..."
+          for i in $(seq 1 30); do
+            if wget -qO- http://localhost:27080/health >/dev/null 2>&1; then
+              echo "Salvobase ready after ${i}x2s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: Salvobase never became healthy" >&2
+              docker compose -f deployments/bench/docker-compose.yml --profile bench logs salvobase >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Waiting for MongoDB..."
+          for i in $(seq 1 30); do
+            if docker exec bench-mongodb mongosh --eval "db.runCommand({ping:1})" --quiet >/dev/null 2>&1; then
+              echo "MongoDB ready after ${i}x2s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: MongoDB never became healthy" >&2
+              docker compose -f deployments/bench/docker-compose.yml --profile bench logs mongodb >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Install go-ycsb
+        run: go install github.com/pingcap/go-ycsb/cmd/go-ycsb@latest
+
+      - name: Run benchmarks
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          COMMIT=$(git rev-parse --short HEAD)
+          mkdir -p benchmarks/results
+
+          for WORKLOAD in A B C D E F; do
+            for THREADS in 1 4 8 16; do
+              echo "--- Workload ${WORKLOAD} / ${THREADS} threads ---"
+
+              # Salvobase
+              TARGET_URL=mongodb://localhost:27017 \
+              WORKLOAD=$WORKLOAD \
+              THREADS=$THREADS \
+                bash scripts/bench/run_ycsb.sh 2>/dev/null | \
+                python3 scripts/bench/parse_ycsb.py \
+                  --target salvobase \
+                  --workload "$WORKLOAD" \
+                  --threads "$THREADS" \
+                  --commit "$COMMIT" \
+                  --date "$DATE" \
+                >> "benchmarks/results/${DATE}.jsonl"
+
+              # MongoDB Community
+              TARGET_URL=mongodb://localhost:27018 \
+              WORKLOAD=$WORKLOAD \
+              THREADS=$THREADS \
+                bash scripts/bench/run_ycsb.sh 2>/dev/null | \
+                python3 scripts/bench/parse_ycsb.py \
+                  --target mongodb \
+                  --workload "$WORKLOAD" \
+                  --threads "$THREADS" \
+                  --commit "$COMMIT" \
+                  --date "$DATE" \
+                >> "benchmarks/results/${DATE}.jsonl"
+            done
+          done
+
+      - name: Update index
+        run: python3 scripts/bench/update_index.py
+
+      - name: Print ratio summary
+        run: python3 scripts/bench/print_ratios.py "benchmarks/results/$(date -u +%Y-%m-%d).jsonl"
+
+      - name: Commit results
+        run: |
+          git config user.name "salvobase-bot"
+          git config user.email "salvobase-bot@users.noreply.github.com"
+          git add benchmarks/
+          git diff --cached --quiet || git commit -m "bench: nightly results $(date -u +%Y-%m-%d) [skip ci]"
+          git push
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f deployments/bench/docker-compose.yml --profile bench down
