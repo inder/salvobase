@@ -48,7 +48,7 @@ run-tls:
 # Set SALVOBASE_URI to point at a running Salvobase instance (defaults to localhost:27017).
 SALVOBASE_URI ?= mongodb://localhost:27017
 compat:
-	go run ./tools/compat/... -uri $(SALVOBASE_URI) -outdir docs
+	cd tools/compat && go run -mod=mod . -uri $(SALVOBASE_URI) -outdir ../../docs
 
 # Verify agent prerequisites (Git, Go 1.22+, gh CLI)
 agent-check:

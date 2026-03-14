@@ -39,7 +39,7 @@ jobs:
           done
 
       - name: Run compat probe
-        run: go run ./tools/compat/... -uri mongodb://localhost:27017 -outdir docs
+        run: cd tools/compat && go run -mod=mod . -uri mongodb://localhost:27017 -outdir ../../docs
 
       - name: Check for regressions
         run: |
