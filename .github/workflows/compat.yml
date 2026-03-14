@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 jobs:
   compat:
@@ -42,10 +43,71 @@ jobs:
         run: cd tools/compat && go run -mod=mod . -uri mongodb://localhost:27017 -outdir ../../docs
 
       - name: Check for regressions
+        id: regression
         run: |
           git show HEAD~1:docs/compat_report.json > /tmp/base_report.json 2>/dev/null \
             || echo '{"results":[]}' > /tmp/base_report.json
-          python3 tools/compat/check_regression.py /tmp/base_report.json docs/compat_report.json
+          REGRESSION_OUTPUT=$(python3 tools/compat/check_regression.py /tmp/base_report.json docs/compat_report.json 2>&1)
+          EXIT_CODE=$?
+          echo "$REGRESSION_OUTPUT"
+          echo "output<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$REGRESSION_OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE
+
+      - name: File regression issue
+        if: failure() && steps.regression.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGRESSION_OUTPUT: ${{ steps.regression.outputs.output }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: |
+          CONTEXT=""
+          if [ -n "$PR_NUMBER" ]; then
+            CONTEXT="Triggered by PR #${PR_NUMBER}: ${PR_URL}"
+          else
+            CONTEXT="Triggered by push to master: ${COMMIT_URL}"
+          fi
+
+          gh issue create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "bug: compatibility regression detected ($(date -u +%Y-%m-%d))" \
+            --label "bug,agent:available,priority:high,area:testing,trust:newcomer-ok" \
+            --body "## Compatibility Regression Detected
+
+The compatibility matrix CI gate caught a regression on \`$(date -u +%Y-%m-%d)\`.
+
+**${CONTEXT}**
+Commit: \`${COMMIT_SHA:0:7}\`
+
+---
+
+### Regression output
+
+\`\`\`
+${REGRESSION_OUTPUT}
+\`\`\`
+
+---
+
+### How to fix
+
+1. Read the failing probe name(s) above.
+2. Find the relevant handler in \`internal/commands/\` or \`internal/query/\` or \`internal/aggregation/\`.
+3. Fix the implementation so the probe passes.
+4. Run locally to verify: \`make compat SALVOBASE_URI=mongodb://localhost:27017\`
+5. Ensure \`check_regression.py\` exits 0 before submitting a PR.
+
+### Context
+
+- Compatibility matrix: \`docs/compatibility.md\`
+- Probe definitions: \`tools/compat/main.go\`
+- Regression script: \`tools/compat/check_regression.py\`
+
+*Filed automatically by the Compatibility Matrix workflow.*"
 
       - name: Stop salvobase
         if: always()
