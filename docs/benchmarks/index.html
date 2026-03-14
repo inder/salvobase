@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="3600">
+  <title>Salvobase Benchmarks vs MongoDB Community</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      padding: 2rem 1rem;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 3rem;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      font-size: 1.1rem;
+      color: #cbd5e1;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 3rem;
+    }
+
+    .stat-box {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 1.5rem;
+      backdrop-filter: blur(10px);
+      transition: all 0.3s ease;
+    }
+
+    .stat-box:hover {
+      border-color: #64748b;
+      box-shadow: 0 8px 24px rgba(59, 130, 246, 0.1);
+    }
+
+    .stat-label {
+      font-size: 0.875rem;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #e2e8f0;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-value.ratio {
+      color: #60a5fa;
+    }
+
+    .stat-detail {
+      font-size: 0.875rem;
+      color: #cbd5e1;
+    }
+
+    .stat-link {
+      color: #60a5fa;
+      text-decoration: none;
+      border-bottom: 1px solid #60a5fa;
+      transition: color 0.2s;
+    }
+
+    .stat-link:hover {
+      color: #93c5fd;
+    }
+
+    .charts-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+      gap: 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .chart-wrapper {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 2rem;
+      backdrop-filter: blur(10px);
+      min-height: 400px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chart-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+      color: #e2e8f0;
+    }
+
+    .chart-controls {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .chart-controls label {
+      font-size: 0.875rem;
+      color: #cbd5e1;
+      font-weight: 500;
+    }
+
+    select {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    select:hover {
+      border-color: #64748b;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: #60a5fa;
+      box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.1);
+    }
+
+    #chart1, #chart2 {
+      flex: 1;
+    }
+
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+      color: #94a3b8;
+      font-size: 1.125rem;
+    }
+
+    .error {
+      background: #7f1d1d;
+      border: 1px solid #dc2626;
+      color: #fecaca;
+      padding: 1rem;
+      border-radius: 8px;
+      margin-bottom: 2rem;
+    }
+
+    .footer {
+      text-align: center;
+      color: #64748b;
+      font-size: 0.875rem;
+      margin-top: 3rem;
+      padding: 2rem 0;
+      border-top: 1px solid #334155;
+    }
+
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 1.875rem;
+      }
+
+      .charts-container {
+        grid-template-columns: 1fr;
+      }
+
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Salvobase Benchmarks</h1>
+      <p class="subtitle">Rolling 30-day median vs MongoDB Community</p>
+    </header>
+
+    <div id="error-container"></div>
+
+    <div class="stats-grid" id="statsGrid">
+      <div class="loading">Loading benchmark data...</div>
+    </div>
+
+    <div class="charts-container">
+      <div class="chart-wrapper">
+        <h2 class="chart-title">Rolling Median Ratio (Salvobase / MongoDB)</h2>
+        <canvas id="chart1"></canvas>
+      </div>
+
+      <div class="chart-wrapper">
+        <h2 class="chart-title">Latest Run — Operations/sec</h2>
+        <div class="chart-controls">
+          <label for="threadSelect">Threads:</label>
+          <select id="threadSelect">
+            <option value="1">1</option>
+            <option value="4" selected>4</option>
+            <option value="8">8</option>
+            <option value="16">16</option>
+          </select>
+        </div>
+        <canvas id="chart2"></canvas>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p id="footerText">Loading...</p>
+    </div>
+  </div>
+
+  <script>
+    const USE_SAMPLE_DATA = false;
+
+    const SAMPLE_DATA = [
+      {"workload":"A","target":"salvobase","threads":4,"ops_per_sec":7843,"p50_ms":2.1,"p99_ms":9.8,"commit":"83c72fc","date":"2026-03-12"},
+      {"workload":"A","target":"mongodb","threads":4,"ops_per_sec":9127,"p50_ms":1.7,"p99_ms":7.2,"commit":"83c72fc","date":"2026-03-12"},
+      {"workload":"B","target":"salvobase","threads":4,"ops_per_sec":11204,"p50_ms":1.2,"p99_ms":6.5,"commit":"83c72fc","date":"2026-03-12"},
+      {"workload":"B","target":"mongodb","threads":4,"ops_per_sec":12891,"p50_ms":1.0,"p99_ms":5.1,"commit":"83c72fc","date":"2026-03-12"},
+      {"workload":"C","target":"salvobase","threads":4,"ops_per_sec":14312,"p50_ms":0.9,"p99_ms":4.2,"commit":"83c72fc","date":"2026-03-12"},
+      {"workload":"C","target":"mongodb","threads":4,"ops_per_sec":16544,"p50_ms":0.7,"p99_ms":3.4,"commit":"83c72fc","date":"2026-03-12"},
+      {"workload":"A","target":"salvobase","threads":4,"ops_per_sec":8102,"p50_ms":2.0,"p99_ms":9.5,"commit":"55c423e","date":"2026-03-13"},
+      {"workload":"A","target":"mongodb","threads":4,"ops_per_sec":9201,"p50_ms":1.6,"p99_ms":7.0,"commit":"55c423e","date":"2026-03-13"},
+      {"workload":"B","target":"salvobase","threads":4,"ops_per_sec":11500,"p50_ms":1.1,"p99_ms":6.2,"commit":"55c423e","date":"2026-03-13"},
+      {"workload":"B","target":"mongodb","threads":4,"ops_per_sec":12700,"p50_ms":0.9,"p99_ms":5.0,"commit":"55c423e","date":"2026-03-13"},
+      {"workload":"C","target":"salvobase","threads":4,"ops_per_sec":14800,"p50_ms":0.8,"p99_ms":4.0,"commit":"55c423e","date":"2026-03-13"},
+      {"workload":"C","target":"mongodb","threads":4,"ops_per_sec":16200,"p50_ms":0.7,"p99_ms":3.2,"commit":"55c423e","date":"2026-03-13"},
+      {"workload":"A","target":"salvobase","threads":4,"ops_per_sec":8250,"p50_ms":1.9,"p99_ms":9.3,"commit":"83c72fc","date":"2026-03-14"},
+      {"workload":"A","target":"mongodb","threads":4,"ops_per_sec":9127,"p50_ms":1.7,"p99_ms":7.2,"commit":"83c72fc","date":"2026-03-14"},
+      {"workload":"B","target":"salvobase","threads":4,"ops_per_sec":11600,"p50_ms":1.1,"p99_ms":6.0,"commit":"83c72fc","date":"2026-03-14"},
+      {"workload":"B","target":"mongodb","threads":4,"ops_per_sec":12891,"p50_ms":1.0,"p99_ms":5.1,"commit":"83c72fc","date":"2026-03-14"},
+      {"workload":"C","target":"salvobase","threads":4,"ops_per_sec":15000,"p50_ms":0.8,"p99_ms":3.9,"commit":"83c72fc","date":"2026-03-14"},
+      {"workload":"C","target":"mongodb","threads":4,"ops_per_sec":16544,"p50_ms":0.7,"p99_ms":3.4,"commit":"83c72fc","date":"2026-03-14"}
+    ];
+
+    const BASE_URL = window.location.hostname === 'localhost'
+      ? '../..'
+      : 'https://raw.githubusercontent.com/inder/salvobase/master';
+
+    const WORKLOADS = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const COLORS = {
+      'A': '#3b82f6',
+      'B': '#8b5cf6',
+      'C': '#ec4899',
+      'D': '#f59e0b',
+      'E': '#10b981',
+      'F': '#06b6d4'
+    };
+
+    let allData = [];
+    let ratioByDate = {};
+    let latestRun = null;
+
+    function rollingMedian(data, window = 30) {
+      return data.map((_, i) => {
+        const slice = data
+          .slice(Math.max(0, i - window + 1), i + 1)
+          .map(d => d.ratio)
+          .filter(r => r != null);
+
+        if (!slice.length) return null;
+        const sorted = [...slice].sort((a, b) => a - b);
+        return sorted[Math.floor(sorted.length / 2)];
+      });
+    }
+
+    async function loadData() {
+      try {
+        if (USE_SAMPLE_DATA) {
+          allData = SAMPLE_DATA;
+          processData();
+          return;
+        }
+
+        const indexUrl = `${BASE_URL}/benchmarks/index.json`;
+        const indexResp = await fetch(indexUrl);
+
+        if (!indexResp.ok) {
+          showError('No benchmark data yet — first nightly run pending.');
+          return;
+        }
+
+        const index = await indexResp.json();
+        const dates = index.dates || [];
+
+        if (dates.length === 0) {
+          showError('No benchmark data yet — first nightly run pending.');
+          return;
+        }
+
+        const last90Days = dates.slice(-90);
+        const promises = last90Days.map(date =>
+          fetch(`${BASE_URL}/benchmarks/results/${date}.jsonl`)
+            .then(r => {
+              if (!r.ok) return [];
+              return r.text().then(text =>
+                text
+                  .trim()
+                  .split('\n')
+                  .filter(line => line.trim())
+                  .map(line => JSON.parse(line))
+              );
+            })
+            .catch(() => [])
+        );
+
+        const results = await Promise.all(promises);
+        allData = results.flat();
+
+        processData();
+      } catch (err) {
+        console.error('Failed to load data:', err);
+        showError('Error loading benchmark data. Please refresh.');
+      }
+    }
+
+    function processData() {
+      if (allData.length === 0) {
+        showError('No benchmark data available.');
+        return;
+      }
+
+      latestRun = allData[allData.length - 1];
+
+      const byDateAndWorkload = {};
+
+      for (const entry of allData) {
+        const key = `${entry.date}-${entry.workload}-${entry.threads}`;
+        if (!byDateAndWorkload[key]) {
+          byDateAndWorkload[key] = { salvobase: null, mongodb: null, date: entry.date, workload: entry.workload };
+        }
+        byDateAndWorkload[key][entry.target] = entry.ops_per_sec;
+      }
+
+      const sortedEntries = Object.values(byDateAndWorkload).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      const uniqueDates = [...new Set(sortedEntries.map(e => e.date))];
+
+      const ratioByWorkload = {};
+      WORKLOADS.forEach(w => {
+        ratioByWorkload[w] = [];
+      });
+
+      for (const date of uniqueDates) {
+        const dateEntries = sortedEntries.filter(e => e.date === date);
+
+        for (const workload of WORKLOADS) {
+          const entry = dateEntries.find(e => e.workload === workload);
+          if (entry && entry.salvobase && entry.mongodb) {
+            const ratio = entry.salvobase / entry.mongodb;
+            ratioByWorkload[workload].push({ date, ratio });
+          } else {
+            ratioByWorkload[workload].push({ date, ratio: null });
+          }
+        }
+      }
+
+      renderStats(ratioByWorkload, uniqueDates);
+      renderChart1(ratioByWorkload, uniqueDates);
+      renderChart2();
+    }
+
+    function renderStats(ratioByWorkload, dates) {
+      const allRatios = [];
+      const workloadRatios = {};
+
+      for (const workload of WORKLOADS) {
+        const ratios = ratioByWorkload[workload]
+          .filter(d => d.ratio != null)
+          .map(d => d.ratio);
+
+        if (ratios.length > 0) {
+          const sorted = [...ratios].sort((a, b) => a - b);
+          const median = sorted[Math.floor(sorted.length / 2)];
+          workloadRatios[workload] = median;
+          allRatios.push(median);
+        }
+      }
+
+      const overallMedian = allRatios.length > 0
+        ? (() => {
+            const sorted = [...allRatios].sort((a, b) => a - b);
+            return sorted[Math.floor(sorted.length / 2)];
+          })()
+        : 1.0;
+
+      const bestWorkload = Object.entries(workloadRatios).reduce((a, b) =>
+        b[1] > a[1] ? b : a
+      );
+
+      const worstWorkload = Object.entries(workloadRatios).reduce((a, b) =>
+        b[1] < a[1] ? b : a
+      );
+
+      const statsHtml = `
+        <div class="stat-box">
+          <div class="stat-label">30-day Overall Median</div>
+          <div class="stat-value ratio">${overallMedian.toFixed(2)}x</div>
+          <div class="stat-detail">Across all workloads</div>
+        </div>
+
+        <div class="stat-box">
+          <div class="stat-label">Best Workload</div>
+          <div class="stat-value ratio">Workload ${bestWorkload[0]}: ${bestWorkload[1].toFixed(2)}x</div>
+          <div class="stat-detail">Salvobase vs MongoDB</div>
+        </div>
+
+        <div class="stat-box">
+          <div class="stat-label">Worst Workload</div>
+          <div class="stat-value ratio">Workload ${worstWorkload[0]}: ${worstWorkload[1].toFixed(2)}x</div>
+          <div class="stat-detail">Salvobase vs MongoDB</div>
+        </div>
+
+        <div class="stat-box">
+          <div class="stat-label">Last Run</div>
+          <div class="stat-value">${latestRun.date}</div>
+          <div class="stat-detail">
+            Commit: <a href="https://github.com/inder/salvobase/commit/${latestRun.commit}" target="_blank" class="stat-link">${latestRun.commit.substring(0, 7)}</a>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('statsGrid').innerHTML = statsHtml;
+    }
+
+    function renderChart1(ratioByWorkload, dates) {
+      const datasets = [];
+
+      for (const workload of WORKLOADS) {
+        const data = ratioByWorkload[workload];
+        const ratios = data.map(d => d.ratio);
+        const medians = rollingMedian(ratios);
+
+        datasets.push({
+          label: `Workload ${workload}`,
+          data: medians,
+          borderColor: COLORS[workload],
+          backgroundColor: COLORS[workload] + '20',
+          borderWidth: 2,
+          tension: 0.3,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          spanGaps: true
+        });
+      }
+
+      const ctx = document.getElementById('chart1').getContext('2d');
+
+      if (window.chart1Instance) {
+        window.chart1Instance.destroy();
+      }
+
+      window.chart1Instance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: dates,
+          datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                color: '#e2e8f0',
+                usePointStyle: true,
+                padding: 15,
+                font: { size: 12 }
+              }
+            },
+            filler: {
+              propagate: true
+            }
+          },
+          scales: {
+            x: {
+              display: true,
+              grid: {
+                color: '#334155',
+                drawBorder: false
+              },
+              ticks: {
+                color: '#94a3b8',
+                maxRotation: 45,
+                minRotation: 0,
+                maxTicksLimit: 10
+              }
+            },
+            y: {
+              display: true,
+              grid: {
+                color: '#334155',
+                drawBorder: false
+              },
+              ticks: {
+                color: '#94a3b8',
+                callback: function(value) {
+                  return value.toFixed(2) + 'x';
+                }
+              },
+              min: 0.8,
+              max: 1.4
+            }
+          }
+        }
+      });
+    }
+
+    function renderChart2() {
+      const selectedThreads = parseInt(document.getElementById('threadSelect').value);
+
+      const latestDate = latestRun.date;
+      const latestData = allData.filter(d => d.date === latestDate && d.threads === selectedThreads);
+
+      const byWorkload = {};
+      WORKLOADS.forEach(w => {
+        byWorkload[w] = { salvobase: 0, mongodb: 0 };
+      });
+
+      for (const entry of latestData) {
+        byWorkload[entry.workload][entry.target] = entry.ops_per_sec;
+      }
+
+      const salvobaseOps = WORKLOADS.map(w => byWorkload[w].salvobase);
+      const mongodbOps = WORKLOADS.map(w => byWorkload[w].mongodb);
+
+      const ctx = document.getElementById('chart2').getContext('2d');
+
+      if (window.chart2Instance) {
+        window.chart2Instance.destroy();
+      }
+
+      window.chart2Instance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: WORKLOADS,
+          datasets: [
+            {
+              label: 'Salvobase',
+              data: salvobaseOps,
+              backgroundColor: '#3b82f6',
+              borderColor: '#1e3a8a',
+              borderWidth: 1
+            },
+            {
+              label: 'MongoDB Community',
+              data: mongodbOps,
+              backgroundColor: '#f97316',
+              borderColor: '#7c2d12',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                color: '#e2e8f0',
+                usePointStyle: true,
+                padding: 15,
+                font: { size: 12 }
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: {
+                display: false,
+                drawBorder: false
+              },
+              ticks: {
+                color: '#94a3b8'
+              }
+            },
+            y: {
+              grid: {
+                color: '#334155',
+                drawBorder: false
+              },
+              ticks: {
+                color: '#94a3b8',
+                callback: function(value) {
+                  return value.toLocaleString() + ' ops/s';
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function showError(message) {
+      const container = document.getElementById('error-container');
+      container.innerHTML = `<div class="error">${message}</div>`;
+      document.getElementById('statsGrid').innerHTML = '';
+    }
+
+    document.getElementById('threadSelect').addEventListener('change', () => {
+      if (allData.length > 0) {
+        renderChart2();
+      }
+    });
+
+    document.addEventListener('DOMContentLoaded', loadData);
+  </script>
+</body>
+</html>
