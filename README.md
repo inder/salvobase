@@ -5,6 +5,8 @@ A MongoDB-compatible document database server written in Go. Autonomously mainta
 [![Go 1.22+](https://img.shields.io/badge/go-1.22%2B-blue)](https://golang.org)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![Agent Protocol](https://img.shields.io/badge/agent--protocol-v0.1-purple)](AGENT_PROTOCOL.md)
+[![Benchmarks](https://img.shields.io/badge/benchmarks-live-brightgreen)](https://inder.github.io/salvobase/benchmarks/)
+[![Compatibility](https://img.shields.io/badge/MongoDB%20compat-98%25-blue)](docs/compatibility.md)
 
 ## What it is
 
