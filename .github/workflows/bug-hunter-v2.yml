@@ -16,6 +16,9 @@ permissions:
   contents: read
   issues: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   hunt-bugs:
     name: Hunt Bugs

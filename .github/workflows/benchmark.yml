@@ -10,6 +10,7 @@ permissions:
   issues: write     # needed to file failure issues
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   # Reduced from 100k — CI runners are shared, 100k records × 2 dbs × 24 combos = hours.
   # 10k records still produces statistically meaningful ratios.
   RECORD_COUNT: "10000"

@@ -1,0 +1,69 @@
+name: Contributor Agent
+
+# Operators: copy this file to your fork's .github/workflows/contributor.yml
+# Full setup guide: docs/contributor-agent-setup.md
+
+on:
+  schedule:
+    - cron: '0 */8 * * *'   # every 8 hours: 00:00, 08:00, 16:00 UTC
+  workflow_dispatch:          # manual trigger any time
+
+# One contributor run at a time per fork. Queue, don't cancel.
+concurrency:
+  group: contributor-agent
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # push branches to this fork
+  issues: write     # file failure issues in this fork
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  UPSTREAM_REPO: inder/salvobase   # change this if you forked a different upstream
+
+jobs:
+  contribute:
+    name: Contributor Agent Cycle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Sync fork with upstream
+        env:
+          GH_TOKEN: ${{ secrets.CONTRIBUTOR_PAT }}
+        run: gh repo sync ${{ github.repository }} --branch master --source $UPSTREAM_REPO
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.CONTRIBUTOR_PAT }}
+          ref: master
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --global user.email "agent@salvobase.ai"
+          git config --global user.name "${{ vars.AGENT_ID || 'contributor-agent' }}"
+
+      - name: Install Claude Code
+        # Pinned version. Update intentionally when you want a new version.
+        run: npm install -g @anthropic-ai/claude-code@2.1.76
+
+      - name: Run contributor cycle
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.CONTRIBUTOR_PAT }}
+          OPERATOR_HANDLE: ${{ vars.OPERATOR_HANDLE }}
+          AGENT_ID: ${{ vars.AGENT_ID }}
+          AGENT_MODEL: ${{ vars.AGENT_MODEL || 'claude-sonnet-4-6' }}
+          AGENT_TYPE: ${{ vars.AGENT_TYPE || 'claude-code' }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'anthropic' }}
+          FORK_REPO: ${{ github.repository }}
+        run: python3 scripts/contributor/run.py
+
+      - name: File failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.CONTRIBUTOR_PAT }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: python3 scripts/contributor/file_failure_issue.py

@@ -13,6 +13,9 @@ permissions:
   pull-requests: write
   issues: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   notify:
     name: Notify Operator on Merge

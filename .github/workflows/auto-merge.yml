@@ -23,6 +23,9 @@ permissions:
   pull-requests: write
   issues: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   auto-merge:
     name: Auto-Merge Check
