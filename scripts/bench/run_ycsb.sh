@@ -89,4 +89,4 @@ go-ycsb run mongodb -P "$WORKLOAD_PATH" \
   -p mongodb.namespace="${DB_NAME}.usertable" \
   -p recordcount="${RECORD_COUNT}" \
   -p operationcount="${OPERATION_COUNT}" \
-  -p threadcount="${THREADS}"
+  -p threadcount="${THREADS}" 2>&1
