@@ -135,11 +135,23 @@ jobs:
 
       - name: Commit results
         run: |
+          DATE=$(date -u +%Y-%m-%d)
+          # Push to bench-data (unprotected) — master requires CI status checks
+          # that GITHUB_TOKEN cannot satisfy for direct pushes.
+          # Fetch bench-data as a local ref (actions/checkout only fetches the
+          # triggering branch, so bench-data won't exist locally otherwise).
+          git fetch origin bench-data:bench-data
+          git worktree add /tmp/bench-data-worktree bench-data
+          mkdir -p /tmp/bench-data-worktree/benchmarks/results
+          cp -r benchmarks/results/. /tmp/bench-data-worktree/benchmarks/results/
+          cp benchmarks/index.json /tmp/bench-data-worktree/benchmarks/ \
+            || echo "WARN: index.json not found — skipping (update_index.py may have failed)"
+          cd /tmp/bench-data-worktree
           git config user.name "salvobase-bot"
           git config user.email "salvobase-bot@users.noreply.github.com"
           git add benchmarks/
-          git diff --cached --quiet || git commit -m "bench: nightly results $(date -u +%Y-%m-%d) [skip ci]"
-          git push
+          git diff --cached --quiet || git commit -m "bench: nightly results ${DATE}"
+          git push origin bench-data
 
       - name: Teardown
         if: always()
