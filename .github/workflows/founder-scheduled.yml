@@ -39,3 +39,12 @@ jobs:
           claude -p "$(cat .github/founder-prompt.md)" \
             --allowedTools "Bash,Read,Write,Edit,Glob,Grep,Task" \
             --output-format text
+
+      - name: File failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: python3 scripts/founder/file_failure_issue.py
