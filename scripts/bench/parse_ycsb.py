@@ -27,17 +27,19 @@ def parse_args():
     return p.parse_args()
 
 
-# Matches lines like:
-#   READ   - Takes(s): 12.3, Count: 50000, OPS: 4065.0, Avg(us): 2461, 50th(us): 2100, 99th(us): 8700
-OP_LINE_RE = re.compile(
+# Matches lines like (go-ycsb includes extra percentile/min/max fields that vary by version):
+#   READ   - Takes(s): 12.3, Count: 50000, OPS: 4065.0, Avg(us): 2461, Min(us): 100,
+#            Max(us): 9000, 50th(us): 2100, 90th(us): 5000, 95th(us): 7000, 99th(us): 8700, ...
+# Strategy: match the prefix loosely, then extract named fields anywhere in the rest of the line.
+OP_LINE_PREFIX_RE = re.compile(
     r"^(?P<op>\w+)\s+-\s+"
-    r"Takes\(s\):\s*(?P<takes>[\d.]+),\s*"
-    r"Count:\s*(?P<count>\d+),\s*"
-    r"OPS:\s*(?P<ops>[\d.]+),\s*"
-    r"Avg\(us\):\s*(?P<avg_us>[\d.]+),\s*"
-    r"50th\(us\):\s*(?P<p50_us>[\d.]+),\s*"
-    r"99th\(us\):\s*(?P<p99_us>[\d.]+)"
+    r"Takes\(s\):\s*(?P<takes>[\d.]+).*?"
+    r"OPS:\s*(?P<ops>[\d.]+)"
 )
+FIELD_RE = {
+    "p50_us": re.compile(r"(?<!\d)50th\(us\):\s*([\d.]+)"),
+    "p99_us": re.compile(r"(?<!\d)99th\(us\):\s*([\d.]+)"),
+}
 
 FINISHED_RE = re.compile(r"Run finished, takes\s*([\d.]+)s")
 
@@ -58,11 +60,18 @@ def main():
             total_duration_s = float(m.group(1))
             continue
 
-        m = OP_LINE_RE.match(line)
+        m = OP_LINE_PREFIX_RE.match(line)
         if m:
-            ops_list.append(float(m.group("ops")))
-            p50_us_list.append(float(m.group("p50_us")))
-            p99_us_list.append(float(m.group("p99_us")))
+            # Skip error/total pseudo-ops (READ_ERROR, TOTAL, CLEANUP, etc.)
+            op = m.group("op")
+            if "_" in op or op == "TOTAL" or op == "CLEANUP":
+                continue
+            p50_m = FIELD_RE["p50_us"].search(line)
+            p99_m = FIELD_RE["p99_us"].search(line)
+            if p50_m and p99_m:
+                ops_list.append(float(m.group("ops")))
+                p50_us_list.append(float(p50_m.group(1)))
+                p99_us_list.append(float(p99_m.group(1)))
 
     if not ops_list:
         sys.stderr.write("parse_ycsb: no op lines found in input\n")
