@@ -1,0 +1,41 @@
+name: Founder Agent (Scheduled)
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  workflow_dispatch:          # manual trigger any time
+
+# Only one founder run at a time. If a run is in progress, new triggers queue.
+concurrency:
+  group: founder-agent
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  discussions: write   # needed for graphql discussion mutations
+
+jobs:
+  founder:
+    name: Founder Agent Cycle
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Claude Code
+        # Pinned to avoid silent breakage from upstream version bumps.
+        # Update this pin intentionally when you want a new version.
+        run: npm install -g @anthropic-ai/claude-code@2.1.76
+
+      - name: Run founder cycle
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          claude -p "$(cat .github/founder-prompt.md)" \
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep" \
+            --output-format text
