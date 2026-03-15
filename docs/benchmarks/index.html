@@ -116,9 +116,6 @@
       border-radius: 12px;
       padding: 2rem;
       backdrop-filter: blur(10px);
-      min-height: 400px;
-      display: flex;
-      flex-direction: column;
     }
 
     .chart-title {
@@ -163,7 +160,10 @@
     }
 
     #chart1, #chart2 {
-      flex: 1;
+      display: block;
+      height: 380px !important;
+      width: 100% !important;
+      touch-action: pan-y;
     }
 
     .loading {
@@ -577,15 +577,19 @@
               label: 'Salvobase',
               data: salvobaseOps,
               backgroundColor: '#3b82f6',
-              borderColor: '#1e3a8a',
-              borderWidth: 1
+              borderColor: '#3b82f6',
+              borderWidth: 1,
+              barPercentage: 1.0,
+              categoryPercentage: 0.95
             },
             {
               label: 'MongoDB Community',
               data: mongodbOps,
               backgroundColor: '#f97316',
-              borderColor: '#7c2d12',
-              borderWidth: 1
+              borderColor: '#f97316',
+              borderWidth: 1,
+              barPercentage: 1.0,
+              categoryPercentage: 0.95
             }
           ]
         },
@@ -601,27 +605,32 @@
                 padding: 15,
                 font: { size: 12 }
               }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return `${context.dataset.label}: ${context.parsed.y.toLocaleString()} ops/s`;
+                }
+              }
             }
           },
           scales: {
             x: {
-              grid: {
-                display: false,
-                drawBorder: false
-              },
-              ticks: {
-                color: '#94a3b8'
-              }
+              grid: { display: false },
+              ticks: { color: '#94a3b8' }
             },
             y: {
-              grid: {
-                color: '#334155',
-                drawBorder: false
-              },
+              type: 'logarithmic',
+              grid: { color: '#334155' },
               ticks: {
                 color: '#94a3b8',
                 callback: function(value) {
-                  return value.toLocaleString() + ' ops/s';
+                  // Only label powers of 10
+                  const log = Math.log10(value);
+                  if (Number.isInteger(Math.round(log * 10) / 10) && Math.abs(log - Math.round(log)) < 0.001) {
+                    return value >= 1000 ? (value / 1000).toFixed(0) + 'k' : value;
+                  }
+                  return '';
                 }
               }
             }
