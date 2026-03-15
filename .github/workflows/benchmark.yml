@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write   # needed to commit results back
+  issues: write     # needed to file failure issues
 
 env:
   # Reduced from 100k — CI runners are shared, 100k records × 2 dbs × 24 combos = hours.
@@ -152,6 +153,15 @@ jobs:
           git add benchmarks/
           git diff --cached --quiet || git commit -m "bench: nightly results ${DATE}"
           git push origin bench-data
+
+      - name: File failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: python3 scripts/bench/file_failure_issue.py
 
       - name: Teardown
         if: always()
