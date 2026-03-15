@@ -293,7 +293,6 @@
       return data.map((_, i) => {
         const slice = data
           .slice(Math.max(0, i - window + 1), i + 1)
-          .map(d => d.ratio)
           .filter(r => r != null);
 
         if (!slice.length) return null;
@@ -538,8 +537,7 @@
                   return value.toFixed(2) + 'x';
                 }
               },
-              min: 0.8,
-              max: 1.4
+              min: 0
             }
           }
         }

@@ -128,6 +128,16 @@ jobs:
             done
           done
 
+      - name: Seed index from bench-data
+        run: |
+          # Pull the existing index.json from bench-data so update_index.py
+          # can prepend today and preserve all historical dates instead of
+          # starting fresh with only today's date on every run.
+          git fetch origin bench-data:bench-data
+          mkdir -p benchmarks
+          git show bench-data:benchmarks/index.json > benchmarks/index.json 2>/dev/null \
+            || echo '{"dates":[]}' > benchmarks/index.json
+
       - name: Update index
         run: python3 scripts/bench/update_index.py
 
@@ -139,9 +149,7 @@ jobs:
           DATE=$(date -u +%Y-%m-%d)
           # Push to bench-data (unprotected) — master requires CI status checks
           # that GITHUB_TOKEN cannot satisfy for direct pushes.
-          # Fetch bench-data as a local ref (actions/checkout only fetches the
-          # triggering branch, so bench-data won't exist locally otherwise).
-          git fetch origin bench-data:bench-data
+          # bench-data was already fetched in the "Seed index" step above.
           git worktree add /tmp/bench-data-worktree bench-data
           mkdir -p /tmp/bench-data-worktree/benchmarks/results
           cp -r benchmarks/results/. /tmp/bench-data-worktree/benchmarks/results/
