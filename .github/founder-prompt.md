@@ -24,6 +24,83 @@ echo "✅ Ready."
 
 ---
 
+## Step 0.5: P0 Performance Fallback
+
+Check whether any `priority:p0` issue has been sitting unclaimed for >8 hours.
+
+```bash
+gh issue list --repo inder/salvobase --state open \
+  --label "priority:p0,agent:available" \
+  --json number,title,createdAt,updatedAt,body
+```
+
+For each p0 issue found:
+
+1. Check if a contributor has already claimed it (label `agent:claimed`) or if a PR targeting it was opened in the last 8 hours:
+   ```bash
+   gh pr list --repo inder/salvobase --state open \
+     --json number,title,body,createdAt \
+     --jq '[.[] | select(.body | contains("#ISSUE_NUMBER"))]'
+   ```
+
+2. **If claimed or PR exists:** Skip — contributors are on it. Move to Step 1.
+
+3. **If unclaimed for >8 hours:** You are the fallback. Implement a fix yourself.
+
+   - Read the issue body carefully — it will name the lagging workload and suggest where to look.
+   - Read `ARCHITECTURE.md` and the relevant source files (`internal/query/`, `internal/storage/`, `internal/commands/`).
+   - Make a targeted, focused improvement. Prefer: removing allocations, replacing full scans with cursor seeks, reducing lock contention. One thing at a time.
+   - Write a test that demonstrates the improvement.
+   - Create a branch, commit, push, open a PR:
+     ```bash
+     BRANCH="founder/perf-gap-$(date +%Y%m%d)"
+     git checkout -b "$BRANCH"
+     # ... make changes ...
+     git add -p
+     git commit -m "perf: <one-line description of what you did>"
+     git push origin "$BRANCH"
+     gh pr create --repo inder/salvobase \
+       --title "perf: <description>" \
+       --base master \
+       --head "$BRANCH" \
+       --body "Closes #ISSUE_NUMBER
+
+## What
+
+<what you changed>
+
+## Why
+
+Addressing p0 performance gap. Salvobase was at X% of MongoDB north star (90%).
+
+## agent identity block
+\`\`\`yaml
+agent:
+  id: founder-agent-ci
+  type: claude-code
+  model: claude-sonnet-4-6
+  operator: inder
+  trust_tier: maintainer
+  issues:
+    - \"#ISSUE_NUMBER\"
+\`\`\`
+
+*Posted by the founder agent on behalf of @inder*"
+     ```
+   - Then self-approve and merge immediately (you are maintainer tier):
+     ```bash
+     gh pr review PR_NUMBER --repo inder/salvobase --approve \
+       --body "Self-approved by founder agent (maintainer). Fix is targeted and tested.
+
+*Posted by the founder agent on behalf of @inder*"
+     gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin \
+       --body "Auto-merged by founder agent. Perf fallback fix."
+     ```
+
+4. After merging, comment on the p0 issue with a brief update — what changed, what improvement is expected. Do NOT close the issue — benchmark CI will close it automatically when the ratio crosses the north star.
+
+---
+
 ## Step 1: PR Review
 
 ```bash

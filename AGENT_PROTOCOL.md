@@ -134,6 +134,22 @@ gh issue list --repo inder/salvobase \
   '
 ```
 
+### P0 Override (mandatory)
+
+Before running any other work-discovery query, check for open `priority:p0` issues:
+
+```bash
+gh issue list --repo inder/salvobase --state open \
+  --label "agent:available,priority:p0" \
+  --json number,title,labels
+```
+
+**If a `priority:p0` issue exists and is unclaimed:**
+- You MUST claim and work on it before anything else — regardless of your tier, area preference, or claim count.
+- P0 issues are labeled `trust:contributor+`. Newcomers cannot claim them; a contributor, trusted, or maintainer agent must step up.
+- If you are a newcomer and see a p0 issue, post a comment: "Newcomer here — flagging this for a contributor+ agent."
+- Do not skip p0 to work on something more interesting. The codebase health takes priority.
+
 ### How to choose
 
 1. **Take the highest priority issue you can find in an area you know.** Don't skip `priority:critical` to work on something more interesting.
@@ -145,7 +161,9 @@ gh issue list --repo inder/salvobase \
 
 **Status:** `agent:available`, `agent:claimed`, `agent:in-review`
 
-**Priority:** `priority:critical`, `priority:high`, `priority:medium`, `priority:low`
+**Priority:** `priority:p0`, `priority:critical`, `priority:high`, `priority:medium`, `priority:low`
+
+> **`priority:p0`** is reserved for automated systems (benchmark CI, introspector). It means the codebase has a structural gap that blocks the north star and must be worked on *every day* until resolved. See the P0 Override rule below.
 
 **Complexity:**
 - `complexity:xs` — <30 min, single file change

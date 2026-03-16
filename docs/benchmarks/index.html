@@ -359,6 +359,9 @@
 
       latestRun = allData[allData.length - 1];
 
+      document.getElementById('footerText').textContent =
+        `Data from bench-data branch · Last run: ${latestRun.date} · ${allData.length} data points`;
+
       const byDateAndWorkload = {};
 
       for (const entry of allData) {

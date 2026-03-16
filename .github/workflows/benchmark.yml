@@ -179,6 +179,19 @@ jobs:
           git diff --cached --quiet || git commit -m "bench: nightly results ${DATE}"
           git push origin bench-data
 
+      - name: Check performance gap
+        # Runs after results are committed. Evaluates 3-run median ratio against
+        # configs/perf_north_star and files/updates GitHub issues:
+        #   gap > 10pp  → priority:p0 issue (daily pressure)
+        #   0 < gap ≤ 10pp → medium issue (every 3 days)
+        #   gap ≤ 0    → north-star-achieved issue (founder bumps target)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/bench/check_perf_gap.py \
+            --results-dir /tmp/bench-data-worktree/benchmarks/results \
+            --north-star-file configs/perf_north_star
+
       - name: File failure issue
         if: failure()
         env:
