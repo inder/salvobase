@@ -22,9 +22,32 @@ env:
   UPSTREAM_REPO: inder/salvobase   # change this if you forked a different upstream
 
 jobs:
+  # Guard job: checks whether CONTRIBUTOR_PAT is set before running the agent.
+  # This workflow is designed for operator forks. The upstream repo does not set
+  # CONTRIBUTOR_PAT and will get a clean skip instead of a noisy failure.
+  check-secrets:
+    name: Check secrets configured
+    runs-on: ubuntu-latest
+    outputs:
+      pat-set: ${{ steps.check.outputs.pat-set }}
+    steps:
+      - name: Check CONTRIBUTOR_PAT
+        id: check
+        env:
+          PAT: ${{ secrets.CONTRIBUTOR_PAT }}
+        run: |
+          if [ -n "$PAT" ]; then
+            echo "pat-set=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pat-set=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CONTRIBUTOR_PAT is not set — skipping contributor cycle. This workflow is designed for operator forks. See docs/contributor-agent-setup.md."
+          fi
+
   contribute:
     name: Contributor Agent Cycle
     runs-on: ubuntu-latest
+    needs: check-secrets
+    if: needs.check-secrets.outputs.pat-set == 'true'
 
     steps:
       - name: Sync fork with upstream
