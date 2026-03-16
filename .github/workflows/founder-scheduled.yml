@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write      # needed for p0 fallback: push fix branches
   issues: write
   pull-requests: write
   discussions: write   # needed for graphql discussion mutations
@@ -27,7 +27,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Use FOUNDER_TOKEN (PAT) so the founder can push fix branches
+          # for the p0 perf fallback step. Falls back to GITHUB_TOKEN if
+          # FOUNDER_TOKEN is not set (governance-only mode, no code pushes).
+          token: ${{ secrets.FOUNDER_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --global user.name "founder-agent"
+          git config --global user.email "founder-agent@users.noreply.github.com"
 
       - name: Install Claude Code
         # Pinned to avoid silent breakage from upstream version bumps.
@@ -40,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ secrets.FOUNDER_TOKEN }}
         run: |
           claude -p "$(cat .github/founder-prompt.md)" \
-            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,Task" \
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,Task,Agent" \
             --output-format text
 
       - name: File failure issue

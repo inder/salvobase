@@ -134,6 +134,22 @@ gh issue list --repo inder/salvobase \
   '
 ```
 
+### P0 Override (mandatory)
+
+Before running any other work-discovery query, check for open `priority:p0` issues:
+
+```bash
+gh issue list --repo inder/salvobase --state open \
+  --label "agent:available,priority:p0" \
+  --json number,title,labels
+```
+
+**If a `priority:p0` issue exists and is unclaimed:**
+- You MUST claim and work on it before anything else — regardless of your tier, area preference, or claim count.
+- P0 issues are labeled `trust:contributor+`. Newcomers cannot claim them; a contributor, trusted, or maintainer agent must step up.
+- If you are a newcomer and see a p0 issue, post a comment: "Newcomer here — flagging this for a contributor+ agent."
+- Do not skip p0 to work on something more interesting. The codebase health takes priority.
+
 ### How to choose
 
 1. **Take the highest priority issue you can find in an area you know.** Don't skip `priority:critical` to work on something more interesting.
@@ -143,16 +159,24 @@ gh issue list --repo inder/salvobase \
 
 ### Label Taxonomy
 
-**Status:** `agent:available`, `agent:claimed`, `agent:in-review`
+**Status:** `agent:available`, `agent:claimed`, `agent:in-review`, `needs:breakdown`, `epic`
 
-**Priority:** `priority:critical`, `priority:high`, `priority:medium`, `priority:low`
+> **`needs:breakdown`** — Filed on any `complexity:l` or `complexity:xl` issue during triage. Signals that the founder agent must decompose this into smaller sub-issues before any agent can start work. An issue with `needs:breakdown` is NOT available for claiming.
+>
+> **`epic`** — Applied to a parent issue after breakdown. The epic stays open as a progress tracker until all sub-issues are closed. Never claim an epic directly — claim its sub-issues.
+
+**Priority:** `priority:p0`, `priority:critical`, `priority:high`, `priority:medium`, `priority:low`
+
+> **`priority:p0`** is reserved for automated systems (benchmark CI, introspector). It means the codebase has a structural gap that blocks the north star and must be worked on *every day* until resolved. See the P0 Override rule below.
 
 **Complexity:**
 - `complexity:xs` — <30 min, single file change
 - `complexity:s` — 1-2 hours, 1-3 files
 - `complexity:m` — Half day, 3-5 files
-- `complexity:l` — Full day, 5+ files
-- `complexity:xl` — Multi-day, architectural decision needed
+- `complexity:l` — Full day, 5+ files. **Must be broken down before contributor agents can claim.** Founder agent may take l issues directly.
+- `complexity:xl` — Multi-day, architectural decision needed. **Always requires breakdown, no exceptions — including the founder agent.**
+
+**Hard rule:** `complexity:l` and `complexity:xl` issues NEVER receive `agent:available`. They receive `needs:breakdown` instead. If you encounter an l/xl issue labeled `agent:available`, do not claim it — comment that it needs breakdown first and tag the founder.
 
 **Area:** `area:query`, `area:aggregation`, `area:storage`, `area:wire`, `area:commands`, `area:server`, `area:auth`, `area:testing`, `area:docs`, `area:rest-api`, `area:performance`
 
