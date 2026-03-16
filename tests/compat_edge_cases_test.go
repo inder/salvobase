@@ -636,6 +636,289 @@ func TestCompatProjectionExcludeID(t *testing.T) {
 	}
 }
 
+// ─── Range Query Tests ($gt/$gte/$lt/$lte) ───────────────────────────────────
+
+// TestCompatRangeQueryGt verifies that $gt returns the correct subset.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/gt/
+func TestCompatRangeQueryGt(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_range_gt")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 5}},
+		bson.D{{Key: "n", Value: 10}},
+		bson.D{{Key: "n", Value: 15}},
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	cursor, err := coll.Find(ctx, bson.D{{Key: "n", Value: bson.D{{Key: "$gt", Value: 5}}}})
+	if err != nil {
+		t.Fatalf("Find $gt: %v", err)
+	}
+	var results []bson.D
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("$gt 5: expected 2 docs (10,15), got %d", len(results))
+	}
+}
+
+// TestCompatRangeQueryGte verifies that $gte includes the boundary value.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/gte/
+func TestCompatRangeQueryGte(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_range_gte")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 5}},
+		bson.D{{Key: "n", Value: 10}},
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	cursor, err := coll.Find(ctx, bson.D{{Key: "n", Value: bson.D{{Key: "$gte", Value: 5}}}})
+	if err != nil {
+		t.Fatalf("Find $gte: %v", err)
+	}
+	var results []bson.D
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("$gte 5: expected 2 docs (5,10), got %d", len(results))
+	}
+}
+
+// TestCompatRangeQueryLt verifies that $lt returns the correct subset.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/lt/
+func TestCompatRangeQueryLt(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_range_lt")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 5}},
+		bson.D{{Key: "n", Value: 10}},
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	cursor, err := coll.Find(ctx, bson.D{{Key: "n", Value: bson.D{{Key: "$lt", Value: 5}}}})
+	if err != nil {
+		t.Fatalf("Find $lt: %v", err)
+	}
+	var results []bson.D
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("$lt 5: expected 1 doc (1), got %d", len(results))
+	}
+}
+
+// TestCompatRangeQueryLte verifies that $lte includes the boundary value.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/lte/
+func TestCompatRangeQueryLte(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_range_lte")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 5}},
+		bson.D{{Key: "n", Value: 10}},
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	cursor, err := coll.Find(ctx, bson.D{{Key: "n", Value: bson.D{{Key: "$lte", Value: 5}}}})
+	if err != nil {
+		t.Fatalf("Find $lte: %v", err)
+	}
+	var results []bson.D
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Errorf("$lte 5: expected 2 docs (1,5), got %d", len(results))
+	}
+}
+
+// TestCompatRangeQueryWindow verifies combined $gte/$lte range window.
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/gte/
+func TestCompatRangeQueryWindow(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_range_window")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 5}},
+		bson.D{{Key: "n", Value: 7}},
+		bson.D{{Key: "n", Value: 10}},
+		bson.D{{Key: "n", Value: 15}},
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	cursor, err := coll.Find(ctx, bson.D{{Key: "n", Value: bson.D{
+		{Key: "$gte", Value: 5},
+		{Key: "$lte", Value: 10},
+	}}})
+	if err != nil {
+		t.Fatalf("Find range window: %v", err)
+	}
+	var results []bson.D
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 3 {
+		t.Errorf("$gte 5 $lte 10: expected 3 docs (5,7,10), got %d", len(results))
+	}
+}
+
+// TestCompatRangeQueryEmptyResult verifies that a range with no matches returns
+// an empty result set (no false positives).
+// Ref: https://www.mongodb.com/docs/manual/reference/operator/query/gt/
+func TestCompatRangeQueryEmptyResult(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_range_empty")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{Key: "n", Value: 1}},
+		bson.D{{Key: "n", Value: 2}},
+		bson.D{{Key: "n", Value: 3}},
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	// Query for values > 100 — should return empty result
+	cursor, err := coll.Find(ctx, bson.D{{Key: "n", Value: bson.D{{Key: "$gt", Value: 100}}}})
+	if err != nil {
+		t.Fatalf("Find $gt 100: %v", err)
+	}
+	var results []bson.D
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("$gt 100: expected 0 docs (no false positives), got %d", len(results))
+	}
+}
+
+// ─── Nested Array Dot-Notation ───────────────────────────────────────────────
+
+// TestCompatNestedArrayDotNotation verifies that dot-notation queries match
+// documents where the path traverses an array of subdocuments. MongoDB matches
+// if ANY element of the array satisfies the condition.
+// Ref: https://www.mongodb.com/docs/manual/tutorial/query-array-of-documents/
+func TestCompatNestedArrayDotNotation(t *testing.T) {
+	client := newClient(t)
+	db := compatDB(t, client)
+	coll := db.Collection("compat_nested_array_dot")
+	ctx := context.Background()
+
+	// Documents with nested arrays of subdocuments.
+	docs := []interface{}{
+		// doc 1: a[0].b=1, a[1].b=2
+		bson.D{{Key: "name", Value: "doc1"}, {Key: "a", Value: bson.A{
+			bson.D{{Key: "b", Value: 1}},
+			bson.D{{Key: "b", Value: 2}},
+		}}},
+		// doc 2: a[0].b=3, a[1].b=4
+		bson.D{{Key: "name", Value: "doc2"}, {Key: "a", Value: bson.A{
+			bson.D{{Key: "b", Value: 3}},
+			bson.D{{Key: "b", Value: 4}},
+		}}},
+		// doc 3: no array — plain subdocument
+		bson.D{{Key: "name", Value: "doc3"}, {Key: "a", Value: bson.D{{Key: "b", Value: 5}}}},
+	}
+	_, err := coll.InsertMany(ctx, docs)
+	if err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		filter   bson.D
+		wantCount int
+		wantNames []string
+	}{
+		{
+			name:      "equality match on first array element",
+			filter:    bson.D{{Key: "a.b", Value: 1}},
+			wantCount: 1,
+			wantNames: []string{"doc1"},
+		},
+		{
+			name:      "equality match on second array element",
+			filter:    bson.D{{Key: "a.b", Value: 4}},
+			wantCount: 1,
+			wantNames: []string{"doc2"},
+		},
+		{
+			name:      "equality match on plain subdoc (no array)",
+			filter:    bson.D{{Key: "a.b", Value: 5}},
+			wantCount: 1,
+			wantNames: []string{"doc3"},
+		},
+		{
+			name:      "$gt matches any element satisfying condition",
+			filter:    bson.D{{Key: "a.b", Value: bson.D{{Key: "$gt", Value: 3}}}},
+			wantCount: 2, // doc2 (b=4) and doc3 (b=5)
+			wantNames: []string{"doc2", "doc3"},
+		},
+		{
+			name:      "no match returns empty result",
+			filter:    bson.D{{Key: "a.b", Value: 99}},
+			wantCount: 0,
+			wantNames: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cursor, err := coll.Find(ctx, tc.filter)
+			if err != nil {
+				t.Fatalf("Find: %v", err)
+			}
+			var results []bson.D
+			if err := cursor.All(ctx, &results); err != nil {
+				t.Fatalf("cursor.All: %v", err)
+			}
+			if len(results) != tc.wantCount {
+				t.Errorf("filter %v: expected %d docs, got %d", tc.filter, tc.wantCount, len(results))
+			}
+		})
+	}
+}
+
 // ─── Helper Functions ────────────────────────────────────────────────────────
 
 func toInt64(v interface{}) int64 {

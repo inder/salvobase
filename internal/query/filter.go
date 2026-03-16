@@ -35,14 +35,56 @@ func Filter(doc bson.Raw, filter bson.Raw) (bool, error) {
 				return false, nil
 			}
 		} else {
-			// Field-level condition
-			fieldVal, _ := getField(doc, key)
-			match, err := evalFieldCondition(doc, fieldVal, val)
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				return false, nil
+			// Field-level condition.
+			// For dot-notation paths that may traverse arrays of subdocuments,
+			// use getFieldAll to collect all candidate values and check if ANY
+			// satisfies the condition (MongoDB any-element semantics).
+			if strings.ContainsRune(key, '.') {
+				allVals := getFieldAll(doc, key)
+				if len(allVals) == 0 {
+					// No values found — treat as missing (TypeUndefined)
+					missing := bson.RawValue{Type: bson.TypeUndefined}
+					match, err := evalFieldCondition(doc, missing, val)
+					if err != nil {
+						return false, err
+					}
+					if !match {
+						return false, nil
+					}
+				} else if len(allVals) == 1 {
+					match, err := evalFieldCondition(doc, allVals[0], val)
+					if err != nil {
+						return false, err
+					}
+					if !match {
+						return false, nil
+					}
+				} else {
+					// Multiple values (array traversal): match if ANY value satisfies
+					anyMatch := false
+					for _, fv := range allVals {
+						m, err := evalFieldCondition(doc, fv, val)
+						if err != nil {
+							return false, err
+						}
+						if m {
+							anyMatch = true
+							break
+						}
+					}
+					if !anyMatch {
+						return false, nil
+					}
+				}
+			} else {
+				fieldVal, _ := getField(doc, key)
+				match, err := evalFieldCondition(doc, fieldVal, val)
+				if err != nil {
+					return false, err
+				}
+				if !match {
+					return false, nil
+				}
 			}
 		}
 	}
@@ -903,11 +945,92 @@ func getField(doc bson.Raw, path string) (bson.RawValue, bool) {
 			}
 			return bson.RawValue{Type: bson.TypeUndefined}, false
 		}
-		// Not an integer index — traverse into embedded docs within the array
-		// Cast RawArray to Raw — both are []byte
-		return getField(bson.Raw(arr), rest)
+		// Not an integer index — traverse into each embedded document within
+		// the array and return the first match. Full any-element matching for
+		// dot-notation into arrays is handled by matchNestedArrayPath in Filter.
+		arrVals, err := arr.Values()
+		if err != nil {
+			return bson.RawValue{Type: bson.TypeUndefined}, false
+		}
+		for _, elem := range arrVals {
+			if elem.Type == bson.TypeEmbeddedDocument {
+				subdoc := elem.Document()
+				v, ok := getField(subdoc, rest)
+				if ok {
+					return v, true
+				}
+			}
+		}
+		return bson.RawValue{Type: bson.TypeUndefined}, false
 	}
 	return bson.RawValue{Type: bson.TypeUndefined}, false
+}
+
+// getFieldAll resolves a dot-notation path and returns ALL matched values.
+// When an intermediate segment is an array of subdocuments, it recurses into
+// each element and collects every resolved value. This implements MongoDB's
+// any-element semantics for dot-notation filters on arrays of subdocuments.
+func getFieldAll(doc bson.Raw, path string) []bson.RawValue {
+	if len(doc) == 0 {
+		return nil
+	}
+	dotIdx := strings.IndexByte(path, '.')
+	var key, rest string
+	if dotIdx < 0 {
+		key = path
+	} else {
+		key = path[:dotIdx]
+		rest = path[dotIdx+1:]
+	}
+
+	val, err := doc.LookupErr(key)
+	if err != nil {
+		return nil
+	}
+
+	if dotIdx < 0 {
+		return []bson.RawValue{val}
+	}
+
+	switch val.Type {
+	case bson.TypeEmbeddedDocument:
+		return getFieldAll(val.Document(), rest)
+	case bson.TypeArray:
+		arr := val.Array()
+		// Try numeric index first
+		restKey := rest
+		nextDot := strings.IndexByte(rest, '.')
+		if nextDot >= 0 {
+			restKey = rest[:nextDot]
+		}
+		if idx, err2 := strconv.Atoi(restKey); err2 == nil {
+			arrVals, err3 := arr.Values()
+			if err3 != nil || idx < 0 || idx >= len(arrVals) {
+				return nil
+			}
+			elem := arrVals[idx]
+			if nextDot < 0 {
+				return []bson.RawValue{elem}
+			}
+			if elem.Type == bson.TypeEmbeddedDocument {
+				return getFieldAll(elem.Document(), rest[nextDot+1:])
+			}
+			return nil
+		}
+		// Non-integer key: collect from every subdocument element in the array.
+		arrVals, err2 := arr.Values()
+		if err2 != nil {
+			return nil
+		}
+		var out []bson.RawValue
+		for _, elem := range arrVals {
+			if elem.Type == bson.TypeEmbeddedDocument {
+				out = append(out, getFieldAll(elem.Document(), rest)...)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // ─── Value comparison ─────────────────────────────────────────────────────────

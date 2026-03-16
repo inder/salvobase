@@ -129,6 +129,22 @@ jobs:
             done
           done
 
+      - name: Validate results completeness
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          FILE="benchmarks/results/${DATE}.jsonl"
+          FAIL=0
+          for WL in A B C D F; do  # E excluded — scan not yet implemented
+            COUNT=$(grep -c "\"workload\":\"${WL}\"" "$FILE" 2>/dev/null || echo 0)
+            if [ "$COUNT" -lt 2 ]; then
+              echo "ERROR: Workload ${WL} has only ${COUNT} result lines (expected ≥2)"
+              FAIL=1
+            else
+              echo "OK: Workload ${WL} — ${COUNT} lines"
+            fi
+          done
+          [ "$FAIL" -eq 0 ] || exit 1
+
       - name: Seed index from bench-data
         run: |
           # Pull the existing index.json from bench-data so update_index.py
