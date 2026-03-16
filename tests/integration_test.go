@@ -1061,6 +1061,108 @@ func TestAggregateAddFields(t *testing.T) {
 	}
 }
 
+// ─── Aggregation: $set pipeline stage (alias for $addFields) ─────────────────
+
+func TestAggregateSetStage(t *testing.T) {
+	client := newClient(t)
+	db := testDB(t)
+	coll := client.Database(db).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "x", Value: 10}, {Key: "y", Value: 5}})
+
+	// $set adds a new computed field — identical semantics to $addFields.
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{Key: "$set", Value: bson.D{
+			{Key: "sum", Value: bson.D{{Key: "$add", Value: bson.A{"$x", "$y"}}}},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("$set stage: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	if !cursor.Next(ctx) {
+		t.Fatal("$set stage: expected at least one document, got none")
+	}
+	var result bson.M
+	if err := cursor.Decode(&result); err != nil {
+		t.Fatalf("$set stage decode: %v", err)
+	}
+	// Original fields preserved.
+	if result["x"] != int32(10) {
+		t.Errorf("$set stage: expected x=10, got %v", result["x"])
+	}
+	// New field added.
+	if result["sum"] != int32(15) {
+		t.Errorf("$set stage: expected sum=15, got %v", result["sum"])
+	}
+}
+
+// ─── Aggregation: $unset pipeline stage ──────────────────────────────────────
+
+func TestAggregateUnsetStage(t *testing.T) {
+	client := newClient(t)
+	db := testDB(t)
+	coll := client.Database(db).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertOne(ctx, bson.D{
+		{Key: "keep", Value: "yes"},
+		{Key: "drop1", Value: "gone"},
+		{Key: "drop2", Value: "also gone"},
+	})
+
+	// Single field removal.
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{Key: "$unset", Value: "drop1"}},
+	})
+	if err != nil {
+		t.Fatalf("$unset single: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	if !cursor.Next(ctx) {
+		t.Fatal("$unset single: expected at least one document, got none")
+	}
+	var r1 bson.M
+	if err := cursor.Decode(&r1); err != nil {
+		t.Fatalf("$unset single decode: %v", err)
+	}
+	if _, exists := r1["drop1"]; exists {
+		t.Error("$unset single: expected drop1 to be removed")
+	}
+	if r1["keep"] != "yes" {
+		t.Errorf("$unset single: expected keep=yes, got %v", r1["keep"])
+	}
+
+	// Multiple field removal via array.
+	cursor2, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{Key: "$unset", Value: bson.A{"drop1", "drop2"}}},
+	})
+	if err != nil {
+		t.Fatalf("$unset array: %v", err)
+	}
+	defer cursor2.Close(ctx)
+
+	if !cursor2.Next(ctx) {
+		t.Fatal("$unset array: expected at least one document, got none")
+	}
+	var r2 bson.M
+	if err := cursor2.Decode(&r2); err != nil {
+		t.Fatalf("$unset array decode: %v", err)
+	}
+	if _, exists := r2["drop1"]; exists {
+		t.Error("$unset array: expected drop1 to be removed")
+	}
+	if _, exists := r2["drop2"]; exists {
+		t.Error("$unset array: expected drop2 to be removed")
+	}
+	if r2["keep"] != "yes" {
+		t.Errorf("$unset array: expected keep=yes, got %v", r2["keep"])
+	}
+}
+
 func TestAggregateCondExpr(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
