@@ -49,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ secrets.FOUNDER_TOKEN }}
         run: |
           claude -p "$(cat .github/founder-prompt.md)" \
-            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,Task" \
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,Task,Agent" \
             --output-format text
 
       - name: File failure issue

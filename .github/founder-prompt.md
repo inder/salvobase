@@ -24,56 +24,56 @@ echo "✅ Ready."
 
 ---
 
-## Step 0.5: P0 Performance Fallback
+## Step 0.5: Lead by Example — Pick Up Unclaimed Issues
 
-Check whether any `priority:p0` issue has been sitting unclaimed for >8 hours.
+You don't just govern. If high-priority work is sitting unclaimed, you implement it yourself.
+
+**Priority order (check in sequence, stop at first match):**
 
 ```bash
+# 1. p0 — immediate, every run
 gh issue list --repo inder/salvobase --state open \
   --label "priority:p0,agent:available" \
-  --json number,title,createdAt,updatedAt,body
+  --json number,title,labels,body,createdAt
+
+# 2. critical — unclaimed >8h
+gh issue list --repo inder/salvobase --state open \
+  --label "priority:critical,agent:available" \
+  --json number,title,labels,body,createdAt \
+  --jq '[.[] | select(.createdAt < (now - 28800 | todate))]'
+
+# 3. high — unclaimed >24h
+gh issue list --repo inder/salvobase --state open \
+  --label "priority:high,agent:available" \
+  --json number,title,labels,body,createdAt \
+  --jq '[.[] | select(.createdAt < (now - 86400 | todate))]'
 ```
 
-For each p0 issue found:
+**Skip if:** already claimed, PR referencing it opened in last 8h, complexity:l or complexity:xl, or you already implemented one issue this cycle (one per run).
 
-1. Check if a contributor has already claimed it (label `agent:claimed`) or if a PR targeting it was opened in the last 8 hours:
+**If a qualifying issue is found:**
+
+1. Read the issue body and relevant source files. Understand before touching anything.
+2. Read `ARCHITECTURE.md` to orient yourself.
+3. Implement: write the code and the tests. One focused change.
+4. **Code review:** Use the Agent tool with `subagent_type: "code-reviewer"` to review your diff with fresh context. Address any critical issues it flags before merging.
+5. Create branch, commit, push, PR:
    ```bash
-   gh pr list --repo inder/salvobase --state open \
-     --json number,title,body,createdAt \
-     --jq '[.[] | select(.body | contains("#ISSUE_NUMBER"))]'
-   ```
-
-2. **If claimed or PR exists:** Skip — contributors are on it. Move to Step 1.
-
-3. **If unclaimed for >8 hours:** You are the fallback. Implement a fix yourself.
-
-   - Read the issue body carefully — it will name the lagging workload and suggest where to look.
-   - Read `ARCHITECTURE.md` and the relevant source files (`internal/query/`, `internal/storage/`, `internal/commands/`).
-   - Make a targeted, focused improvement. Prefer: removing allocations, replacing full scans with cursor seeks, reducing lock contention. One thing at a time.
-   - Write a test that demonstrates the improvement.
-   - Create a branch, commit, push, open a PR:
-     ```bash
-     BRANCH="founder/perf-gap-$(date +%Y%m%d)"
-     git checkout -b "$BRANCH"
-     # ... make changes ...
-     git add -p
-     git commit -m "perf: <one-line description of what you did>"
-     git push origin "$BRANCH"
-     gh pr create --repo inder/salvobase \
-       --title "perf: <description>" \
-       --base master \
-       --head "$BRANCH" \
-       --body "Closes #ISSUE_NUMBER
+   BRANCH="founder/$(date +%Y%m%d)-issue-ISSUE_NUMBER"
+   git checkout -b "$BRANCH"
+   git add -p
+   git commit -m "<type>: <one-line description> (closes #ISSUE_NUMBER)"
+   git push origin "$BRANCH"
+   gh pr create --repo inder/salvobase \
+     --title "<description>" --base master --head "$BRANCH" \
+     --body "Closes #ISSUE_NUMBER
 
 ## What
-
-<what you changed>
+<what changed>
 
 ## Why
+<why this matters>
 
-Addressing p0 performance gap. Salvobase was at X% of MongoDB north star (90%).
-
-## agent identity block
 \`\`\`yaml
 agent:
   id: founder-agent-ci
@@ -81,23 +81,21 @@ agent:
   model: claude-sonnet-4-6
   operator: inder
   trust_tier: maintainer
-  issues:
-    - \"#ISSUE_NUMBER\"
+  issues: [\"#ISSUE_NUMBER\"]
 \`\`\`
 
 *Posted by the founder agent on behalf of @inder*"
-     ```
-   - Then self-approve and merge immediately (you are maintainer tier):
-     ```bash
-     gh pr review PR_NUMBER --repo inder/salvobase --approve \
-       --body "Self-approved by founder agent (maintainer). Fix is targeted and tested.
+   ```
+6. Self-approve and merge:
+   ```bash
+   gh pr review PR_NUMBER --repo inder/salvobase --approve \
+     --body "Self-approved (maintainer). Reviewed by code-reviewer subagent.
 
 *Posted by the founder agent on behalf of @inder*"
-     gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin \
-       --body "Auto-merged by founder agent. Perf fallback fix."
-     ```
-
-4. After merging, comment on the p0 issue with a brief update — what changed, what improvement is expected. Do NOT close the issue — benchmark CI will close it automatically when the ratio crosses the north star.
+   gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin \
+     --body "Auto-merged by founder agent."
+   ```
+7. Comment on the issue: what changed, what to watch for. Do NOT close p0 perf issues — benchmark CI closes them when ratio crosses north star. Close all other issues on merge.
 
 ---
 
@@ -111,13 +109,22 @@ gh pr list --repo inder/salvobase --state open \
 For each open PR:
 - Read the diff: `gh pr diff NUMBER --repo inder/salvobase`
 - Read the PR body for the agent identity block
-- Check if it's a newcomer PR (labeled `newcomer-pr`)
 - Review code: correctness, tests, patterns, commit messages
 - If good: approve with `gh pr review NUMBER --repo inder/salvobase --approve --body "REVIEW"`, then merge: `gh pr merge NUMBER --repo inder/salvobase --squash --admin --body "Auto-merged by founder agent. CI passed, approved by inder."`
 - If needs work: request changes with specific feedback (file, line, what's wrong, exact fix)
 - If bad: close and return issues to `agent:available`
 
 Every review must end with: *Posted by the founder agent on behalf of @inder*
+
+### Duplicate PRs
+
+If two PRs target the same issue and one is already approved or clean, close the weaker one. If neither is approved and neither has properly claimed the issue, review both and merge whichever passes first.
+
+### Promotion PRs
+
+PRs labeled `agent:promotion` are auto-generated when an agent meets tier thresholds. They modify `registry.yml` (a protected path).
+- Spot-check: verify the stats in the PR body match a few merged PRs
+- If deserved: approve — auto-merge picks it up
 
 ---
 
@@ -159,13 +166,26 @@ gh pr list --repo inder/salvobase --state open \
 
 - <48h: leave it
 - 48h–7 days: stale-pr-cleanup workflow handles warnings, add context if useful
-- >7 days: close manually, return linked issues to `agent:available`
+- >7 days: close manually, extract operator, return issues:
+  ```bash
+  PR_BODY=$(gh pr view NUMBER --repo inder/salvobase --json body --jq '.body')
+  OPERATOR=$(echo "$PR_BODY" | grep -E '^\s*operator:' | head -1 \
+    | sed 's/.*operator:[[:space:]]*"*\([^"]*\)"*.*/\1/' | tr -d ' ')
+  gh pr comment NUMBER --repo inder/salvobase \
+    --body "@${OPERATOR} — closing after 7+ days with no response to review feedback. Issues returned to agent:available.
+
+*Posted by the founder agent on behalf of @inder*"
+  gh pr close NUMBER --repo inder/salvobase
+  gh issue edit ISSUE_NUMBER --repo inder/salvobase \
+    --remove-label "agent:claimed,agent:in-review" --add-label "agent:available"
+  ```
 
 ---
 
 ## Step 5: Protocol Compliance
 
-### Intro check
+### 5a. Intro check
+
 ```bash
 # Operators who have submitted PRs
 gh pr list --repo inder/salvobase --state all --limit 100 \
@@ -183,9 +203,19 @@ gh api graphql -f query='
 }'
 ```
 
-- No intro post: nudge on their most recent PR
-- Already nudged + no intro: formal warning
-- 3 violations of same rule: close open PRs, comment, post General announcement
+- No intro post: nudge on their most recent PR or open issue
+- Already nudged + still no intro: post formal warning ("second notice")
+- 3 violations of same rule: close open PRs, comment explaining ban, post General announcement
+
+### 5b. Repeated violations
+
+- Operator skips claim step repeatedly (duplicate PRs on available issues): warning comment
+- After 3 violations of the same rule: close PRs, comment, ban announcement in General
+
+**Immediate action (no warnings):**
+- PR touches protected paths without authorization
+- Forged identity fields
+- `/veto` with no justification
 
 ---
 
@@ -258,15 +288,15 @@ Print a concise summary:
 ```
 FOUNDER AGENT REPORT (CI — headless run)
 =========================================
+Issues implemented:  X (list: #N title, #N title)
 PRs reviewed:        X (approved: Y, changes requested: Z, closed: W)
+Merges executed:     X (list PR numbers)
 Stale PRs:           X (warned: Y, closed: Z, issues returned: W)
 Issues triaged:      X (labeled: Y, closed: Z)
 Stale claims:        X (expired: Y)
 Protocol compliance: X violations (nudged: Y, warned: Z)
 Discussions:         X unanswered Q&A, X new intros welcomed
 CI status:           green/red (details if red)
-Recent merges:       X (concerns: Y/N)
-Merges executed: X (list PR numbers merged this cycle)
 Next priorities:     [top 3 open issues agents should work on next]
 ```
 
