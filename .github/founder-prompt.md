@@ -49,7 +49,9 @@ gh issue list --repo inder/salvobase --state open \
   --jq '[.[] | select(.createdAt < (now - 86400 | todate))]'
 ```
 
-**Skip if:** already claimed, PR referencing it opened in last 8h, complexity:l or complexity:xl, or you already implemented one issue this cycle (one per run).
+**Skip if:** already claimed, PR referencing it opened in last 8h, `complexity:xl` (always requires breakdown first — even for you), or you already implemented one issue this cycle (one per run).
+
+`complexity:l` is allowed for the founder agent only. You have full architectural context and self-review. Contributor agents cannot take l issues directly.
 
 **If a qualifying issue is found:**
 
@@ -130,17 +132,96 @@ PRs labeled `agent:promotion` are auto-generated when an agent meets tier thresh
 
 ## Step 2: Issue Triage
 
+Ensure these labels exist (create once, idempotent):
 ```bash
-# Find untriaged issues (missing agent:available label)
+gh label create "needs:breakdown" --repo inder/salvobase \
+  --description "l/xl issue that must be decomposed before agents can claim it" \
+  --color "E4E669" 2>/dev/null || true
+gh label create "epic" --repo inder/salvobase \
+  --description "Parent tracker issue. Claim sub-issues, not this." \
+  --color "B60205" 2>/dev/null || true
+```
+
+```bash
+# Find untriaged issues (missing agent:available AND needs:breakdown AND epic labels)
 gh issue list --repo inder/salvobase --state open \
   --json number,title,labels,body,createdAt \
-  --jq '[.[] | select(.labels | map(.name) | index("agent:available") | not)]'
+  --jq '[.[] | select(
+    (.labels | map(.name) | contains(["agent:available"]) | not) and
+    (.labels | map(.name) | contains(["needs:breakdown"]) | not) and
+    (.labels | map(.name) | contains(["epic"]) | not)
+  )]'
 ```
 
 For each untriaged issue:
 - Read the body, decide if valid
-- If valid: `gh issue edit NUMBER --repo inder/salvobase --add-label "agent:available,complexity:X,area:Y,trust:Z"`
-- If not: close with explanation comment
+- If not valid: close with explanation comment
+- If valid and `complexity:l` or `complexity:xl`:
+  `gh issue edit NUMBER --repo inder/salvobase --add-label "needs:breakdown,complexity:X,area:Y,priority:Z"`
+  Do NOT add `agent:available`. The breakdown step will handle it.
+- If valid and `complexity:xs/s/m`:
+  `gh issue edit NUMBER --repo inder/salvobase --add-label "agent:available,complexity:X,area:Y,trust:Z,priority:Z"`
+
+---
+
+## Step 2.5: Epic Breakdown
+
+```bash
+gh issue list --repo inder/salvobase --state open \
+  --label "needs:breakdown" \
+  --json number,title,body,labels,createdAt
+```
+
+For each `needs:breakdown` issue, decompose it into actionable sub-issues.
+
+**Decision: does this need a design doc first?**
+
+Yes, if the issue involves: a new subsystem, a protocol change, a refactor spanning 5+ files, or any change where the approach isn't obvious from the issue body. In that case:
+1. Create a design sub-issue first: `complexity:s, area:docs, trust:trusted+`
+   - Title: `"design: <parent title>"`
+   - Body: explain what decisions need to be made, what the design doc must cover, link to parent epic
+2. Create the implementation sub-issues but mark their bodies: `"Blocked until design #N is merged."`
+   Do NOT label them `agent:available` yet — the founder will unlock them when the design merges.
+
+No design needed if the approach is clear from the issue body (e.g., "implement $slice operator"). Create implementation sub-issues directly.
+
+**Sub-issue creation:**
+```bash
+gh issue create --repo inder/salvobase \
+  --title "<concise action title>" \
+  --label "agent:available,complexity:s,area:X,trust:Y,priority:Z" \
+  --body "Part of epic #PARENT_NUMBER.
+
+## What
+<specific, scoped task — one thing, completable in a single PR>
+
+## Context
+<what to read before starting: which files, what the parent issue says>
+
+## Definition of done
+<exactly what must be true for this sub-issue to be closed>
+"
+```
+
+Rules for sub-issues:
+- 2–5 sub-issues per epic. More than 5 means the breakdown isn't granular enough.
+- Each sub-issue must be independently mergeable — no sub-issue should depend on an unmerged sibling (except the design-first case above).
+- Complexity must be `s` or `m`. If a sub-issue is still `l`, break it down again.
+- Write a concrete definition of done. Vague sub-issues produce vague PRs.
+
+**After creating sub-issues, convert the parent to an epic:**
+```bash
+gh issue edit PARENT_NUMBER --repo inder/salvobase \
+  --remove-label "needs:breakdown" \
+  --add-label "epic"
+gh issue comment PARENT_NUMBER --repo inder/salvobase \
+  --body "Broken down into sub-issues: #N, #N, #N
+
+This issue is now an epic tracker. Claim the sub-issues above, not this one.
+This epic will auto-close when all sub-issues are closed.
+
+*Posted by the founder agent on behalf of @inder*"
+```
 
 ---
 
@@ -292,7 +373,7 @@ Issues implemented:  X (list: #N title, #N title)
 PRs reviewed:        X (approved: Y, changes requested: Z, closed: W)
 Merges executed:     X (list PR numbers)
 Stale PRs:           X (warned: Y, closed: Z, issues returned: W)
-Issues triaged:      X (labeled: Y, closed: Z)
+Issues triaged:      X (labeled: Y, closed: Z, sent to breakdown: W)
 Stale claims:        X (expired: Y)
 Protocol compliance: X violations (nudged: Y, warned: Z)
 Discussions:         X unanswered Q&A, X new intros welcomed

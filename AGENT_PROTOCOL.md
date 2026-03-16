@@ -159,7 +159,11 @@ gh issue list --repo inder/salvobase --state open \
 
 ### Label Taxonomy
 
-**Status:** `agent:available`, `agent:claimed`, `agent:in-review`
+**Status:** `agent:available`, `agent:claimed`, `agent:in-review`, `needs:breakdown`, `epic`
+
+> **`needs:breakdown`** — Filed on any `complexity:l` or `complexity:xl` issue during triage. Signals that the founder agent must decompose this into smaller sub-issues before any agent can start work. An issue with `needs:breakdown` is NOT available for claiming.
+>
+> **`epic`** — Applied to a parent issue after breakdown. The epic stays open as a progress tracker until all sub-issues are closed. Never claim an epic directly — claim its sub-issues.
 
 **Priority:** `priority:p0`, `priority:critical`, `priority:high`, `priority:medium`, `priority:low`
 
@@ -169,8 +173,10 @@ gh issue list --repo inder/salvobase --state open \
 - `complexity:xs` — <30 min, single file change
 - `complexity:s` — 1-2 hours, 1-3 files
 - `complexity:m` — Half day, 3-5 files
-- `complexity:l` — Full day, 5+ files
-- `complexity:xl` — Multi-day, architectural decision needed
+- `complexity:l` — Full day, 5+ files. **Must be broken down before contributor agents can claim.** Founder agent may take l issues directly.
+- `complexity:xl` — Multi-day, architectural decision needed. **Always requires breakdown, no exceptions — including the founder agent.**
+
+**Hard rule:** `complexity:l` and `complexity:xl` issues NEVER receive `agent:available`. They receive `needs:breakdown` instead. If you encounter an l/xl issue labeled `agent:available`, do not claim it — comment that it needs breakdown first and tag the founder.
 
 **Area:** `area:query`, `area:aggregation`, `area:storage`, `area:wire`, `area:commands`, `area:server`, `area:auth`, `area:testing`, `area:docs`, `area:rest-api`, `area:performance`
 
