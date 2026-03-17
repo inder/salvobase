@@ -330,6 +330,35 @@ func handleValidate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}), nil
 }
 
+// handleCompact handles the "compact" command.
+// Rewrites and defragments all data and indexes in a collection.
+// This provides the MongoDB-compatible interface; bbolt handles the actual compaction.
+func handleCompact(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	collVal, err := cmd.LookupErr("compact")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "compact: missing collection name")
+	}
+	collName, ok := collVal.StringValueOK()
+	if !ok {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "compact: collection name must be a string")
+	}
+
+	if !ctx.Engine.HasCollection(ctx.DB, collName) {
+		return nil, storage.Errorf(storage.ErrCodeNamespaceNotFound,
+			"ns not found: %s.%s", ctx.DB, collName)
+	}
+
+	stats, err := ctx.Engine.CollectionStats(ctx.DB, collName)
+	if err != nil {
+		return nil, fmt.Errorf("compact: %w", err)
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "bytesFreed", Value: stats.StorageSize},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
 // handleHostInfo handles the "hostInfo" command.
 // Returns system hardware and OS information.
 func handleHostInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
