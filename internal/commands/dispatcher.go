@@ -117,6 +117,8 @@ func (d *Dispatcher) registerAll() {
 	d.register("features", handleFeatures)
 	d.register("logout", handleLogout)
 	d.register("explain", handleExplain)
+	d.register("currentop", handleCurrentOp)
+	d.register("currentOp", handleCurrentOp)
 	d.register("hostinfo", handleHostInfo)
 	d.register("hostInfo", handleHostInfo)
 	d.register("getcmdlineopts", handleGetCmdLineOpts)
