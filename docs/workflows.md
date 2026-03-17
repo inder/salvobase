@@ -115,7 +115,7 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 ---
 
 ### `compat.yml` — Compatibility Matrix
-**Trigger:** Push to master, weekly schedule
+**Trigger:** Push to master, weekly schedule, manual
 **What it does:** Runs the compat probe tool against both Salvobase and MongoDB Community, computes a compatibility score per operator/stage/command, and commits results to the repo. Surfaces regression when a previously passing probe starts failing.
 
 **Secrets:** `GITHUB_TOKEN`
@@ -214,7 +214,7 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 | `agent-promotion-v2.yml` | PR merged | Tier promotion check |
 | `promotion-celebration.yml` | Promotion PR merged | Celebration post |
 | `ci.yml` | Push/PR | Build + test + lint |
-| `compat.yml` | Push/weekly | MongoDB compat score |
+| `compat.yml` | Push/weekly/manual | MongoDB compat score |
 | `benchmark.yml` | Nightly | Perf vs MongoDB + north star |
 | `orchestrator.yml` | Every 15min | Claim expiry + stale PR warnings |
 | `stale-pr-cleanup.yml` | Daily | Close 7d+ stale PRs |
