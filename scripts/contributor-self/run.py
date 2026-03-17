@@ -10,29 +10,15 @@ import sys
 slot = os.environ.get("AGENT_SLOT", "1")
 target = os.environ.get("TARGET_ISSUE", "").strip()
 
-if target:
+if target and target != "none":
     issue_directive = (
-        f"Your target issue is #{target}. "
+        f"Your target issue is #{target}. It has already been claimed for you. "
         f"Go directly to it — read the issue body, implement it, open a PR, merge it."
     )
 else:
     issue_directive = (
-        "Auto-select the highest priority available issue:\n"
-        "```bash\n"
-        "gh issue list --repo inder/salvobase --state open \\\n"
-        "  --label \"agent:available\" --limit 50 \\\n"
-        "  --json number,title,labels \\\n"
-        "  --jq '[\n"
-        "    .[] | select(.labels|map(.name)|contains([\"agent:claimed\"])|not)\n"
-        "  ] | sort_by(\n"
-        "    if (.labels|map(.name)|contains([\"priority:p0\"])) then 0\n"
-        "    elif (.labels|map(.name)|contains([\"priority:critical\"])) then 1\n"
-        "    elif (.labels|map(.name)|contains([\"priority:high\"])) then 2\n"
-        "    elif (.labels|map(.name)|contains([\"priority:medium\"])) then 3\n"
-        "    else 4 end\n"
-        "  ) | .[0]'\n"
-        "```\n"
-        "Skip issues where a PR referencing them was opened in the last 8 hours."
+        "No issue was assigned to this slot (backlog is empty or fully claimed). "
+        "Post a summary to General discussions saying the backlog is clear, then exit."
     )
 
 prompt = f"""You are a founder-tier contributor agent (slot {slot}) for Salvobase, running headlessly in GitHub Actions.
@@ -41,21 +27,14 @@ You are operating as @inder with full maintainer trust. You can push branches an
 {issue_directive}
 
 ## Your job (one issue per run)
-1. Pick the issue (per the directive above).
-2. **Claim it immediately before doing anything else:**
-   ```bash
-   gh issue edit NUMBER --repo inder/salvobase --add-label "agent:claimed" --remove-label "agent:available"
-   gh issue assign NUMBER --repo inder/salvobase --assignee "@me"
-   ```
-   Then re-check: if the issue now shows `agent:claimed` by someone else (race condition), pick the next available issue and claim that one instead.
-3. Read the issue body in full — `gh issue view NUMBER --repo inder/salvobase`
-4. Read ARCHITECTURE.md and the relevant source files. Do not guess at structure.
-5. Implement the fix and tests.
-6. Create a branch: `founder-s{slot}/$(date +%Y%m%d)-issue-NUMBER`
-7. Commit with: `git add <specific files>` (never `git add .`)
-8. Push and open a PR to master.
-9. Merge immediately: `gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin --body "Auto-merged by founder agent (slot {slot})."`
-10. Comment on the issue summarising what changed.
+1. Read the issue body in full — `gh issue view NUMBER --repo inder/salvobase`
+2. Read ARCHITECTURE.md and the relevant source files. Do not guess at structure.
+3. Implement the fix and tests.
+4. Create a branch: `founder-s{slot}/$(date +%Y%m%d)-issue-NUMBER`
+5. Commit with: `git add <specific files>` (never `git add .`)
+6. Push and open a PR to master.
+7. Merge immediately: `gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin --body "Auto-merged by founder agent (slot {slot})."`
+8. Comment on the issue summarising what changed.
 
 ## PR body template
 ```

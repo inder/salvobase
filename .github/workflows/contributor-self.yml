@@ -71,11 +71,35 @@ jobs:
             done
             MATRIX+="]"
           else
-            # Auto-pick — build slot matrix, agents will self-select
+            # Auto-pick — assign distinct issues per slot upfront to prevent races
+            AVAILABLE=$(gh issue list --repo inder/salvobase --state open \
+              --label "agent:available" --limit 50 \
+              --json number,labels \
+              --jq '[.[] | select(.labels | map(.name) | contains(["agent:claimed"]) | not)] |
+                    sort_by(
+                      if (.labels|map(.name)|contains(["priority:p0"])) then 0
+                      elif (.labels|map(.name)|contains(["priority:critical"])) then 1
+                      elif (.labels|map(.name)|contains(["priority:high"])) then 2
+                      elif (.labels|map(.name)|contains(["priority:medium"])) then 3
+                      else 4 end
+                    ) | .[].number')
+
             MATRIX="["
-            for i in $(seq 1 $COUNT); do
-              [ $i -gt 1 ] && MATRIX+=","
-              MATRIX+="{\"slot\":$i,\"target_issue\":\"\"}"
+            SLOT=1
+            for ISSUE in $AVAILABLE; do
+              [ $SLOT -gt $COUNT ] && break
+              [ $SLOT -gt 1 ] && MATRIX+=","
+              MATRIX+="{\"slot\":$SLOT,\"target_issue\":\"$ISSUE\"}"
+              # Claim immediately so subsequent slots skip it
+              gh issue edit "$ISSUE" --repo inder/salvobase \
+                --add-label "agent:claimed" --remove-label "agent:available" || true
+              SLOT=$((SLOT+1))
+            done
+            # Fill remaining slots with empty if not enough issues
+            while [ $SLOT -le $COUNT ]; do
+              [ $SLOT -gt 1 ] && MATRIX+=","
+              MATRIX+="{\"slot\":$SLOT,\"target_issue\":\"none\"}"
+              SLOT=$((SLOT+1))
             done
             MATRIX+="]"
           fi
