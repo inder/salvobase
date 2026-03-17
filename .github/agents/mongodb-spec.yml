@@ -440,3 +440,283 @@ aggregation_stages:
     priority: "low"
     mongo_doc: "https://www.mongodb.com/docs/atlas/atlas-search/"
     notes: "Atlas Search equivalent. Major feature, probably needs a separate search engine."
+
+# ============================================================================
+# AGGREGATION EXPRESSIONS — used in internal/aggregation/expressions.go
+#
+# Methodology: extracted from evalOperatorExpr() switch in expressions.go,
+# then cross-referenced against the MongoDB Aggregation Expression Operators
+# reference at https://www.mongodb.com/docs/manual/reference/operator/aggregation/
+# ============================================================================
+aggregation_expressions:
+  # --- Arithmetic (all implemented) ---
+  - { name: "$add",      status: "implemented" }
+  - { name: "$subtract", status: "implemented" }
+  - { name: "$multiply", status: "implemented" }
+  - { name: "$divide",   status: "implemented" }
+  - { name: "$mod",      status: "implemented" }
+  - { name: "$abs",      status: "implemented" }
+  - { name: "$ceil",     status: "implemented" }
+  - { name: "$floor",    status: "implemented" }
+  - { name: "$sqrt",     status: "implemented" }
+  - { name: "$exp",      status: "implemented" }
+  - { name: "$ln",       status: "implemented" }
+  - { name: "$log10",    status: "implemented" }
+  - { name: "$trunc",    status: "implemented" }
+  - { name: "$round",    status: "implemented" }
+  - { name: "$pow",      status: "implemented" }
+  - { name: "$log",      status: "implemented" }
+
+  # --- Array (all implemented) ---
+  - { name: "$arrayElemAt",  status: "implemented" }
+  - { name: "$concatArrays", status: "implemented" }
+  - { name: "$filter",       status: "implemented" }
+  - { name: "$first",        status: "implemented" }
+  - { name: "$last",         status: "implemented" }
+  - { name: "$in",           status: "implemented" }
+  - { name: "$indexOfArray", status: "implemented" }
+  - { name: "$isArray",      status: "implemented" }
+  - { name: "$map",          status: "implemented" }
+  - { name: "$reduce",       status: "implemented" }
+  - { name: "$reverseArray", status: "implemented" }
+  - { name: "$size",         status: "implemented" }
+  - { name: "$slice",        status: "implemented" }
+  - { name: "$zip",          status: "implemented" }
+  - { name: "$range",        status: "implemented" }
+  - { name: "$objectToArray", status: "implemented" }
+  - { name: "$arrayToObject", status: "implemented" }
+
+  # --- String (all implemented) ---
+  - { name: "$concat",       status: "implemented" }
+  - { name: "$toLower",      status: "implemented" }
+  - { name: "$toUpper",      status: "implemented" }
+  - { name: "$trim",         status: "implemented" }
+  - { name: "$ltrim",        status: "implemented" }
+  - { name: "$rtrim",        status: "implemented" }
+  - { name: "$split",        status: "implemented" }
+  - { name: "$strLenBytes",  status: "implemented" }
+  - { name: "$strLenCP",     status: "implemented" }
+  - { name: "$substr",       status: "implemented" }
+  - { name: "$substrBytes",  status: "implemented" }
+  - { name: "$substrCP",     status: "implemented" }
+  - { name: "$indexOfBytes", status: "implemented" }
+  - { name: "$indexOfCP",    status: "implemented" }
+  - { name: "$strcasecmp",   status: "implemented" }
+  - { name: "$regexFind",    status: "implemented" }
+  - { name: "$regexFindAll", status: "implemented" }
+  - { name: "$regexMatch",   status: "implemented" }
+  - { name: "$replaceOne",   status: "implemented" }
+  - { name: "$replaceAll",   status: "implemented" }
+
+  # --- Conditional (all implemented) ---
+  - { name: "$cond",   status: "implemented" }
+  - { name: "$ifNull", status: "implemented" }
+  - { name: "$switch", status: "implemented" }
+
+  # --- Date (all implemented) ---
+  - { name: "$year",           status: "implemented" }
+  - { name: "$month",          status: "implemented" }
+  - { name: "$dayOfMonth",     status: "implemented" }
+  - { name: "$hour",           status: "implemented" }
+  - { name: "$minute",         status: "implemented" }
+  - { name: "$second",         status: "implemented" }
+  - { name: "$millisecond",    status: "implemented" }
+  - { name: "$dayOfYear",      status: "implemented" }
+  - { name: "$dayOfWeek",      status: "implemented" }
+  - { name: "$week",           status: "implemented" }
+  - { name: "$isoWeek",        status: "implemented" }
+  - { name: "$isoDayOfWeek",   status: "implemented" }
+  - { name: "$isoWeekYear",    status: "implemented" }
+  - { name: "$dateToString",   status: "implemented" }
+  - { name: "$dateFromString", status: "implemented" }
+  - { name: "$toDate",         status: "implemented" }
+  - { name: "$now",            status: "implemented" }
+  - { name: "$dateAdd",        status: "implemented" }
+  - { name: "$dateDiff",       status: "implemented" }
+  - { name: "$dateTrunc",      status: "implemented" }
+
+  # --- Comparison (all implemented) ---
+  - { name: "$cmp", status: "implemented" }
+  - { name: "$eq",  status: "implemented" }
+  - { name: "$ne",  status: "implemented" }
+  - { name: "$gt",  status: "implemented" }
+  - { name: "$gte", status: "implemented" }
+  - { name: "$lt",  status: "implemented" }
+  - { name: "$lte", status: "implemented" }
+
+  # --- Boolean (all implemented) ---
+  - { name: "$and", status: "implemented" }
+  - { name: "$or",  status: "implemented" }
+  - { name: "$not", status: "implemented" }
+
+  # --- Type conversion (all implemented) ---
+  - { name: "$type",       status: "implemented" }
+  - { name: "$convert",    status: "implemented" }
+  - { name: "$toString",   status: "implemented" }
+  - { name: "$toDouble",   status: "implemented" }
+  - { name: "$toInt",      status: "implemented" }
+  - { name: "$toLong",     status: "implemented" }
+  - { name: "$toDecimal",  status: "implemented" }
+  - { name: "$toBool",     status: "implemented" }
+  - { name: "$toObjectId", status: "implemented" }
+
+  # --- Set (all implemented) ---
+  - { name: "$setEquals",       status: "implemented" }
+  - { name: "$setIntersection", status: "implemented" }
+  - { name: "$setUnion",        status: "implemented" }
+  - { name: "$setDifference",   status: "implemented" }
+  - { name: "$setIsSubset",     status: "implemented" }
+  - { name: "$anyElementTrue",  status: "implemented" }
+  - { name: "$allElementsTrue", status: "implemented" }
+
+  # --- Miscellaneous (all implemented) ---
+  - { name: "$literal",          status: "implemented" }
+  - { name: "$mergeObjects",     status: "implemented" }
+  - { name: "$toHashedIndexKey", status: "implemented" }
+  - { name: "$let",              status: "implemented" }
+
+  # --- Missing expressions (MongoDB 5.0+) ---
+
+  - name: "$getField"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/getField/"
+    notes: "Returns field value from a document, supporting field names with dots/dollar signs. MongoDB 5.0+."
+
+  - name: "$setField"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/setField/"
+    notes: "Adds/updates a field in a document expression. Companion to $getField. MongoDB 5.0+."
+
+  - name: "$unsetField"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/unsetField/"
+    notes: "Removes a field from a document expression. Syntactic sugar over $setField with $$REMOVE. MongoDB 5.0+."
+
+  - name: "$sortArray"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/sortArray/"
+    notes: "Sorts an array by a sort specification. MongoDB 5.2+. Useful for ordered output without $unwind+$sort."
+
+  - name: "$firstN"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/firstN/"
+    notes: "Returns first N elements of an array (expression form). MongoDB 5.2+. Complements existing $first."
+
+  - name: "$lastN"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "medium"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/lastN/"
+    notes: "Returns last N elements of an array (expression form). MongoDB 5.2+. Complements existing $last."
+
+  - name: "$maxN"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/maxN/"
+    notes: "Returns N largest values from an array. MongoDB 5.2+."
+
+  - name: "$minN"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/minN/"
+    notes: "Returns N smallest values from an array. MongoDB 5.2+."
+
+  - name: "$rand"
+    status: "missing"
+    area: "aggregation"
+    complexity: "xs"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/rand/"
+    notes: "Returns a random float between 0 and 1. MongoDB 4.4.2+. Useful for probabilistic sampling."
+
+  - name: "$dateToParts"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/dateToParts/"
+    notes: "Returns date components (year, month, day, etc.) as a document. Inverse of $dateFromParts."
+
+  - name: "$dateFromParts"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/dateFromParts/"
+    notes: "Constructs a date from individual date fields (year, month, day, etc.). Inverse of $dateToParts."
+
+  - name: "$bsonSize"
+    status: "missing"
+    area: "aggregation"
+    complexity: "xs"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/bsonSize/"
+    notes: "Returns size of a BSON document in bytes. Useful for storage diagnostics. MongoDB 4.4+."
+
+  - name: "$tsSecond"
+    status: "missing"
+    area: "aggregation"
+    complexity: "xs"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/tsSecond/"
+    notes: "Extracts seconds component from a BSON Timestamp. MongoDB 5.1+."
+
+  - name: "$tsIncrement"
+    status: "missing"
+    area: "aggregation"
+    complexity: "xs"
+    trust: "newcomer-ok"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/tsIncrement/"
+    notes: "Extracts increment component from a BSON Timestamp. MongoDB 5.1+."
+
+  - name: "$percentile"
+    status: "missing"
+    area: "aggregation"
+    complexity: "m"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/percentile/"
+    notes: "Calculates percentile value(s) for a dataset. MongoDB 7.0+. Useful for analytics."
+
+  - name: "$median"
+    status: "missing"
+    area: "aggregation"
+    complexity: "s"
+    trust: "contributor+"
+    priority: "low"
+    mongo_doc: "https://www.mongodb.com/docs/manual/reference/operator/aggregation/median/"
+    notes: "Calculates median (50th percentile) of a dataset. MongoDB 7.0+. Shorthand for $percentile at 0.5."
