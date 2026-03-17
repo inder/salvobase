@@ -5237,6 +5237,137 @@ func TestShutdownCommandRegistered(t *testing.T) {
 	}
 }
 
+// ─── rolesInfo ────────────────────────────────────────────────────────────────
+
+func TestRolesInfoCommandRegistered(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// rolesInfo: 1 should return ok:1, not CommandNotFound.
+	res := client.Database("admin").RunCommand(ctx, bson.D{{Key: "rolesInfo", Value: 1}})
+	if err := res.Err(); err != nil {
+		var cmdErr mongo.CommandError
+		if errors.As(err, &cmdErr) && cmdErr.Code == 59 {
+			t.Fatalf("rolesInfo command is not registered (CommandNotFound)")
+		}
+		t.Fatalf("rolesInfo returned unexpected error: %v", err)
+	}
+
+	var result bson.M
+	if err := res.Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result["ok"] != float64(1) {
+		t.Errorf("expected ok:1, got %v", result["ok"])
+	}
+}
+
+func TestRolesInfoShowBuiltinRoles(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	res := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "rolesInfo", Value: 1},
+		{Key: "showBuiltinRoles", Value: true},
+	})
+	if err := res.Err(); err != nil {
+		t.Fatalf("rolesInfo with showBuiltinRoles: %v", err)
+	}
+
+	var result bson.M
+	if err := res.Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	roles, ok := result["roles"].(bson.A)
+	if !ok {
+		t.Fatalf("expected roles array, got %T", result["roles"])
+	}
+	if len(roles) == 0 {
+		t.Errorf("expected built-in roles in admin db, got empty array")
+	}
+}
+
+func TestRolesInfoSingleRole(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	res := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "rolesInfo", Value: bson.D{
+			{Key: "role", Value: "read"},
+			{Key: "db", Value: "admin"},
+		}},
+	})
+	if err := res.Err(); err != nil {
+		t.Fatalf("rolesInfo single role: %v", err)
+	}
+
+	var result bson.M
+	if err := res.Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result["ok"] != float64(1) {
+		t.Errorf("expected ok:1, got %v", result["ok"])
+	}
+
+	roles, ok := result["roles"].(bson.A)
+	if !ok {
+		t.Fatalf("expected roles array, got %T", result["roles"])
+	}
+	if len(roles) != 1 {
+		t.Errorf("expected 1 role, got %d", len(roles))
+	}
+}
+
+func TestRolesInfoByString(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	res := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "rolesInfo", Value: "read"},
+	})
+	if err := res.Err(); err != nil {
+		t.Fatalf("rolesInfo by string: %v", err)
+	}
+
+	var result bson.M
+	if err := res.Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	roles, ok := result["roles"].(bson.A)
+	if !ok {
+		t.Fatalf("expected roles array, got %T", result["roles"])
+	}
+	if len(roles) != 1 {
+		t.Errorf("expected 1 role for 'read', got %d", len(roles))
+	}
+}
+
+func TestRolesInfoNonExistentRole(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// A non-existent custom role should return an empty array (not an error).
+	res := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "rolesInfo", Value: "nonExistentCustomRole12345"},
+	})
+	if err := res.Err(); err != nil {
+		t.Fatalf("rolesInfo non-existent role: %v", err)
+	}
+
+	var result bson.M
+	if err := res.Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	roles, ok := result["roles"].(bson.A)
+	if !ok {
+		t.Fatalf("expected roles array, got %T", result["roles"])
+	}
+	if len(roles) != 0 {
+		t.Errorf("expected empty array for non-existent role, got %d entries", len(roles))
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
