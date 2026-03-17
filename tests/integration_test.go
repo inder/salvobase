@@ -3899,6 +3899,265 @@ func TestArrayQueryEdgeCases(t *testing.T) {
 	})
 }
 
+// ─── Update operator edge cases (#22) ────────────────────────────────────────
+
+func TestUpdateOperatorEdgeCases(t *testing.T) {
+	client := newClient(t)
+	db := testDB(t)
+	coll := client.Database(db).Collection("docs")
+	ctx := context.Background()
+
+	t.Run("$inc on missing field creates it", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "inctest"}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$inc", Value: bson.D{{Key: "counter", Value: int32(5)}}}})
+		if err != nil {
+			t.Fatalf("$inc missing field: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		if r["counter"] != int32(5) {
+			t.Errorf("$inc missing: expected 5, got %v", r["counter"])
+		}
+	})
+
+	t.Run("$inc with negative value", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "n", Value: int32(10)}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$inc", Value: bson.D{{Key: "n", Value: int32(-3)}}}})
+		if err != nil {
+			t.Fatalf("$inc negative: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		if r["n"] != int32(7) {
+			t.Errorf("$inc negative: expected 7, got %v", r["n"])
+		}
+	})
+
+	t.Run("$mul on missing field sets to 0", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "multest"}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$mul", Value: bson.D{{Key: "factor", Value: int32(5)}}}})
+		if err != nil {
+			t.Fatalf("$mul missing: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		if r["factor"] != int32(0) {
+			t.Errorf("$mul missing: expected 0, got %v", r["factor"])
+		}
+	})
+
+	t.Run("$rename field", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "oldName", Value: "value123"}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$rename", Value: bson.D{{Key: "oldName", Value: "newName"}}}})
+		if err != nil {
+			t.Fatalf("$rename: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		if _, exists := r["oldName"]; exists {
+			t.Error("$rename: oldName should be gone")
+		}
+		if r["newName"] != "value123" {
+			t.Errorf("$rename: expected newName=value123, got %v", r["newName"])
+		}
+	})
+
+	t.Run("$unset on nested field", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{
+			{Key: "profile", Value: bson.D{
+				{Key: "age", Value: int32(30)},
+				{Key: "secret", Value: "hidden"},
+			}},
+		})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$unset", Value: bson.D{{Key: "profile.secret", Value: ""}}}})
+		if err != nil {
+			t.Fatalf("$unset nested: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		profile := r["profile"].(bson.D)
+		profileMap := make(map[string]interface{})
+		for _, e := range profile {
+			profileMap[e.Key] = e.Value
+		}
+		if _, exists := profileMap["secret"]; exists {
+			t.Error("$unset nested: secret should be gone")
+		}
+		if profileMap["age"] != int32(30) {
+			t.Errorf("$unset nested: age should be preserved, got %v", profileMap["age"])
+		}
+	})
+
+	t.Run("$push with $each and $sort", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "scores", Value: bson.A{int32(5), int32(3)}}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$push", Value: bson.D{{Key: "scores", Value: bson.D{
+				{Key: "$each", Value: bson.A{int32(1), int32(4)}},
+				{Key: "$sort", Value: int32(1)},
+			}}}}})
+		if err != nil {
+			t.Fatalf("$push $each $sort: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		scores := r["scores"].(bson.A)
+		if len(scores) != 4 {
+			t.Fatalf("$push $each $sort: expected 4 elements, got %d", len(scores))
+		}
+		expected := []int32{1, 3, 4, 5}
+		for i, exp := range expected {
+			if scores[i] != exp {
+				t.Errorf("scores[%d]: expected %d, got %v", i, exp, scores[i])
+			}
+		}
+	})
+
+	t.Run("$push with $each and $slice", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "log", Value: bson.A{"a", "b"}}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$push", Value: bson.D{{Key: "log", Value: bson.D{
+				{Key: "$each", Value: bson.A{"c", "d", "e"}},
+				{Key: "$slice", Value: int32(-3)},
+			}}}}})
+		if err != nil {
+			t.Fatalf("$push $each $slice: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		log := r["log"].(bson.A)
+		if len(log) != 3 {
+			t.Fatalf("$push $slice: expected 3 elements, got %d: %v", len(log), log)
+		}
+		expected := []string{"c", "d", "e"}
+		for i, exp := range expected {
+			if log[i] != exp {
+				t.Errorf("log[%d]: expected %s, got %v", i, exp, log[i])
+			}
+		}
+	})
+
+	t.Run("$addToSet deduplication", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "tags", Value: bson.A{"a", "b"}}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$addToSet", Value: bson.D{{Key: "tags", Value: "b"}}}})
+		if err != nil {
+			t.Fatalf("$addToSet dup: %v", err)
+		}
+		_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$addToSet", Value: bson.D{{Key: "tags", Value: "c"}}}})
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		tags := r["tags"].(bson.A)
+		if len(tags) != 3 {
+			t.Errorf("$addToSet: expected 3 tags (no dup), got %d: %v", len(tags), tags)
+		}
+	})
+
+	t.Run("$pop last element", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "arr", Value: bson.A{int32(1), int32(2), int32(3)}}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$pop", Value: bson.D{{Key: "arr", Value: int32(1)}}}})
+		if err != nil {
+			t.Fatalf("$pop last: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		arr := r["arr"].(bson.A)
+		if len(arr) != 2 {
+			t.Fatalf("$pop last: expected 2 elements, got %d", len(arr))
+		}
+		if arr[1] != int32(2) {
+			t.Errorf("$pop last: expected arr[1]=2, got %v", arr[1])
+		}
+	})
+
+	t.Run("$pop first element", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "arr", Value: bson.A{int32(1), int32(2), int32(3)}}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$pop", Value: bson.D{{Key: "arr", Value: int32(-1)}}}})
+		if err != nil {
+			t.Fatalf("$pop first: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		arr := r["arr"].(bson.A)
+		if len(arr) != 2 {
+			t.Fatalf("$pop first: expected 2 elements, got %d", len(arr))
+		}
+		if arr[0] != int32(2) {
+			t.Errorf("$pop first: expected arr[0]=2, got %v", arr[0])
+		}
+	})
+
+	t.Run("$pull with condition", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "scores", Value: bson.A{int32(10), int32(20), int32(5), int32(30)}}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$pull", Value: bson.D{{Key: "scores", Value: bson.D{{Key: "$lt", Value: int32(15)}}}}}})
+		if err != nil {
+			t.Fatalf("$pull: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		scores := r["scores"].(bson.A)
+		if len(scores) != 2 {
+			t.Fatalf("$pull: expected 2 remaining, got %d: %v", len(scores), scores)
+		}
+		for _, s := range scores {
+			v := s.(int32)
+			if v < int32(15) {
+				t.Errorf("$pull: value %d should have been removed", v)
+			}
+		}
+	})
+
+	t.Run("$bit AND", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "flags", Value: int32(0b1111)}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "and", Value: int32(0b1010)}}}}}})
+		if err != nil {
+			t.Fatalf("$bit and: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		if r["flags"] != int32(0b1010) {
+			t.Errorf("$bit and: expected 10, got %v", r["flags"])
+		}
+	})
+
+	t.Run("$bit OR", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "flags", Value: int32(0b1010)}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "or", Value: int32(0b0101)}}}}}})
+		if err != nil {
+			t.Fatalf("$bit or: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		if r["flags"] != int32(0b1111) {
+			t.Errorf("$bit or: expected 15, got %v", r["flags"])
+		}
+	})
+
+	t.Run("$bit XOR", func(t *testing.T) {
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "flags", Value: int32(0b1111)}})
+		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
+			bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "xor", Value: int32(0b1010)}}}}}})
+		if err != nil {
+			t.Fatalf("$bit xor: %v", err)
+		}
+		var r bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
+		if r["flags"] != int32(0b0101) {
+			t.Errorf("$bit xor: expected 5, got %v", r["flags"])
+		}
+	})
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
