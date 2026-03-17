@@ -1706,6 +1706,66 @@ func TestAggregateFacet(t *testing.T) {
 	}
 }
 
+// ─── $facet deterministic field order ────────────────────────────────────────
+
+// TestAggregateFacetFieldOrder verifies that $facet output fields appear in the
+// same order as the input specification across multiple runs (not map iteration order).
+func TestAggregateFacetFieldOrder(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "x", Value: 1}},
+		bson.D{{Key: "x", Value: 2}},
+		bson.D{{Key: "x", Value: 3}},
+	})
+
+	// Run $facet multiple times and assert field order is always "alpha", "beta", "gamma".
+	pipeline := mongo.Pipeline{
+		bson.D{{Key: "$facet", Value: bson.D{
+			{Key: "alpha", Value: bson.A{
+				bson.D{{Key: "$match", Value: bson.D{{Key: "x", Value: bson.D{{Key: "$lte", Value: 1}}}}}},
+			}},
+			{Key: "beta", Value: bson.A{
+				bson.D{{Key: "$match", Value: bson.D{{Key: "x", Value: bson.D{{Key: "$lte", Value: 2}}}}}},
+			}},
+			{Key: "gamma", Value: bson.A{
+				bson.D{{Key: "$match", Value: bson.D{{Key: "x", Value: bson.D{{Key: "$lte", Value: 3}}}}}},
+			}},
+		}}},
+	}
+
+	for run := 0; run < 10; run++ {
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("run %d: Aggregate: %v", run, err)
+		}
+		var raw bson.Raw
+		if cursor.Next(ctx) {
+			if err := cursor.Decode(&raw); err != nil {
+				_ = cursor.Close(ctx)
+				t.Fatalf("run %d: Decode: %v", run, err)
+			}
+		}
+		_ = cursor.Close(ctx)
+
+		elems, err := raw.Elements()
+		if err != nil {
+			t.Fatalf("run %d: Elements: %v", run, err)
+		}
+		want := []string{"alpha", "beta", "gamma"}
+		if len(elems) != len(want) {
+			t.Fatalf("run %d: expected %d fields, got %d", run, len(want), len(elems))
+		}
+		for i, e := range elems {
+			if e.Key() != want[i] {
+				t.Errorf("run %d: field[%d]: want %q, got %q", run, i, want[i], e.Key())
+			}
+		}
+	}
+}
+
 // ─── Null/missing field filter edge cases ────────────────────────────────────
 
 func TestNullAndMissingFilter(t *testing.T) {
