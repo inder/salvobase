@@ -139,6 +139,9 @@ func (d *Dispatcher) registerAll() {
 	d.register("grantrolestouser", handleGrantRolesToUser)
 	d.register("revokerolesfromuser", handleRevokeRolesFromUser)
 
+	// Server lifecycle
+	d.register("shutdown", handleShutdown)
+
 	// Cursors / Sessions
 	d.register("getmore", handleGetMore)
 	d.register("killcursors", handleKillCursors)
