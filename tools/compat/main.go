@@ -496,6 +496,49 @@ func main() {
 	run("$mod", "Query Operators", queryOp("$mod",
 		bson.D{{Key: "n", Value: bson.D{{Key: "$mod", Value: bson.A{2, 1}}}}}, 1))
 
+	run("$expr", "Query Operators", func(c context.Context) CompatResult {
+		coll := db.Collection("qop_expr")
+		_, _ = coll.InsertMany(c, []interface{}{
+			bson.D{{Key: "a", Value: 5}, {Key: "b", Value: 3}},
+			bson.D{{Key: "a", Value: 2}, {Key: "b", Value: 8}},
+		})
+		// find docs where a > b — only the first doc matches
+		cur, err := coll.Find(c, bson.D{{Key: "$expr", Value: bson.D{{Key: "$gt", Value: bson.A{"$a", "$b"}}}}})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var res []bson.D
+		if err := cur.All(c, &res); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(res) != 1 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("expected 1 result (a>b), got %d", len(res))}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
+	run("dot-notation into nested arrays", "Query Operators", func(c context.Context) CompatResult {
+		coll := db.Collection("qop_dotnested")
+		_, _ = coll.InsertOne(c, bson.D{{Key: "items", Value: bson.A{
+			bson.D{{Key: "name", Value: "apple"}},
+			bson.D{{Key: "name", Value: "banana"}},
+		}}})
+		cur, err := coll.Find(c, bson.D{{Key: "items.name", Value: "apple"}})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var res []bson.D
+		if err := cur.All(c, &res); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(res) != 1 {
+			return CompatResult{Status: "fail", Note: fmt.Sprintf("expected 1 doc via dot-notation into nested array, got %d", len(res))}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
 	// ─── Update Operators ──────────────────────────────────────────────────────
 
 	log.Println("=== Update Operators ===")
@@ -760,6 +803,98 @@ func main() {
 		var docs []bson.D
 		if err := cur.All(c, &docs); err != nil {
 			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
+	run("$set (pipeline stage)", "Aggregation Stages", func(c context.Context) CompatResult {
+		coll := db.Collection("agg_set_stage")
+		_, _ = coll.InsertOne(c, bson.D{{Key: "x", Value: 1}})
+		cur, err := coll.Aggregate(c, bson.A{
+			bson.D{{Key: "$set", Value: bson.D{{Key: "y", Value: 2}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var res []bson.D
+		if err := cur.All(c, &res); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(res) == 0 {
+			return CompatResult{Status: "fail", Note: "no results"}
+		}
+		if _, ok := getKey(res[0], "y"); !ok {
+			return CompatResult{Status: "partial", Note: "field y not added by $set stage"}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
+	run("$unset (pipeline stage)", "Aggregation Stages", func(c context.Context) CompatResult {
+		coll := db.Collection("agg_unset_stage")
+		_, _ = coll.InsertOne(c, bson.D{{Key: "x", Value: 1}, {Key: "y", Value: 2}})
+		cur, err := coll.Aggregate(c, bson.A{
+			bson.D{{Key: "$unset", Value: "y"}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var res []bson.D
+		if err := cur.All(c, &res); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(res) == 0 {
+			return CompatResult{Status: "fail", Note: "no results"}
+		}
+		if _, ok := getKey(res[0], "y"); ok {
+			return CompatResult{Status: "partial", Note: "field y not removed by $unset stage"}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
+	run("$replaceWith (pipeline stage)", "Aggregation Stages", func(c context.Context) CompatResult {
+		coll := db.Collection("agg_replacewith")
+		_, _ = coll.InsertOne(c, bson.D{{Key: "nested", Value: bson.D{{Key: "a", Value: 1}}}})
+		cur, err := coll.Aggregate(c, bson.A{
+			bson.D{{Key: "$replaceWith", Value: "$nested"}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var res []bson.D
+		if err := cur.All(c, &res); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(res) == 0 {
+			return CompatResult{Status: "fail", Note: "no results"}
+		}
+		// After $replaceWith "$nested", the root should be the nested doc with field "a"
+		if _, ok := getKey(res[0], "a"); !ok {
+			return CompatResult{Status: "partial", Note: "expected 'a' field after $replaceWith, got wrong root"}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
+	run("$unionWith (pipeline stage)", "Aggregation Stages", func(c context.Context) CompatResult {
+		coll := db.Collection("agg_unionwith_a")
+		coll2 := db.Collection("agg_unionwith_b")
+		_, _ = coll.InsertOne(c, bson.D{{Key: "v", Value: 1}})
+		_, _ = coll2.InsertOne(c, bson.D{{Key: "v", Value: 2}})
+		cur, err := coll.Aggregate(c, bson.A{
+			bson.D{{Key: "$unionWith", Value: bson.D{{Key: "coll", Value: "agg_unionwith_b"}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var res []bson.D
+		if err := cur.All(c, &res); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(res) != 2 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$unionWith: expected 2 docs, got %d", len(res))}
 		}
 		return CompatResult{Status: "pass"}
 	})
