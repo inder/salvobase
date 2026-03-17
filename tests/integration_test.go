@@ -5186,6 +5186,57 @@ func TestCappedCollectionMaxDocs(t *testing.T) {
 	}
 }
 
+// TestShutdownRequiresAdminDB verifies that the shutdown command returns an
+// error when called against a non-admin database (illegal operation).
+func TestShutdownRequiresAdminDB(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// Calling shutdown on a non-admin database must be rejected.
+	db := client.Database(testDB(t))
+	res := db.RunCommand(ctx, bson.D{{Key: "shutdown", Value: 1}})
+	err := res.Err()
+	if err == nil {
+		t.Fatal("shutdown on non-admin db: expected error, got nil")
+	}
+
+	// The error must NOT be CommandNotFound (59); it must be registered.
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		if cmdErr.Code == 59 {
+			t.Errorf("shutdown command is not registered (CommandNotFound)")
+		}
+	}
+}
+
+// TestShutdownCommandRegistered verifies that the shutdown command is known to
+// the server (i.e. not "no such command") when run against admin.
+// We issue it with an intentionally wrong argument type so the server rejects it
+// before actually shutting down — letting us confirm the command is wired up.
+func TestShutdownCommandRegistered(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// Pass an invalid argument to force an early-exit error without actually
+	// triggering shutdown. We just need to confirm code != 59 (CommandNotFound).
+	res := client.Database("admin").RunCommand(ctx,
+		bson.D{{Key: "shutdown", Value: bson.D{{Key: "$invalid", Value: 1}}}})
+	err := res.Err()
+
+	// A nil error means shutdown fired — unexpected in this test scenario.
+	if err == nil {
+		// The server may have accepted and will shut down; nothing we can assert.
+		return
+	}
+
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		if cmdErr.Code == 59 {
+			t.Errorf("shutdown command is not registered (CommandNotFound)")
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
