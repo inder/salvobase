@@ -383,6 +383,16 @@ func handleGetCmdLineOpts(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	}), nil
 }
 
+// handleCurrentOp handles the "currentOp" command.
+// Returns in-progress operations. Salvobase does not track per-operation state,
+// so "inprog" is always empty — matching MongoDB's response when idle.
+func handleCurrentOp(_ *Context, _ bson.Raw) (bson.Raw, error) {
+	return marshalResponse(bson.D{
+		{Key: "inprog", Value: bson.A{}},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
 // handleExplain handles the "explain" command.
 // It re-runs the wrapped command and adds explain output.
 func handleExplain(ctx *Context, cmd bson.Raw) (bson.Raw, error) {

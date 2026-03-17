@@ -3386,6 +3386,52 @@ func TestGetCmdLineOpts(t *testing.T) {
 	}
 }
 
+// ─── currentOp command (#30) ─────────────────────────────────────────────────
+
+func TestCurrentOp(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "currentOp", Value: 1}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("currentOp: %v", err)
+	}
+
+	inprog, ok := result["inprog"]
+	if !ok {
+		t.Fatal("currentOp: expected 'inprog' field")
+	}
+	arr, ok := inprog.(bson.A)
+	if !ok {
+		t.Fatalf("currentOp: expected 'inprog' to be an array, got %T", inprog)
+	}
+	// Salvobase returns no tracked operations; array must be empty.
+	if len(arr) != 0 {
+		t.Errorf("currentOp: expected empty 'inprog', got %d entries", len(arr))
+	}
+
+	ok64, _ := result["ok"].(float64)
+	if ok64 != 1 {
+		t.Errorf("currentOp: expected ok=1, got %v", result["ok"])
+	}
+}
+
+func TestCurrentOpLowercase(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{{Key: "currentop", Value: 1}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("currentop (lowercase): %v", err)
+	}
+
+	if _, ok := result["inprog"]; !ok {
+		t.Fatal("currentop: expected 'inprog' field")
+	}
+}
+
 // ─── $type query operator (#8) ────────────────────────────────────────────────
 
 func TestTypeQueryOperator(t *testing.T) {
