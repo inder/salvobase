@@ -27,6 +27,8 @@ type Context struct {
 	NoAuth   bool
 	// RemoteAddr is the client's network address (for whatsmyuri).
 	RemoteAddr string
+	// RuntimeCfg provides access to runtime-modifiable server parameters.
+	RuntimeCfg *RuntimeConfig
 }
 
 // Session represents a client session (for transactions and logical sessions).
@@ -46,22 +48,34 @@ type Handler func(ctx *Context, cmd bson.Raw) (bson.Raw, error)
 // Dispatcher routes MongoDB commands to their registered handlers.
 // Command names are matched case-insensitively.
 type Dispatcher struct {
-	handlers map[string]Handler
-	engine   storage.Engine
-	auth     *auth.Manager
-	logger   *zap.Logger
+	handlers   map[string]Handler
+	engine     storage.Engine
+	auth       *auth.Manager
+	logger     *zap.Logger
+	runtimeCfg *RuntimeConfig
 }
 
 // NewDispatcher creates a Dispatcher and registers all command handlers.
-func NewDispatcher(engine storage.Engine, authMgr *auth.Manager, logger *zap.Logger) *Dispatcher {
+// runtimeCfg holds the runtime-modifiable server parameters; if nil a default
+// (all-zero) config is created so the server remains operational.
+func NewDispatcher(engine storage.Engine, authMgr *auth.Manager, logger *zap.Logger, runtimeCfg *RuntimeConfig) *Dispatcher {
+	if runtimeCfg == nil {
+		runtimeCfg = NewRuntimeConfig("info", "none", 0, 0, true)
+	}
 	d := &Dispatcher{
-		handlers: make(map[string]Handler),
-		engine:   engine,
-		auth:     authMgr,
-		logger:   logger,
+		handlers:   make(map[string]Handler),
+		engine:     engine,
+		auth:       authMgr,
+		logger:     logger,
+		runtimeCfg: runtimeCfg,
 	}
 	d.registerAll()
 	return d
+}
+
+// RuntimeConfig returns the shared runtime configuration held by this dispatcher.
+func (d *Dispatcher) RuntimeConfig() *RuntimeConfig {
+	return d.runtimeCfg
 }
 
 // register adds a handler under the given (lowercased) command name.
@@ -145,6 +159,12 @@ func (d *Dispatcher) registerAll() {
 	d.register("rolesInfo", handleRolesInfo)
 	d.register("droprole", handleDropRole)
 	d.register("createrole", handleCreateRole)
+
+	// Runtime parameters
+	d.register("getparameter", handleGetParameter)
+	d.register("getParameter", handleGetParameter)
+	d.register("setparameter", handleSetParameter)
+	d.register("setParameter", handleSetParameter)
 
 	// Server lifecycle
 	d.register("shutdown", handleShutdown)

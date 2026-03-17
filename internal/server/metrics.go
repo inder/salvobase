@@ -126,6 +126,7 @@ func (s *Server) handleRESTRequest(w http.ResponseWriter, r *http.Request) {
 		ConnID:     -1, // REST API uses a virtual connection ID
 		NoAuth:     s.cfg.NoAuth,
 		RemoteAddr: r.RemoteAddr,
+		RuntimeCfg: s.dispatcher.RuntimeConfig(),
 	}
 
 	resp := s.dispatcher.Dispatch(ctx, cmdRaw)
