@@ -3719,6 +3719,139 @@ func TestIndexQueryPlannerPartialCompoundFallback(t *testing.T) {
 	}
 }
 
+// ─── Array query operator edge cases (#21) ───────────────────────────────────
+
+func TestArrayQueryEdgeCases(t *testing.T) {
+	client := newClient(t)
+	db := testDB(t)
+	coll := client.Database(db).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		// doc A: arr of objects with x and y fields
+		bson.D{{Key: "name", Value: "A"}, {Key: "items", Value: bson.A{
+			bson.D{{Key: "x", Value: int32(2)}, {Key: "y", Value: "foo"}},
+			bson.D{{Key: "x", Value: int32(1)}, {Key: "y", Value: "bar"}},
+		}}},
+		// doc B: items where x=3,y=foo and x=0,y=baz
+		bson.D{{Key: "name", Value: "B"}, {Key: "items", Value: bson.A{
+			bson.D{{Key: "x", Value: int32(3)}, {Key: "y", Value: "foo"}},
+			bson.D{{Key: "x", Value: int32(0)}, {Key: "y", Value: "baz"}},
+		}}},
+		// doc C: scalar array
+		bson.D{{Key: "name", Value: "C"}, {Key: "tags", Value: bson.A{"a", "b", "c"}}},
+		// doc D: $all with duplicates target
+		bson.D{{Key: "name", Value: "D"}, {Key: "tags", Value: bson.A{"a", "b", "a"}}},
+		// doc E: empty array
+		bson.D{{Key: "name", Value: "E"}, {Key: "tags", Value: bson.A{}}},
+		// doc F: array with null element
+		bson.D{{Key: "name", Value: "F"}, {Key: "tags", Value: bson.A{"x", nil, "z"}}},
+		// doc G: scalar array for dot-notation first element
+		bson.D{{Key: "name", Value: "G"}, {Key: "nums", Value: bson.A{int32(10), int32(20), int32(30)}}},
+	})
+
+	t.Run("$elemMatch with nested conditions", func(t *testing.T) {
+		// Match docs where items has at least one element with x>1 AND y="foo"
+		// Doc A has {x:2, y:"foo"} — matches. Doc B has {x:3, y:"foo"} — matches.
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "items", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
+			{Key: "x", Value: bson.D{{Key: "$gt", Value: int32(1)}}},
+			{Key: "y", Value: "foo"},
+		}}}}})
+		if err != nil {
+			t.Fatalf("$elemMatch nested: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("$elemMatch nested: expected 2, got %d", count)
+		}
+	})
+
+	t.Run("$all with multiple values", func(t *testing.T) {
+		// "a" and "b" must both be present — C and D match (D has duplicates but still has both)
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{"a", "b"}}}}})
+		if err != nil {
+			t.Fatalf("$all: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("$all: expected 2 (C and D), got %d", count)
+		}
+	})
+
+	t.Run("$all with duplicate values in query (treated as set)", func(t *testing.T) {
+		// $all with ["a","a"] is equivalent to $all with ["a"] — all docs with "a" in tags
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{"a", "a"}}}}})
+		if err != nil {
+			t.Fatalf("$all duplicates: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("$all duplicates: expected 2 (C and D), got %d", count)
+		}
+	})
+
+	t.Run("$size exact match", func(t *testing.T) {
+		// tags with exactly 3 elements: C (a,b,c) and D (a,b,a) and F (x,nil,z)
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: int32(3)}}}})
+		if err != nil {
+			t.Fatalf("$size=3: %v", err)
+		}
+		if count != 3 {
+			t.Errorf("$size=3: expected 3, got %d", count)
+		}
+	})
+
+	t.Run("$size=0 matches empty array", func(t *testing.T) {
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: int32(0)}}}})
+		if err != nil {
+			t.Fatalf("$size=0: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("$size=0: expected 1 (E), got %d", count)
+		}
+	})
+
+	t.Run("$size mismatch returns zero", func(t *testing.T) {
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: int32(99)}}}})
+		if err != nil {
+			t.Fatalf("$size=99: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("$size=99: expected 0, got %d", count)
+		}
+	})
+
+	t.Run("dot-notation first element (arr.0)", func(t *testing.T) {
+		// nums.0 == 10 → only doc G matches
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "nums.0", Value: int32(10)}})
+		if err != nil {
+			t.Fatalf("arr.0 dot notation: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("arr.0: expected 1 (G), got %d", count)
+		}
+	})
+
+	t.Run("$in against array field", func(t *testing.T) {
+		// tags $in ["a","z"] — any array element matches: C, D (have "a"), F (has "z")
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$in", Value: bson.A{"a", "z"}}}}})
+		if err != nil {
+			t.Fatalf("$in array: %v", err)
+		}
+		if count != 3 {
+			t.Errorf("$in array: expected 3 (C,D,F), got %d", count)
+		}
+	})
+
+	t.Run("array field with null element can be found", func(t *testing.T) {
+		// F has "x" in its tags array (alongside nil)
+		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$in", Value: bson.A{"x"}}}}})
+		if err != nil {
+			t.Fatalf("null element array: %v", err)
+		}
+		if count != 1 {
+			t.Errorf("null element array: expected 1 (F), got %d", count)
+		}
+	})
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
