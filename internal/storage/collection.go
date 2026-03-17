@@ -289,12 +289,12 @@ func (c *bboltCollection) Find(filter bson.Raw, opts FindOptions) (Cursor, error
 		return nil, err
 	}
 
-	if spec, prefixKey, ok := c.chooseIndex(tx, filter); ok {
+	if plan, ok := c.chooseIndex(tx, filter); ok {
 		so := scanOpts{}
 		if opts.Limit > 0 {
 			so.limit = opts.Limit + opts.Skip
 		}
-		docs, scanErr := c.indexScanTx(tx, spec, prefixKey, filter, opts.Projection, so)
+		docs, scanErr := c.indexScanTx(tx, plan, filter, opts.Projection, so)
 		tx.Rollback() //nolint:errcheck
 		if scanErr != nil {
 			return nil, scanErr
@@ -429,34 +429,137 @@ func extractEqualityPredicates(filter bson.Raw) map[string]bson.RawValue {
 	return result
 }
 
+// rangePredicate holds the lower and upper bounds extracted from a field's filter
+// document. Both lo and hi may be zero (unset) if only one side is bounded.
+type rangePredicate struct {
+	lo          bson.RawValue // lower bound value ($gt or $gte)
+	loInclusive bool          // true for $gte, false for $gt
+	hasLo       bool
+	hi          bson.RawValue // upper bound value ($lt or $lte)
+	hiInclusive bool          // true for $lte, false for $lt
+	hasHi       bool
+}
+
+// extractRangePredicates returns range predicates keyed by field name.
+// A range predicate is present when a field has at least one of $gt/$gte/$lt/$lte.
+// Fields with mixed equality+range operators (unusual) are treated as range.
+func extractRangePredicates(filter bson.Raw) map[string]rangePredicate {
+	result := make(map[string]rangePredicate)
+	if len(filter) == 0 {
+		return result
+	}
+	elems, err := filter.Elements()
+	if err != nil {
+		return result
+	}
+	for _, elem := range elems {
+		key := elem.Key()
+		if len(key) > 0 && key[0] == '$' {
+			continue
+		}
+		val := elem.Value()
+		if val.Type != bson.TypeEmbeddedDocument {
+			continue
+		}
+		subElems, err := val.Document().Elements()
+		if err != nil || len(subElems) == 0 {
+			continue
+		}
+		var rp rangePredicate
+		isRange := false
+		for _, se := range subElems {
+			sv := se.Value()
+			if sv.Type == bson.TypeArray || sv.Type == bson.TypeEmbeddedDocument {
+				continue
+			}
+			switch se.Key() {
+			case "$gt":
+				rp.lo = sv
+				rp.loInclusive = false
+				rp.hasLo = true
+				isRange = true
+			case "$gte":
+				rp.lo = sv
+				rp.loInclusive = true
+				rp.hasLo = true
+				isRange = true
+			case "$lt":
+				rp.hi = sv
+				rp.hiInclusive = false
+				rp.hasHi = true
+				isRange = true
+			case "$lte":
+				rp.hi = sv
+				rp.hiInclusive = true
+				rp.hasHi = true
+				isRange = true
+			}
+		}
+		if isRange {
+			result[key] = rp
+		}
+	}
+	return result
+}
+
+// indexScanPlan describes how to execute an index scan.
+// For equality-only scans, rangeField is empty and loBound/hiBound are nil.
+// For range scans, prefix contains the encoded equality prefix for leading
+// index fields, rangeField is the range field name, and loBound/hiBound
+// are the encoded range bounds (nil = unbounded on that side).
+//
+// rangeFieldLen is the byte length of the encoded range field portion in an
+// index key. It is non-zero only when both bounds share the same encoded length
+// (fixed-size types: int32/int64/double/datetime all encode to 9 bytes;
+// ObjectID encodes to 13 bytes). For variable-length types (strings), it is 0
+// and the 0xFF separator search is safe (UTF-8 never contains 0xFF bytes).
+type indexScanPlan struct {
+	spec          IndexSpec
+	prefix        []byte // encoded equality prefix (may include field separators)
+	rangeField    string // name of the range field (empty for equality-only scans)
+	loBound       []byte // encoded lower bound for range field (nil = no lower bound)
+	loInclusive   bool   // true = $gte, false = $gt
+	hiBound       []byte // encoded upper bound for range field (nil = no upper bound)
+	hiInclusive   bool   // true = $lte, false = $lt
+	isRange       bool   // true when using range-based index scan
+	rangeDir      int    // direction of the range field in the index (1 or -1)
+	rangeFieldLen int    // fixed encoded byte length of range field (0 = variable/string)
+}
+
 // chooseIndex selects the best secondary index to use for a filter, if any.
-// Returns (spec, prefixKey, true) when a suitable index is found.
-// The prefixKey is the encoded equality prefix to seek in the index bucket.
+// Returns (plan, true) when a suitable index is found.
 //
-// An index is eligible when every field in its key has an equality predicate in
-// the filter (full-coverage only; partial compound coverage is deferred to v2).
+// Selection rules (in priority order):
+//  1. Full equality coverage: every index field has an equality predicate.
+//     These produce the most selective scans and are preferred.
+//  2. Compound range coverage: all leading fields have equality predicates AND
+//     the next field has a range predicate ($gt/$gte/$lt/$lte). This is the
+//     standard MongoDB compound index range rule: equality fields first, range
+//     field last. A single-field range index (no equality prefix) is also eligible.
+//
 // Hidden indexes are skipped. The _id_ index is never stored in _meta.indexes.
-//
-// When multiple eligible indexes exist, the one with the most fields is preferred
-// (most specific wins).
-func (c *bboltCollection) chooseIndex(tx *bolt.Tx, filter bson.Raw) (IndexSpec, []byte, bool) {
+// When multiple eligible indexes exist, the one with the highest total coverage
+// (equality fields + 1 range field) is preferred.
+func (c *bboltCollection) chooseIndex(tx *bolt.Tx, filter bson.Raw) (indexScanPlan, bool) {
 	meta := tx.Bucket([]byte(bucketMetaIndexes))
 	if meta == nil {
-		return IndexSpec{}, nil, false
-	}
-	equalities := extractEqualityPredicates(filter)
-	if len(equalities) == 0 {
-		return IndexSpec{}, nil, false
+		return indexScanPlan{}, false
 	}
 
-	prefix := metaIdxPrefix(c.coll)
+	equalities := extractEqualityPredicates(filter)
+	ranges := extractRangePredicates(filter)
+
+	if len(equalities) == 0 && len(ranges) == 0 {
+		return indexScanPlan{}, false
+	}
+
+	metaPrefix := metaIdxPrefix(c.coll)
 	cur := meta.Cursor()
 
-	var bestSpec IndexSpec
-	var bestPrefix []byte
-	bestCoverage := 0
+	var bestPlan indexScanPlan
+	bestScore := 0 // equality fields * 2 + (1 if range field present)
 
-	for k, v := cur.Seek(prefix); k != nil && hasPrefix(k, prefix); k, v = cur.Next() {
+	for k, v := cur.Seek(metaPrefix); k != nil && hasPrefix(k, metaPrefix); k, v = cur.Next() {
 		var spec IndexSpec
 		if err := json.Unmarshal(v, &spec); err != nil {
 			continue
@@ -470,33 +573,104 @@ func (c *bboltCollection) chooseIndex(tx *bolt.Tx, filter bson.Raw) (IndexSpec, 
 		}
 
 		// Count leading fields with equality predicates (must be contiguous).
-		coverage := 0
+		eqCoverage := 0
 		for _, elem := range elems {
 			if _, ok := equalities[elem.Key()]; ok {
-				coverage++
+				eqCoverage++
 			} else {
 				break
 			}
 		}
 
-		// Require ALL fields to be covered (full coverage only in v1).
-		// Partial coverage would require key-escaping to safely do range scans;
-		// that is deferred to v2.
-		if coverage == 0 || coverage < len(elems) {
+		if eqCoverage == len(elems) {
+			// Full equality coverage — best possible.
+			score := eqCoverage * 2
+			if score > bestScore {
+				bestScore = score
+				bestPlan = indexScanPlan{
+					spec:   spec,
+					prefix: encodeEqualityPrefix(spec.Keys, equalities),
+				}
+			}
 			continue
 		}
 
-		if coverage > bestCoverage {
-			bestCoverage = coverage
-			bestSpec = spec
-			bestPrefix = encodeEqualityPrefix(spec.Keys, equalities)
+		// Check if the next field (after equality prefix) has a range predicate.
+		nextIdx := eqCoverage
+		nextElem := elems[nextIdx]
+		rp, hasRange := ranges[nextElem.Key()]
+		if !hasRange {
+			continue
+		}
+
+		// Score: equality coverage is more valuable; each equality field scores
+		// 2 points; range field scores 1 point so that equality beats range when
+		// comparing indexes with the same number of leading equality fields.
+		score := eqCoverage*2 + 1
+		if score <= bestScore {
+			continue
+		}
+
+		// Encode the equality prefix for the leading fields.
+		eqPrefix := encodeEqualityPrefix(spec.Keys, equalities)
+
+		// Determine the index direction for the range field.
+		dirVal := nextElem.Value()
+		dir := 1
+		switch dirVal.Type {
+		case bson.TypeInt32:
+			if n, ok := dirVal.Int32OK(); ok && n < 0 {
+				dir = -1
+			}
+		case bson.TypeInt64:
+			if n, ok := dirVal.Int64OK(); ok && n < 0 {
+				dir = -1
+			}
+		case bson.TypeDouble:
+			if f, ok := dirVal.DoubleOK(); ok && f < 0 {
+				dir = -1
+			}
+		}
+
+		// Encode range bounds using encodeIndexField (same kernel as buildFieldKeys).
+		var loBound, hiBound []byte
+		if rp.hasLo {
+			loBound = encodeIndexField(nextElem.Value(), rp.lo)
+		}
+		if rp.hasHi {
+			hiBound = encodeIndexField(nextElem.Value(), rp.hi)
+		}
+
+		// Determine the fixed encoded length of the range field for safe separator detection.
+		// Fixed-size types (int32, int64, double, datetime) always encode to 9 bytes.
+		// ObjectID encodes to 13 bytes. Strings encode to 1+len(s) bytes (variable,
+		// but UTF-8 never contains 0xFF so the separator search is safe for strings).
+		rangeFieldLen := 0
+		if loBound != nil {
+			rangeFieldLen = len(loBound)
+		} else if hiBound != nil {
+			rangeFieldLen = len(hiBound)
+		}
+
+		bestScore = score
+		bestPlan = indexScanPlan{
+			spec:          spec,
+			prefix:        eqPrefix,
+			rangeField:    nextElem.Key(),
+			loBound:       loBound,
+			loInclusive:   rp.loInclusive,
+			hiBound:       hiBound,
+			hiInclusive:   rp.hiInclusive,
+			isRange:       true,
+			rangeDir:      dir,
+			rangeFieldLen: rangeFieldLen,
 		}
 	}
 
-	if bestCoverage == 0 {
-		return IndexSpec{}, nil, false
+	if bestScore == 0 {
+		return indexScanPlan{}, false
 	}
-	return bestSpec, bestPrefix, true
+	return bestPlan, true
 }
 
 // fetchDoc retrieves and optionally filters/projects one document from a collection bucket
@@ -535,18 +709,23 @@ func (c *bboltCollection) fetchDoc(collB *bolt.Bucket, idBytes []byte, filter bs
 }
 
 // indexScanTx performs an index-backed scan within an existing read transaction.
-// For unique indexes it does a single key lookup; for non-unique indexes it does
-// a bounded range scan using the 0xFF separator byte to identify exact-match entries.
+// It handles three cases:
+//
+//  1. Unique equality scan: single key lookup.
+//  2. Non-unique equality scan: bounded range scan using the 0xFF separator byte.
+//  3. Range scan (plan.isRange): seeks to the lower-bound key and scans forward
+//     until the upper bound is exceeded. Uses bbolt.Cursor.Seek for the lower
+//     bound — does NOT iterate from the start of the bucket.
+//
 // Any filter predicates not covered by the index are applied via fetchDoc.
 func (c *bboltCollection) indexScanTx(
 	tx *bolt.Tx,
-	spec IndexSpec,
-	prefixKey []byte,
+	plan indexScanPlan,
 	filter bson.Raw,
 	projection bson.Raw,
 	so scanOpts,
 ) ([]bson.Raw, error) {
-	idxB := tx.Bucket([]byte(idxBucket(c.coll, spec.Name)))
+	idxB := tx.Bucket([]byte(idxBucket(c.coll, plan.spec.Name)))
 	if idxB == nil {
 		// Index bucket is missing (should not happen after CreateIndex, but be safe).
 		return c.collectionScanTx(tx, filter, projection, so)
@@ -556,9 +735,15 @@ func (c *bboltCollection) indexScanTx(
 		return nil, nil
 	}
 
-	var docs []bson.Raw
+	// Range scan path — used when plan.isRange is true.
+	if plan.isRange {
+		return c.rangeIndexScanTx(idxB, collB, plan, filter, projection, so)
+	}
 
-	if spec.Unique {
+	var docs []bson.Raw
+	prefixKey := plan.prefix
+
+	if plan.spec.Unique {
 		// Unique index: exact key → value is the doc's _id bytes.
 		idBytes := idxB.Get(prefixKey)
 		if idBytes == nil {
@@ -574,7 +759,7 @@ func (c *bboltCollection) indexScanTx(
 		return docs, nil
 	}
 
-	// Non-unique index: keys are prefixKey + 0xFF + idBytes.
+	// Non-unique equality index: keys are prefixKey + 0xFF + idBytes.
 	// We scan from prefixKey and accept only keys where k[len(prefixKey)] == 0xFF.
 	// This correctly distinguishes "foo" (prefix) from "foobar" (longer string) because
 	// the 0xFF separator byte cannot be part of a partial field encoding.
@@ -585,6 +770,220 @@ func (c *bboltCollection) indexScanTx(
 			continue
 		}
 		idBytes := k[len(prefixKey)+1:]
+		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
+		if err != nil {
+			return nil, err
+		}
+		if doc != nil {
+			docs = append(docs, doc)
+			if !so.hasSort && so.limit > 0 && int64(len(docs)) >= so.limit {
+				break
+			}
+		}
+	}
+	return docs, nil
+}
+
+// rangeIndexScanTx performs a range index scan using bbolt.Cursor.Seek for the
+// lower bound and iterates forward until the upper bound is exceeded.
+//
+// Index key layout for non-unique indexes:
+//   [eqPrefix [0x01 eqField]...] [0x01 rangeFieldEncoded] 0xFF [idBytes]
+//
+// For single-field range indexes (no equality prefix), the key is simply:
+//   [rangeFieldEncoded] 0xFF [idBytes]
+//
+// The equality prefix (plan.prefix) may be empty (single-field range index).
+// When present it ends without a field separator; the range field is always
+// appended after a 0x01 separator.
+func (c *bboltCollection) rangeIndexScanTx(
+	idxB *bolt.Bucket,
+	collB *bolt.Bucket,
+	plan indexScanPlan,
+	filter bson.Raw,
+	projection bson.Raw,
+	so scanOpts,
+) ([]bson.Raw, error) {
+	// Unique indexes store key=fieldBytes, value=idBytes (no 0xFF separator in key).
+	// Non-unique indexes store key=fieldBytes+0xFF+idBytes, value=empty.
+	// Route to the appropriate sub-path.
+	if plan.spec.Unique {
+		return c.rangeIndexScanUniqueTx(idxB, collB, plan, filter, projection, so)
+	}
+
+	// Build the seek key: eqPrefix [0x01] + loBound (if present), else eqPrefix [0x01] (lowest possible).
+	var seekKey []byte
+	if len(plan.prefix) > 0 {
+		// Equality prefix present: range field is separated by 0x01.
+		seekKey = append(seekKey, plan.prefix...)
+		seekKey = append(seekKey, 0x01) // field separator
+	}
+	if plan.loBound != nil {
+		seekKey = append(seekKey, plan.loBound...)
+	}
+	// If no lower bound and no prefix, seekKey is empty — we start from the bucket start.
+
+	// outerPrefix is the part of the key we always require: the equality fields portion.
+	// We stop scanning when the key no longer starts with this prefix.
+	outerPrefix := make([]byte, len(plan.prefix))
+	copy(outerPrefix, plan.prefix)
+
+	// rangeOffset is the offset in the index key where the range field encoded bytes start.
+	rangeOffset := len(plan.prefix)
+	if len(plan.prefix) > 0 {
+		rangeOffset++ // account for the 0x01 field separator
+	}
+
+	cur := idxB.Cursor()
+	var startK []byte
+	if len(seekKey) > 0 {
+		startK, _ = cur.Seek(seekKey)
+	} else {
+		startK, _ = cur.First()
+	}
+
+	var docs []bson.Raw
+
+	for k := startK; k != nil; k, _ = cur.Next() {
+		// Stop if key no longer begins with the equality prefix.
+		if len(outerPrefix) > 0 && !bytes.HasPrefix(k, outerPrefix) {
+			break
+		}
+
+		// For non-empty prefix, the range field must follow a 0x01 separator.
+		if len(outerPrefix) > 0 {
+			if len(k) <= len(outerPrefix) || k[len(outerPrefix)] != 0x01 {
+				// This is an exact equality entry (0xFF separator) — skip for range scan.
+				continue
+			}
+		}
+
+		// Find the position of the 0xFF separator that divides the field bytes from the _id.
+		//
+		// For fixed-size types (int32/int64/double/datetime → 9 bytes, ObjectID → 13 bytes)
+		// use the known encoded length to avoid searching through bytes that may contain 0xFF
+		// (IEEE 754 encoding can produce 0xFF bytes in large positive floats).
+		//
+		// For variable-length types (strings), search for 0xFF — this is safe because
+		// UTF-8 encoded strings never contain the 0xFF byte.
+		var sepIdx int
+		if plan.rangeFieldLen > 0 {
+			sepIdx = rangeOffset + plan.rangeFieldLen
+			if sepIdx >= len(k) || k[sepIdx] != 0xFF {
+				continue // key too short or separator not where expected — skip
+			}
+		} else {
+			// Variable-length (string) path: search for 0xFF.
+			sepIdx = -1
+			for i := rangeOffset; i < len(k); i++ {
+				if k[i] == 0xFF {
+					sepIdx = i
+					break
+				}
+			}
+			if sepIdx < 0 {
+				continue // malformed key
+			}
+		}
+
+		rangeFieldBytes := k[rangeOffset:sepIdx]
+
+		// Check upper bound.
+		if plan.hiBound != nil {
+			cmp := bytes.Compare(rangeFieldBytes, plan.hiBound)
+			if cmp > 0 || (cmp == 0 && !plan.hiInclusive) {
+				break // we've passed the upper bound; no more matches
+			}
+		}
+
+		// Check lower bound (needed when seekKey had no loBound or we landed before it).
+		if plan.loBound != nil {
+			cmp := bytes.Compare(rangeFieldBytes, plan.loBound)
+			if cmp < 0 || (cmp == 0 && !plan.loInclusive) {
+				continue
+			}
+		}
+
+		idBytes := k[sepIdx+1:]
+		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
+		if err != nil {
+			return nil, err
+		}
+		if doc != nil {
+			docs = append(docs, doc)
+			if !so.hasSort && so.limit > 0 && int64(len(docs)) >= so.limit {
+				break
+			}
+		}
+	}
+
+	return docs, nil
+}
+
+// rangeIndexScanUniqueTx handles range scans on unique indexes.
+// Unique index key format: key = encodedFieldBytes, value = idBytes.
+// There is no 0xFF separator in the key.
+func (c *bboltCollection) rangeIndexScanUniqueTx(
+	idxB *bolt.Bucket,
+	collB *bolt.Bucket,
+	plan indexScanPlan,
+	filter bson.Raw,
+	projection bson.Raw,
+	so scanOpts,
+) ([]bson.Raw, error) {
+	var seekKey []byte
+	if len(plan.prefix) > 0 {
+		seekKey = append(seekKey, plan.prefix...)
+		seekKey = append(seekKey, 0x01)
+	}
+	if plan.loBound != nil {
+		seekKey = append(seekKey, plan.loBound...)
+	}
+
+	outerPrefix := make([]byte, len(plan.prefix))
+	copy(outerPrefix, plan.prefix)
+
+	rangeOffset := len(plan.prefix)
+	if len(plan.prefix) > 0 {
+		rangeOffset++
+	}
+
+	cur := idxB.Cursor()
+	var startK, startV []byte
+	if len(seekKey) > 0 {
+		startK, startV = cur.Seek(seekKey)
+	} else {
+		startK, startV = cur.First()
+	}
+
+	var docs []bson.Raw
+	for k, v := startK, startV; k != nil; k, v = cur.Next() {
+		if len(outerPrefix) > 0 && !bytes.HasPrefix(k, outerPrefix) {
+			break
+		}
+		if len(outerPrefix) > 0 {
+			if len(k) <= len(outerPrefix) || k[len(outerPrefix)] != 0x01 {
+				continue
+			}
+		}
+
+		// For unique indexes, the entire key beyond the equality prefix is the range field.
+		rangeFieldBytes := k[rangeOffset:]
+
+		if plan.hiBound != nil {
+			cmp := bytes.Compare(rangeFieldBytes, plan.hiBound)
+			if cmp > 0 || (cmp == 0 && !plan.hiInclusive) {
+				break
+			}
+		}
+		if plan.loBound != nil {
+			cmp := bytes.Compare(rangeFieldBytes, plan.loBound)
+			if cmp < 0 || (cmp == 0 && !plan.loInclusive) {
+				continue
+			}
+		}
+
+		idBytes := v
 		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
 		if err != nil {
 			return nil, err
@@ -698,9 +1097,9 @@ func (c *bboltCollection) scanFilter(filter bson.Raw, projection bson.Raw, so sc
 	// Fast path 2 + fallback: choose index or full scan inside a single transaction.
 	var docs []bson.Raw
 	if err := boltDB.View(func(tx *bolt.Tx) error {
-		if spec, prefixKey, ok := c.chooseIndex(tx, filter); ok {
+		if plan, ok := c.chooseIndex(tx, filter); ok {
 			var scanErr error
-			docs, scanErr = c.indexScanTx(tx, spec, prefixKey, filter, projection, so)
+			docs, scanErr = c.indexScanTx(tx, plan, filter, projection, so)
 			return scanErr
 		}
 		var scanErr error
