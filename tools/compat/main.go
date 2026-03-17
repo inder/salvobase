@@ -1137,6 +1137,159 @@ func main() {
 		return CompatResult{Status: "pass"}
 	})
 
+	run("$bucket", "Aggregation Stages", func(c context.Context) CompatResult {
+		bucketColl := db.Collection("agg_bucket")
+		_, _ = bucketColl.InsertMany(c, []interface{}{
+			bson.D{{Key: "price", Value: 5}},
+			bson.D{{Key: "price", Value: 15}},
+			bson.D{{Key: "price", Value: 25}},
+		})
+		cur, err := bucketColl.Aggregate(c, bson.A{
+			bson.D{{Key: "$bucket", Value: bson.D{
+				{Key: "groupBy", Value: "$price"},
+				{Key: "boundaries", Value: bson.A{0, 10, 20, 30}},
+				{Key: "default", Value: "Other"},
+			}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		// Expect 3 buckets: [0,10) with price=5, [10,20) with price=15, [20,30) with price=25
+		if len(docs) != 3 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$bucket: expected 3 buckets, got %d", len(docs))}
+		}
+		// First bucket should have _id=0 and count=1
+		firstID, ok := getKey(docs[0], "_id")
+		if !ok {
+			return CompatResult{Status: "partial", Note: "$bucket: first bucket missing '_id' field"}
+		}
+		var firstIDNum float64
+		switch v := firstID.(type) {
+		case int32:
+			firstIDNum = float64(v)
+		case int64:
+			firstIDNum = float64(v)
+		case float64:
+			firstIDNum = v
+		}
+		if firstIDNum != 0 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$bucket: first bucket _id expected 0, got %v", firstIDNum)}
+		}
+		countVal, ok := getKey(docs[0], "count")
+		if !ok {
+			return CompatResult{Status: "partial", Note: "$bucket: first bucket missing 'count' field"}
+		}
+		var countNum float64
+		switch v := countVal.(type) {
+		case int32:
+			countNum = float64(v)
+		case int64:
+			countNum = float64(v)
+		case float64:
+			countNum = v
+		}
+		if countNum != 1 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$bucket: first bucket count expected 1, got %v", countNum)}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
+	run("$sample", "Aggregation Stages", func(c context.Context) CompatResult {
+		sampleColl := db.Collection("agg_sample")
+		var sampleDocs []interface{}
+		for i := 0; i < 10; i++ {
+			sampleDocs = append(sampleDocs, bson.D{{Key: "n", Value: i}})
+		}
+		_, _ = sampleColl.InsertMany(c, sampleDocs)
+		cur, err := sampleColl.Aggregate(c, bson.A{
+			bson.D{{Key: "$sample", Value: bson.D{{Key: "size", Value: 3}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		// Must return exactly 3 docs (the requested sample size)
+		if len(docs) != 3 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$sample size=3: expected 3 docs, got %d", len(docs))}
+		}
+		// Each sampled doc must have an 'n' field (came from our collection)
+		for i, d := range docs {
+			if _, ok := getKey(d, "n"); !ok {
+				return CompatResult{Status: "partial", Note: fmt.Sprintf("$sample: doc[%d] missing 'n' field — not from source collection", i)}
+			}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
+	run("$out", "Aggregation Stages", func(c context.Context) CompatResult {
+		outSrc := db.Collection("agg_out_src")
+		outDest := db.Collection("agg_out_dest")
+		_, _ = outSrc.InsertMany(c, []interface{}{
+			bson.D{{Key: "x", Value: 1}},
+			bson.D{{Key: "x", Value: 2}},
+		})
+		// $out writes to a new collection — no cursor results expected
+		cur, err := outSrc.Aggregate(c, bson.A{
+			bson.D{{Key: "$out", Value: "agg_out_dest"}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		// Drain cursor (may be empty for $out)
+		var curDocs []bson.D
+		_ = cur.All(c, &curDocs)
+		cur.Close(c)
+		// Verify the output collection has the docs
+		count, err := outDest.CountDocuments(c, bson.D{})
+		if err != nil {
+			return CompatResult{Status: "partial", Note: "$out: error counting output collection: " + err.Error()}
+		}
+		if count != 2 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$out: expected 2 docs in output collection, got %d", count)}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
+	run("$merge", "Aggregation Stages", func(c context.Context) CompatResult {
+		mergeSrc := db.Collection("agg_merge_src")
+		mergeDest := db.Collection("agg_merge_dest")
+		_, _ = mergeSrc.InsertMany(c, []interface{}{
+			bson.D{{Key: "k", Value: "a"}, {Key: "v", Value: 1}},
+			bson.D{{Key: "k", Value: "b"}, {Key: "v", Value: 2}},
+		})
+		cur, err := mergeSrc.Aggregate(c, bson.A{
+			bson.D{{Key: "$merge", Value: bson.D{
+				{Key: "into", Value: "agg_merge_dest"},
+				{Key: "whenMatched", Value: "replace"},
+				{Key: "whenNotMatched", Value: "insert"},
+			}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		var curDocs []bson.D
+		_ = cur.All(c, &curDocs)
+		cur.Close(c)
+		// Verify docs were written to target collection
+		count, err := mergeDest.CountDocuments(c, bson.D{})
+		if err != nil {
+			return CompatResult{Status: "partial", Note: "$merge: error counting target collection: " + err.Error()}
+		}
+		if count != 2 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$merge: expected 2 docs in target collection, got %d", count)}
+		}
+		return CompatResult{Status: "pass"}
+	})
+
 	// ─── Aggregation Expressions ───────────────────────────────────────────────
 
 	log.Println("=== Aggregation Expressions ===")
