@@ -21,11 +21,17 @@ type bboltCollection struct {
 	engine *BBoltEngine
 }
 
-func (c *bboltCollection) Name() string     { return c.coll }
+// Name returns the collection name within its database.
+func (c *bboltCollection) Name() string { return c.coll }
+
+// Database returns the name of the database that owns this collection.
 func (c *bboltCollection) Database() string { return c.db }
 
 // ─── Insert ───────────────────────────────────────────────────────────────────
 
+// InsertOne inserts a single document and returns its _id. If the document has
+// no _id field a new ObjectID is generated and prepended. Returns
+// ErrCodeDuplicateKey if a document with the same _id already exists.
 func (c *bboltCollection) InsertOne(doc bson.Raw) (bson.ObjectID, error) {
 	ids, err := c.InsertMany([]bson.Raw{doc}, InsertOptions{Ordered: true})
 	if err != nil {
@@ -367,6 +373,21 @@ func (c *bboltCollection) cappedEvict(tx *bolt.Tx, b *bolt.Bucket, newDoc bson.R
 
 // ─── Find ─────────────────────────────────────────────────────────────────────
 
+// Find returns a Cursor over documents that match filter. The caller is
+// responsible for closing the cursor when done.
+//
+// Query planning:
+//   - If a sort is requested, all matching documents are materialized in memory
+//     and sorted before the cursor is returned.
+//   - If filter is a simple {_id: <scalar>} equality, a direct bbolt key lookup
+//     is performed (O(log N)).
+//   - Otherwise, the planner inspects available secondary indexes. If a suitable
+//     index is found an index scan is used; otherwise a full collection scan is
+//     performed using a streaming cursor that pages through the bucket on demand,
+//     keeping only one batch in memory at a time.
+//
+// Thread-safety: safe to call concurrently. Each call opens an independent
+// bbolt read transaction (MVCC snapshot).
 func (c *bboltCollection) Find(filter bson.Raw, opts FindOptions) (Cursor, error) {
 	hasSort := len(opts.Sort) > 0
 
@@ -1374,14 +1395,23 @@ func tryFastSetOnly(doc bson.Raw, update bson.Raw) (bson.Raw, bool) {
 	return bson.Raw(dst), true
 }
 
+// UpdateOne applies update to the first document that matches filter. If
+// opts.Upsert is true and no document matches, an upsert is performed.
+// Returns a summary of matched, modified, and upserted document counts.
 func (c *bboltCollection) UpdateOne(filter, update bson.Raw, opts UpdateOptions) (UpdateResult, error) {
 	return c.updateDocs(filter, update, opts, false)
 }
 
+// UpdateMany applies update to all documents that match filter. If
+// opts.Upsert is true and no documents match, a single upsert is performed.
+// Returns a summary of matched, modified, and upserted document counts.
 func (c *bboltCollection) UpdateMany(filter, update bson.Raw, opts UpdateOptions) (UpdateResult, error) {
 	return c.updateDocs(filter, update, opts, true)
 }
 
+// ReplaceOne replaces the first document matching filter with the given
+// replacement document (which must not contain update operators). If
+// opts.Upsert is true and no document matches, the replacement is inserted.
 func (c *bboltCollection) ReplaceOne(filter, replacement bson.Raw, opts UpdateOptions) (UpdateResult, error) {
 	// A replacement is an update without operators
 	return c.replaceDocs(filter, replacement, opts)
@@ -1750,10 +1780,16 @@ func hasOpPrefix(s string) bool {
 
 // ─── Delete ───────────────────────────────────────────────────────────────────
 
+// DeleteOne removes the first document that matches filter and returns the
+// number of documents deleted (0 or 1). Returns ErrCodeIllegalOperation for
+// capped collections, which do not support explicit deletion.
 func (c *bboltCollection) DeleteOne(filter bson.Raw) (int64, error) {
 	return c.deleteDocs(filter, false)
 }
 
+// DeleteMany removes all documents that match filter and returns the count of
+// deleted documents. Returns ErrCodeIllegalOperation for capped collections,
+// which do not support explicit deletion.
 func (c *bboltCollection) DeleteMany(filter bson.Raw) (int64, error) {
 	return c.deleteDocs(filter, true)
 }
@@ -1841,6 +1877,10 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 
 // ─── Count / Distinct ─────────────────────────────────────────────────────────
 
+// CountDocuments returns the number of documents in the collection that match
+// filter. A nil or empty filter counts all documents. When filter is empty the
+// count is derived from bbolt bucket statistics (O(1)); otherwise a full
+// collection scan is performed.
 func (c *bboltCollection) CountDocuments(filter bson.Raw) (int64, error) {
 	boltDB, err := c.engine.getDB(c.db)
 	if err != nil {
@@ -1886,6 +1926,9 @@ func (c *bboltCollection) CountDocuments(filter bson.Raw) (int64, error) {
 	return count, nil
 }
 
+// Distinct returns the unique values of field across all documents matching
+// filter. Nested fields can be addressed with dot notation (e.g. "address.city").
+// The result slice is unordered and each value appears at most once.
 func (c *bboltCollection) Distinct(field string, filter bson.Raw) ([]interface{}, error) {
 	boltDB, err := c.engine.getDB(c.db)
 	if err != nil {
