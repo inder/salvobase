@@ -652,13 +652,90 @@ func main() {
 		bson.D{{Key: "$sortByCount", Value: "$dept"}},
 	}))
 
-	run("$facet", "Aggregation Stages", aggStage("$facet", bson.A{
-		bson.D{{Key: "$facet", Value: bson.D{
-			{Key: "byDept", Value: bson.A{
-				bson.D{{Key: "$group", Value: bson.D{{Key: "_id", Value: "$dept"}, {Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}}}}},
-			}},
-		}}},
-	}))
+	run("$facet", "Aggregation Stages", func(c context.Context) CompatResult {
+		// Use a dedicated collection so we have a known, stable document set.
+		facetColl := db.Collection("agg_facet")
+		_, _ = facetColl.InsertMany(c, []interface{}{
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "sal", Value: 100}},
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "sal", Value: 120}},
+			bson.D{{Key: "dept", Value: "sales"}, {Key: "sal", Value: 80}},
+		})
+		cur, err := facetColl.Aggregate(c, bson.A{
+			bson.D{{Key: "$facet", Value: bson.D{
+				{Key: "byDept", Value: bson.A{
+					bson.D{{Key: "$group", Value: bson.D{
+						{Key: "_id", Value: "$dept"},
+						{Key: "count", Value: bson.D{{Key: "$sum", Value: 1}}},
+					}}},
+				}},
+				{Key: "totalSal", Value: bson.A{
+					bson.D{{Key: "$group", Value: bson.D{
+						{Key: "_id", Value: nil},
+						{Key: "total", Value: bson.D{{Key: "$sum", Value: "$sal"}}},
+					}}},
+				}},
+			}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(docs) != 1 {
+			return CompatResult{Status: "fail", Note: fmt.Sprintf("$facet must return exactly 1 doc, got %d", len(docs))}
+		}
+		// Validate byDept — must have 2 groups (eng, sales)
+		byDeptRaw, ok := getKey(docs[0], "byDept")
+		if !ok {
+			return CompatResult{Status: "fail", Note: "result missing 'byDept' key"}
+		}
+		byDept, ok := byDeptRaw.(bson.A)
+		if !ok {
+			return CompatResult{Status: "fail", Note: fmt.Sprintf("byDept is not an array, got %T", byDeptRaw)}
+		}
+		if len(byDept) != 2 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("byDept: expected 2 groups (eng, sales), got %d — $group inside $facet may be broken", len(byDept))}
+		}
+		// Validate totalSal — must have 1 group with total = 300
+		totalSalRaw, ok := getKey(docs[0], "totalSal")
+		if !ok {
+			return CompatResult{Status: "fail", Note: "result missing 'totalSal' key"}
+		}
+		totalSal, ok := totalSalRaw.(bson.A)
+		if !ok {
+			return CompatResult{Status: "fail", Note: fmt.Sprintf("totalSal is not an array, got %T", totalSalRaw)}
+		}
+		if len(totalSal) != 1 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("totalSal: expected 1 group, got %d", len(totalSal))}
+		}
+		totalDoc, ok := totalSal[0].(bson.D)
+		if !ok {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("totalSal[0] is not bson.D, got %T", totalSal[0])}
+		}
+		totalVal, ok := getKey(totalDoc, "total")
+		if !ok {
+			return CompatResult{Status: "partial", Note: "totalSal group missing 'total' field"}
+		}
+		// Accept both int32 and int64 and float64 representations of 300.
+		var totalNum float64
+		switch v := totalVal.(type) {
+		case int32:
+			totalNum = float64(v)
+		case int64:
+			totalNum = float64(v)
+		case float64:
+			totalNum = v
+		default:
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("totalSal total unexpected type %T value %v", totalVal, totalVal)}
+		}
+		if totalNum != 300 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("totalSal total: expected 300, got %v", totalNum)}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
 	// $lookup — requires a second collection.
 	lkupColl := db.Collection("lookup_foreign")
