@@ -5629,6 +5629,166 @@ func TestCompactMissingArg(t *testing.T) {
 	}
 }
 
+// ─── getParameter / setParameter ─────────────────────────────────────────────
+
+func TestGetParameterLogLevel(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "getParameter", Value: 1},
+		{Key: "logLevel", Value: 1},
+	}).Decode(&result)
+	if err != nil {
+		t.Fatalf("getParameter logLevel: %v", err)
+	}
+
+	if result["ok"] != float64(1) {
+		t.Errorf("expected ok:1, got %v", result["ok"])
+	}
+	if _, ok := result["logLevel"]; !ok {
+		t.Error("expected logLevel field in response")
+	}
+}
+
+func TestGetParameterAll(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "getParameter", Value: "*"},
+	}).Decode(&result)
+	if err != nil {
+		t.Fatalf("getParameter *: %v", err)
+	}
+
+	if result["ok"] != float64(1) {
+		t.Errorf("expected ok:1, got %v", result["ok"])
+	}
+	for _, param := range []string{"logLevel", "maxConnections", "requestsPerSec", "syncOnWrite", "compression"} {
+		if _, ok := result[param]; !ok {
+			t.Errorf("expected parameter %q in getParameter * response", param)
+		}
+	}
+}
+
+func TestGetParameterUnknown(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "getParameter", Value: 1},
+		{Key: "unknownParamXYZ", Value: 1},
+	}).Err()
+	if err == nil {
+		t.Fatal("expected error for unknown parameter, got nil")
+	}
+}
+
+func TestSetParameterLogLevel(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// Set to "warn" then restore to "info".
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "setParameter", Value: 1},
+		{Key: "logLevel", Value: "warn"},
+	}).Err()
+	if err != nil {
+		t.Fatalf("setParameter logLevel=warn: %v", err)
+	}
+
+	// Verify the change is reflected by getParameter.
+	var result bson.M
+	if err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "getParameter", Value: 1},
+		{Key: "logLevel", Value: 1},
+	}).Decode(&result); err != nil {
+		t.Fatalf("getParameter after setParameter: %v", err)
+	}
+	if result["logLevel"] != "warn" {
+		t.Errorf("expected logLevel=warn after setParameter, got %v", result["logLevel"])
+	}
+
+	// Restore.
+	_ = client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "setParameter", Value: 1},
+		{Key: "logLevel", Value: "info"},
+	}).Err()
+}
+
+func TestSetParameterRequestsPerSec(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "setParameter", Value: 1},
+		{Key: "requestsPerSec", Value: int32(500)},
+	}).Err()
+	if err != nil {
+		t.Fatalf("setParameter requestsPerSec: %v", err)
+	}
+
+	var result bson.M
+	if err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "getParameter", Value: 1},
+		{Key: "requestsPerSec", Value: 1},
+	}).Decode(&result); err != nil {
+		t.Fatalf("getParameter requestsPerSec: %v", err)
+	}
+	if result["requestsPerSec"] != int32(500) {
+		t.Errorf("expected requestsPerSec=500, got %v", result["requestsPerSec"])
+	}
+
+	// Restore.
+	_ = client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "setParameter", Value: 1},
+		{Key: "requestsPerSec", Value: int32(0)},
+	}).Err()
+}
+
+func TestSetParameterInvalidLogLevel(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "setParameter", Value: 1},
+		{Key: "logLevel", Value: "verbose"},
+	}).Err()
+	if err == nil {
+		t.Fatal("expected error for invalid logLevel value, got nil")
+	}
+}
+
+func TestSetParameterUnknown(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "setParameter", Value: 1},
+		{Key: "unknownParamXYZ", Value: "value"},
+	}).Err()
+	if err == nil {
+		t.Fatal("expected error for unknown/read-only parameter, got nil")
+	}
+}
+
+func TestSetParameterReadOnly(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// maxConnections is read-only via setParameter.
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "setParameter", Value: 1},
+		{Key: "maxConnections", Value: int32(100)},
+	}).Err()
+	if err == nil {
+		t.Fatal("expected error when setting read-only parameter maxConnections, got nil")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

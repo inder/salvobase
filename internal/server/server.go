@@ -83,8 +83,11 @@ func New(cfg Config, logger *zap.Logger) (*Server, error) {
 	// Initialize auth manager.
 	authMgr := auth.NewManager(engine.Users(), cfg.NoAuth)
 
-	// Initialize command dispatcher.
-	dispatcher := commands.NewDispatcher(engine, authMgr, logger)
+	// Initialize command dispatcher with runtime-modifiable parameters.
+	runtimeCfg := commands.NewRuntimeConfig(
+		cfg.LogLevel, cfg.Compression, cfg.MaxConnections, cfg.RequestsPerSec, cfg.SyncOnWrite,
+	)
+	dispatcher := commands.NewDispatcher(engine, authMgr, logger, runtimeCfg)
 
 	// Bind TCP listener.
 	addr := fmt.Sprintf("%s:%d", cfg.BindIP, cfg.Port)
