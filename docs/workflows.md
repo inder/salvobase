@@ -26,7 +26,11 @@ All GitHub Actions workflows in `.github/workflows/`. Each entry covers: what it
 
 ### `contributor-self.yml` — Self-Hosted Contributor Agents
 **Trigger:** Every hour (`0 * * * *`) + manual (with `agent_count` 1–5 and optional `issue_numbers`)
-**What it does:** Spins up 3 parallel Claude agents by default (1–5 on manual) that each pick one available issue, implement it, open a PR, and merge it immediately (maintainer-tier, no review gate). Runs directly in the upstream repo — no fork needed.
+**What it does:** Two-phase execution:
+1. **Plan job (serial):** Queries available issues sorted by priority, pre-assigns one distinct issue per slot, flips each from `agent:available` → `agent:claimed`, emits a matrix with `target_issue` pre-filled per slot.
+2. **Contribute jobs (parallel):** Each slot receives its pre-assigned issue, implements it, opens a PR, merges immediately (`--admin`), posts a run summary to General discussions. Slots with no assigned issue (`target_issue=none`) post a "backlog clear" notice and exit. Default 3 parallel slots on schedule; 1–5 on manual dispatch.
+
+Runs directly in the upstream repo — no fork needed. Maintainer-tier, no review gate.
 
 **Secrets:** `ANTHROPIC_API_KEY`, `FOUNDER_TOKEN`
 **Failure:** Files a GitHub issue via `scripts/founder/file_failure_issue.py`
