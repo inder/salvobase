@@ -10,6 +10,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -4014,6 +4015,965 @@ func TestIndexRangeScanCompound(t *testing.T) {
 			t.Errorf("compound range: score %d out of range [10,15]", score)
 		}
 	}
+}
+
+// ─── Issue #21: Array query operator edge cases ───────────────────────────────
+
+func TestArrayQueryEdgeCases(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	coll := db.Collection("array_query_edges")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{Key: "tags", Value: bson.A{"go", "db", "nosql"}}, {Key: "scores", Value: bson.A{int32(10), int32(20), int32(30)}}},
+		bson.D{{Key: "tags", Value: bson.A{"go", "cache"}}, {Key: "scores", Value: bson.A{int32(5), int32(15)}}},
+		bson.D{{Key: "tags", Value: bson.A{"rust", "db"}}, {Key: "scores", Value: bson.A{int32(100)}}},
+		bson.D{{Key: "tags", Value: bson.A{}}, {Key: "scores", Value: bson.A{}}},
+		bson.D{{Key: "tags", Value: bson.A{"go", nil}}, {Key: "scores", Value: bson.A{int32(0)}}},
+		bson.D{{Key: "arr", Value: bson.A{bson.D{{Key: "x", Value: int32(1)}, {Key: "y", Value: int32(2)}}, bson.D{{Key: "x", Value: int32(3)}, {Key: "y", Value: int32(4)}}}}},
+	}
+	if _, err := coll.InsertMany(ctx, docs); err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	t.Run("$elemMatch nested fields", func(t *testing.T) {
+		filter := bson.D{{Key: "arr", Value: bson.D{{Key: "$elemMatch", Value: bson.D{{Key: "x", Value: int32(1)}, {Key: "y", Value: int32(2)}}}}}}
+		cursor, err := coll.Find(ctx, filter)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("$elemMatch nested: expected 1, got %d", len(results))
+		}
+	})
+
+	t.Run("$all with duplicates", func(t *testing.T) {
+		filter := bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{"go", "go"}}}}}
+		cursor, err := coll.Find(ctx, filter)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		// $all with duplicate "go" should match same as $all:["go"]
+		if len(results) < 2 {
+			t.Errorf("$all duplicates: expected >=2, got %d", len(results))
+		}
+	})
+
+	t.Run("$size 0 matches empty array", func(t *testing.T) {
+		filter := bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: int32(0)}}}}
+		cursor, err := coll.Find(ctx, filter)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("$size 0: expected 1, got %d", len(results))
+		}
+	})
+
+	t.Run("$size exact match", func(t *testing.T) {
+		filter := bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: int32(3)}}}}
+		cursor, err := coll.Find(ctx, filter)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("$size 3: expected 1, got %d", len(results))
+		}
+	})
+
+	t.Run("dot notation array index", func(t *testing.T) {
+		filter := bson.D{{Key: "tags.0", Value: "go"}}
+		cursor, err := coll.Find(ctx, filter)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) < 2 {
+			t.Errorf("tags.0=go: expected >=2, got %d", len(results))
+		}
+	})
+
+	t.Run("$in against array field", func(t *testing.T) {
+		filter := bson.D{{Key: "tags", Value: bson.D{{Key: "$in", Value: bson.A{"rust", "cache"}}}}}
+		cursor, err := coll.Find(ctx, filter)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("$in array: expected 2, got %d", len(results))
+		}
+	})
+
+	t.Run("null element in array matched by $in null", func(t *testing.T) {
+		filter := bson.D{{Key: "tags", Value: bson.D{{Key: "$in", Value: bson.A{nil}}}}}
+		cursor, err := coll.Find(ctx, filter)
+		if err != nil {
+			t.Fatalf("Find: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) < 1 {
+			t.Errorf("$in null: expected >=1 (doc with nil tag), got %d", len(results))
+		}
+	})
+}
+
+// ─── Issue #22: Update operator edge cases ────────────────────────────────────
+
+// toInt64Val normalises int32/int64/int to int64 for type-agnostic comparison.
+// Salvobase returns int64 for $bit results; tests compare uniformly via this helper.
+func toInt64Val(v interface{}) int64 {
+	switch n := v.(type) {
+	case int32:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	default:
+		return -9999
+	}
+}
+
+func TestUpdateOperatorEdgeCases(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	coll := db.Collection("update_op_edges")
+	ctx := context.Background()
+
+	t.Run("$inc missing field starts at 0", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "inc_test"}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "inc_test"}}, bson.D{{Key: "$inc", Value: bson.D{{Key: "counter", Value: int32(5)}}}}); err != nil {
+			t.Fatalf("UpdateOne $inc: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "inc_test"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "counter" {
+				if toInt64Val(e.Value) != int64(5) {
+					t.Errorf("$inc missing: expected 5, got %v (%T)", e.Value, e.Value)
+				}
+				return
+			}
+		}
+		t.Error("$inc missing: counter field not found")
+	})
+
+	t.Run("$inc negative value", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "inc_neg"}, {Key: "val", Value: int32(10)}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "inc_neg"}}, bson.D{{Key: "$inc", Value: bson.D{{Key: "val", Value: int32(-3)}}}}); err != nil {
+			t.Fatalf("UpdateOne $inc neg: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "inc_neg"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "val" {
+				if toInt64Val(e.Value) != int64(7) {
+					t.Errorf("$inc negative: expected 7, got %v", e.Value)
+				}
+				return
+			}
+		}
+		t.Error("$inc negative: val field not found")
+	})
+
+	t.Run("$mul missing field becomes 0", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "mul_missing"}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "mul_missing"}}, bson.D{{Key: "$mul", Value: bson.D{{Key: "factor", Value: int32(5)}}}}); err != nil {
+			t.Fatalf("UpdateOne $mul: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "mul_missing"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "factor" {
+				if toInt64Val(e.Value) != int64(0) {
+					t.Errorf("$mul missing: expected 0, got %v", e.Value)
+				}
+				return
+			}
+		}
+		t.Error("$mul missing: factor field not found")
+	})
+
+	t.Run("$rename field", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "rename_test"}, {Key: "old_field", Value: "value123"}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "rename_test"}}, bson.D{{Key: "$rename", Value: bson.D{{Key: "old_field", Value: "new_field"}}}}); err != nil {
+			t.Fatalf("UpdateOne $rename: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "rename_test"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		hasNew := false
+		hasOld := false
+		for _, e := range result {
+			if e.Key == "new_field" {
+				hasNew = true
+			}
+			if e.Key == "old_field" {
+				hasOld = true
+			}
+		}
+		if !hasNew {
+			t.Error("$rename: new_field not found")
+		}
+		if hasOld {
+			t.Error("$rename: old_field still present")
+		}
+	})
+
+	t.Run("$unset nested field", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{
+			{Key: "name", Value: "unset_nested"},
+			{Key: "meta", Value: bson.D{{Key: "region", Value: "us-east"}, {Key: "tier", Value: "free"}}},
+		}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "unset_nested"}}, bson.D{{Key: "$unset", Value: bson.D{{Key: "meta.region", Value: ""}}}}); err != nil {
+			t.Fatalf("UpdateOne $unset nested: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "unset_nested"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "meta" {
+				if sub, ok := e.Value.(bson.D); ok {
+					for _, se := range sub {
+						if se.Key == "region" {
+							t.Error("$unset nested: meta.region still present")
+						}
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("$push with $each and $sort", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "push_each"}, {Key: "scores", Value: bson.A{int32(3), int32(1)}}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "push_each"}}, bson.D{{Key: "$push", Value: bson.D{{Key: "scores", Value: bson.D{
+			{Key: "$each", Value: bson.A{int32(2), int32(4)}},
+			{Key: "$sort", Value: int32(1)},
+		}}}}}); err != nil {
+			t.Fatalf("UpdateOne $push $each $sort: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "push_each"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "scores" {
+				arr, ok := e.Value.(bson.A)
+				if !ok {
+					t.Fatalf("scores not bson.A: %T", e.Value)
+				}
+				if len(arr) != 4 {
+					t.Errorf("$push $each: expected 4 elements, got %d", len(arr))
+				}
+				// verify sorted ascending
+				for i := 1; i < len(arr); i++ {
+					if toInt64Val(arr[i]) < toInt64Val(arr[i-1]) {
+						t.Errorf("$push $sort: not sorted at index %d", i)
+					}
+				}
+				return
+			}
+		}
+		t.Error("scores field not found")
+	})
+
+	t.Run("$push with $slice", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "push_slice"}, {Key: "items", Value: bson.A{int32(1), int32(2), int32(3)}}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "push_slice"}}, bson.D{{Key: "$push", Value: bson.D{{Key: "items", Value: bson.D{
+			{Key: "$each", Value: bson.A{int32(4), int32(5)}},
+			{Key: "$slice", Value: int32(3)},
+		}}}}}); err != nil {
+			t.Fatalf("UpdateOne $push $slice: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "push_slice"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "items" {
+				arr, ok := e.Value.(bson.A)
+				if !ok {
+					t.Fatalf("items not bson.A: %T", e.Value)
+				}
+				if len(arr) != 3 {
+					t.Errorf("$push $slice: expected 3 elements, got %d", len(arr))
+				}
+				return
+			}
+		}
+		t.Error("items field not found")
+	})
+
+	t.Run("$addToSet deduplication", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "addtoset"}, {Key: "tags", Value: bson.A{"a", "b"}}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		// Add "a" again — should not duplicate
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "addtoset"}}, bson.D{{Key: "$addToSet", Value: bson.D{{Key: "tags", Value: "a"}}}}); err != nil {
+			t.Fatalf("UpdateOne $addToSet dup: %v", err)
+		}
+		// Add "c" — new value
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "addtoset"}}, bson.D{{Key: "$addToSet", Value: bson.D{{Key: "tags", Value: "c"}}}}); err != nil {
+			t.Fatalf("UpdateOne $addToSet new: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "addtoset"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "tags" {
+				arr, ok := e.Value.(bson.A)
+				if !ok {
+					t.Fatalf("tags not bson.A: %T", e.Value)
+				}
+				if len(arr) != 3 {
+					t.Errorf("$addToSet: expected 3 elements (a,b,c), got %d: %v", len(arr), arr)
+				}
+				return
+			}
+		}
+		t.Error("tags field not found")
+	})
+
+	t.Run("$pop first removes first element", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "pop_first"}, {Key: "q", Value: bson.A{int32(1), int32(2), int32(3)}}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "pop_first"}}, bson.D{{Key: "$pop", Value: bson.D{{Key: "q", Value: int32(-1)}}}}); err != nil {
+			t.Fatalf("UpdateOne $pop -1: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "pop_first"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "q" {
+				arr := e.Value.(bson.A)
+				if len(arr) != 2 {
+					t.Errorf("$pop -1: expected len 2, got %d", len(arr))
+				}
+				if toInt64Val(arr[0]) != int64(2) {
+					t.Errorf("$pop -1: first element should be 2, got %v", arr[0])
+				}
+				return
+			}
+		}
+		t.Error("q field not found")
+	})
+
+	t.Run("$pop last removes last element", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "pop_last"}, {Key: "q", Value: bson.A{int32(10), int32(20), int32(30)}}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "pop_last"}}, bson.D{{Key: "$pop", Value: bson.D{{Key: "q", Value: int32(1)}}}}); err != nil {
+			t.Fatalf("UpdateOne $pop 1: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "pop_last"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "q" {
+				arr := e.Value.(bson.A)
+				if len(arr) != 2 {
+					t.Errorf("$pop 1: expected len 2, got %d", len(arr))
+				}
+				if toInt64Val(arr[len(arr)-1]) != int64(20) {
+					t.Errorf("$pop 1: last element should be 20, got %v", arr[len(arr)-1])
+				}
+				return
+			}
+		}
+		t.Error("q field not found")
+	})
+
+	t.Run("$pull with condition", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "pull_cond"}, {Key: "scores", Value: bson.A{int32(5), int32(15), int32(25), int32(10)}}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "pull_cond"}}, bson.D{{Key: "$pull", Value: bson.D{{Key: "scores", Value: bson.D{{Key: "$gte", Value: int32(15)}}}}}}); err != nil {
+			t.Fatalf("UpdateOne $pull: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "pull_cond"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "scores" {
+				arr := e.Value.(bson.A)
+				if len(arr) != 2 {
+					t.Errorf("$pull: expected 2 elements (5, 10), got %d: %v", len(arr), arr)
+				}
+				return
+			}
+		}
+		t.Error("scores field not found")
+	})
+
+	t.Run("$bit AND", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "bit_and"}, {Key: "flags", Value: int32(0b1111)}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "bit_and"}}, bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "and", Value: int32(0b1010)}}}}}}); err != nil {
+			t.Fatalf("UpdateOne $bit and: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "bit_and"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "flags" {
+				if toInt64Val(e.Value) != int64(0b1010) {
+					t.Errorf("$bit AND: expected %d, got %v (%T)", 0b1010, e.Value, e.Value)
+				}
+				return
+			}
+		}
+		t.Error("flags field not found")
+	})
+
+	t.Run("$bit OR", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "bit_or"}, {Key: "flags", Value: int32(0b1010)}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "bit_or"}}, bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "or", Value: int32(0b0101)}}}}}}); err != nil {
+			t.Fatalf("UpdateOne $bit or: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "bit_or"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "flags" {
+				if toInt64Val(e.Value) != int64(0b1111) {
+					t.Errorf("$bit OR: expected %d, got %v (%T)", 0b1111, e.Value, e.Value)
+				}
+				return
+			}
+		}
+		t.Error("flags field not found")
+	})
+
+	t.Run("$bit XOR", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "bit_xor"}, {Key: "flags", Value: int32(0b1100)}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		if _, err := coll.UpdateOne(ctx, bson.D{{Key: "name", Value: "bit_xor"}}, bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "xor", Value: int32(0b1010)}}}}}}); err != nil {
+			t.Fatalf("UpdateOne $bit xor: %v", err)
+		}
+		var result bson.D
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "bit_xor"}}).Decode(&result); err != nil {
+			t.Fatalf("FindOne: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "flags" {
+				if toInt64Val(e.Value) != int64(0b0110) {
+					t.Errorf("$bit XOR: expected %d, got %v (%T)", 0b0110, e.Value, e.Value)
+				}
+				return
+			}
+		}
+		t.Error("flags field not found")
+	})
+}
+
+// ─── Issue #23: Aggregation pipeline edge cases ───────────────────────────────
+
+func TestAggregationPipelineEdgeCases(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	coll := db.Collection("agg_pipeline_edges")
+	ctx := context.Background()
+
+	docs := []interface{}{
+		bson.D{{Key: "cat", Value: "A"}, {Key: "val", Value: int32(10)}, {Key: "tags", Value: bson.A{"x", "y"}}},
+		bson.D{{Key: "cat", Value: "A"}, {Key: "val", Value: int32(20)}, {Key: "tags", Value: bson.A{"y", "z"}}},
+		bson.D{{Key: "cat", Value: "B"}, {Key: "val", Value: int32(5)}},
+		bson.D{{Key: "cat", Value: "B"}, {Key: "val", Value: int32(15)}, {Key: "tags", Value: bson.A{"x"}}},
+		bson.D{{Key: "cat", Value: "C"}},
+	}
+	if _, err := coll.InsertMany(ctx, docs); err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
+
+	t.Run("$sum on missing field is 0", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: nil},
+				{Key: "total", Value: bson.D{{Key: "$sum", Value: "$nonexistent"}}},
+			}}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		for _, e := range results[0] {
+			if e.Key == "total" {
+				if toInt64Val(e.Value) != int64(0) {
+					t.Errorf("$sum missing: expected 0, got %v", e.Value)
+				}
+				return
+			}
+		}
+		t.Error("total field not found")
+	})
+
+	t.Run("$avg on missing fields", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$match", Value: bson.D{{Key: "cat", Value: "C"}}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: nil},
+				{Key: "avg", Value: bson.D{{Key: "$avg", Value: "$val"}}},
+			}}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		for _, e := range results[0] {
+			if e.Key == "avg" {
+				// avg of no values = null/nil
+				if e.Value != nil {
+					// some impls return 0 for this — accept both nil and 0
+					if toInt64Val(e.Value) != int64(0) {
+						t.Errorf("$avg missing: expected nil or 0, got %v (%T)", e.Value, e.Value)
+					}
+				}
+				return
+			}
+		}
+		t.Error("avg field not found")
+	})
+
+	t.Run("$push accumulator collects all values", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$match", Value: bson.D{{Key: "cat", Value: "A"}}}},
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$cat"},
+				{Key: "vals", Value: bson.D{{Key: "$push", Value: "$val"}}},
+			}}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 group, got %d", len(results))
+		}
+		for _, e := range results[0] {
+			if e.Key == "vals" {
+				arr, ok := e.Value.(bson.A)
+				if !ok {
+					t.Fatalf("vals not bson.A: %T", e.Value)
+				}
+				if len(arr) != 2 {
+					t.Errorf("$push: expected 2 vals for cat A, got %d", len(arr))
+				}
+				return
+			}
+		}
+		t.Error("vals field not found")
+	})
+
+	t.Run("$addToSet accumulator deduplicates", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: nil},
+				{Key: "cats", Value: bson.D{{Key: "$addToSet", Value: "$cat"}}},
+			}}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		for _, e := range results[0] {
+			if e.Key == "cats" {
+				arr, ok := e.Value.(bson.A)
+				if !ok {
+					t.Fatalf("cats not bson.A: %T", e.Value)
+				}
+				if len(arr) != 3 {
+					t.Errorf("$addToSet: expected 3 unique cats (A,B,C), got %d: %v", len(arr), arr)
+				}
+				return
+			}
+		}
+		t.Error("cats field not found")
+	})
+
+	t.Run("$limit 0 returns empty", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$limit", Value: int32(0)}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate $limit 0: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("$limit 0: expected 0 results, got %d", len(results))
+		}
+	})
+
+	t.Run("$skip larger than collection returns empty", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$skip", Value: int32(1000)}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate $skip overflow: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("$skip overflow: expected 0, got %d", len(results))
+		}
+	})
+
+	t.Run("$project computed field and exclusion", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$match", Value: bson.D{{Key: "cat", Value: "A"}}}},
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "cat", Value: int32(1)},
+				{Key: "doubled", Value: bson.D{{Key: "$multiply", Value: bson.A{"$val", int32(2)}}}},
+				{Key: "tags", Value: int32(0)},
+			}}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate $project: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 2 {
+			t.Fatalf("$project: expected 2 results, got %d", len(results))
+		}
+		for _, result := range results {
+			hasDoubled := false
+			hasTags := false
+			for _, e := range result {
+				if e.Key == "doubled" {
+					hasDoubled = true
+				}
+				if e.Key == "tags" {
+					hasTags = true
+				}
+			}
+			if !hasDoubled {
+				t.Error("$project: doubled field missing")
+			}
+			if hasTags {
+				t.Error("$project: tags should be excluded")
+			}
+		}
+	})
+
+	t.Run("$match after $group filters groups", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$cat"},
+				{Key: "total", Value: bson.D{{Key: "$sum", Value: "$val"}}},
+			}}},
+			bson.D{{Key: "$match", Value: bson.D{{Key: "total", Value: bson.D{{Key: "$gt", Value: int32(10)}}}}}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate $match after $group: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		// A: 30, B: 20 both > 10; C: 0 (missing val) not > 10
+		if len(results) != 2 {
+			t.Errorf("$match after $group: expected 2 (A,B), got %d", len(results))
+		}
+	})
+
+	t.Run("empty pipeline returns all docs", func(t *testing.T) {
+		cursor, err := coll.Aggregate(ctx, bson.A{})
+		if err != nil {
+			t.Fatalf("Aggregate empty pipeline: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 5 {
+			t.Errorf("empty pipeline: expected 5 docs, got %d", len(results))
+		}
+	})
+
+	t.Run("multi-key sort stability", func(t *testing.T) {
+		pipeline := bson.A{
+			bson.D{{Key: "$sort", Value: bson.D{
+				{Key: "cat", Value: int32(1)},
+				{Key: "val", Value: int32(-1)},
+			}}},
+		}
+		cursor, err := coll.Aggregate(ctx, pipeline)
+		if err != nil {
+			t.Fatalf("Aggregate multi-key sort: %v", err)
+		}
+		var results []bson.D
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 5 {
+			t.Fatalf("multi-key sort: expected 5 results, got %d", len(results))
+		}
+		// Within cat A, val should be descending: 20, 10
+		var catAVals []int64
+		for _, r := range results {
+			var cat string
+			var val int64 = -1
+			for _, e := range r {
+				if e.Key == "cat" {
+					cat, _ = e.Value.(string)
+				}
+				if e.Key == "val" {
+					val = toInt64Val(e.Value)
+				}
+			}
+			if cat == "A" && val >= 0 {
+				catAVals = append(catAVals, val)
+			}
+		}
+		if len(catAVals) == 2 && catAVals[0] < catAVals[1] {
+			t.Errorf("multi-key sort: cat A vals not descending: %v", catAVals)
+		}
+	})
+}
+
+// ─── Issue #24: findAndModify edge cases ──────────────────────────────────────
+
+func TestFindAndModifyEdgeCases(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	coll := db.Collection("findandmodify_edges")
+	ctx := context.Background()
+
+	t.Run("FindOneAndUpdate returns updated doc (After)", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "fam_after"}, {Key: "val", Value: int32(1)}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		after := options.After
+		var result bson.D
+		err := coll.FindOneAndUpdate(
+			ctx,
+			bson.D{{Key: "name", Value: "fam_after"}},
+			bson.D{{Key: "$inc", Value: bson.D{{Key: "val", Value: int32(10)}}}},
+			options.FindOneAndUpdate().SetReturnDocument(after),
+		).Decode(&result)
+		if err != nil {
+			t.Fatalf("FindOneAndUpdate After: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "val" {
+				if toInt64Val(e.Value) != int64(11) {
+					t.Errorf("FindOneAndUpdate After: expected 11, got %v", e.Value)
+				}
+				return
+			}
+		}
+		t.Error("val field not found")
+	})
+
+	t.Run("FindOneAndUpdate upsert creates doc", func(t *testing.T) {
+		var result bson.D
+		err := coll.FindOneAndUpdate(
+			ctx,
+			bson.D{{Key: "name", Value: "fam_upsert_new"}},
+			bson.D{{Key: "$set", Value: bson.D{{Key: "created", Value: true}}}},
+			options.FindOneAndUpdate().SetUpsert(true).SetReturnDocument(options.After),
+		).Decode(&result)
+		if err != nil {
+			t.Fatalf("FindOneAndUpdate upsert: %v", err)
+		}
+		hasCreated := false
+		for _, e := range result {
+			if e.Key == "created" && e.Value == true {
+				hasCreated = true
+			}
+		}
+		if !hasCreated {
+			t.Error("upsert: created field not found or not true")
+		}
+	})
+
+	t.Run("FindOneAndUpdate with sort picks correct doc", func(t *testing.T) {
+		for _, v := range []int32{100, 200, 300} {
+			if _, err := coll.InsertOne(ctx, bson.D{{Key: "group", Value: "sort_test"}, {Key: "score", Value: v}}); err != nil {
+				t.Fatalf("InsertOne: %v", err)
+			}
+		}
+		after := options.After
+		var result bson.D
+		err := coll.FindOneAndUpdate(
+			ctx,
+			bson.D{{Key: "group", Value: "sort_test"}},
+			bson.D{{Key: "$set", Value: bson.D{{Key: "updated", Value: true}}}},
+			options.FindOneAndUpdate().SetSort(bson.D{{Key: "score", Value: int32(-1)}}).SetReturnDocument(after),
+		).Decode(&result)
+		if err != nil {
+			t.Fatalf("FindOneAndUpdate sort: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "score" {
+				if toInt64Val(e.Value) != int64(300) {
+					t.Errorf("FindOneAndUpdate sort: expected score 300, got %v", e.Value)
+				}
+				return
+			}
+		}
+		t.Error("score field not found")
+	})
+
+	t.Run("FindOneAndDelete returns deleted document", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "fam_delete"}, {Key: "val", Value: int32(42)}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		var result bson.D
+		err := coll.FindOneAndDelete(ctx, bson.D{{Key: "name", Value: "fam_delete"}}).Decode(&result)
+		if err != nil {
+			t.Fatalf("FindOneAndDelete: %v", err)
+		}
+		found := false
+		for _, e := range result {
+			if e.Key == "val" && toInt64Val(e.Value) == int64(42) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("FindOneAndDelete: returned doc missing val=42, got %v", result)
+		}
+		// verify doc is actually gone
+		err = coll.FindOne(ctx, bson.D{{Key: "name", Value: "fam_delete"}}).Decode(&result)
+		if err == nil {
+			t.Error("FindOneAndDelete: document should be deleted but still exists")
+		}
+	})
+
+	t.Run("FindOneAndReplace returns original doc (Before)", func(t *testing.T) {
+		if _, err := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "fam_replace"}, {Key: "val", Value: int32(99)}}); err != nil {
+			t.Fatalf("InsertOne: %v", err)
+		}
+		var result bson.D
+		err := coll.FindOneAndReplace(
+			ctx,
+			bson.D{{Key: "name", Value: "fam_replace"}},
+			bson.D{{Key: "name", Value: "fam_replace"}, {Key: "val", Value: int32(0)}},
+			options.FindOneAndReplace().SetReturnDocument(options.Before),
+		).Decode(&result)
+		if err != nil {
+			t.Fatalf("FindOneAndReplace Before: %v", err)
+		}
+		for _, e := range result {
+			if e.Key == "val" {
+				if toInt64Val(e.Value) != int64(99) {
+					t.Errorf("FindOneAndReplace Before: expected original val=99, got %v", e.Value)
+				}
+				return
+			}
+		}
+		t.Error("val field not found in returned doc")
+	})
+
+	t.Run("FindOneAndUpdate ErrNoDocuments on empty collection", func(t *testing.T) {
+		emptyColl := db.Collection("fam_empty_coll")
+		var result bson.D
+		err := emptyColl.FindOneAndUpdate(
+			ctx,
+			bson.D{{Key: "name", Value: "nonexistent"}},
+			bson.D{{Key: "$set", Value: bson.D{{Key: "x", Value: 1}}}},
+		).Decode(&result)
+		if err == nil {
+			t.Error("expected ErrNoDocuments, got nil")
+		} else if !errors.Is(err, mongo.ErrNoDocuments) {
+			t.Errorf("expected ErrNoDocuments, got %v", err)
+		}
+	})
 }
 
 func TestMain(m *testing.M) {

@@ -8,6 +8,7 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
+
 // parseOpMsgFromBytes parses a complete OP_MSG message (including header) from buf.
 func parseOpMsgFromBytes(t *testing.T, buf []byte) *OpMsgMessage {
 	t.Helper()
