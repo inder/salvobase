@@ -16,6 +16,20 @@ import (
 // serverStartTime records when this process started.
 var serverStartTime = time.Now()
 
+// handleShutdown handles the "shutdown" command.
+// It initiates a graceful server shutdown after the response has been sent.
+// The command document must contain {"shutdown": 1}; any other value is an error.
+// Optional fields: force (bool), timeoutSecs (int, unused — shutdown is always graceful).
+func handleShutdown(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	if lookupInt64Field(cmd, "shutdown") != 1 {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "shutdown: field value must be 1")
+	}
+	if ctx.ShutdownFunc != nil {
+		ctx.ShutdownFunc()
+	}
+	return BuildOKResponse(), nil
+}
+
 // processObjectID is a stable ObjectID representing this server process.
 var processObjectID = bson.NewObjectID()
 

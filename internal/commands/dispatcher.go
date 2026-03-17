@@ -27,6 +27,9 @@ type Context struct {
 	NoAuth   bool
 	// RemoteAddr is the client's network address (for whatsmyuri).
 	RemoteAddr string
+	// ShutdownFunc, if non-nil, is called by the shutdown command handler to
+	// initiate a graceful server shutdown after the response has been sent.
+	ShutdownFunc func()
 }
 
 // Session represents a client session (for transactions and logical sessions).
@@ -138,6 +141,9 @@ func (d *Dispatcher) registerAll() {
 	d.register("usersinfo", handleUsersInfo)
 	d.register("grantrolestouser", handleGrantRolesToUser)
 	d.register("revokerolesfromuser", handleRevokeRolesFromUser)
+
+	// Server lifecycle
+	d.register("shutdown", handleShutdown)
 
 	// Cursors / Sessions
 	d.register("getmore", handleGetMore)
@@ -253,6 +259,8 @@ func cmdNameToAction(cmdName string) string {
 	case "createuser", "dropuser", "updateuser", "usersinfo",
 		"grantrolestouser", "revokerolesfromuser":
 		return "createUser"
+	case "shutdown":
+		return "shutdown"
 	default:
 		return "find"
 	}

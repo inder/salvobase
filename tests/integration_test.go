@@ -5186,6 +5186,25 @@ func TestCappedCollectionMaxDocs(t *testing.T) {
 	}
 }
 
+// TestShutdownCommandInvalidValue verifies that the shutdown command rejects
+// values other than 1 with a descriptive error.
+func TestShutdownCommandInvalidValue(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// shutdown: 0 must be rejected.
+	res := client.Database("admin").RunCommand(ctx, bson.D{{Key: "shutdown", Value: int32(0)}})
+	if res.Err() == nil {
+		t.Fatal("expected error for shutdown:0, got nil")
+	}
+
+	// shutdown: 2 must also be rejected.
+	res = client.Database("admin").RunCommand(ctx, bson.D{{Key: "shutdown", Value: int32(2)}})
+	if res.Err() == nil {
+		t.Fatal("expected error for shutdown:2, got nil")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

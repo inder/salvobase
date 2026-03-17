@@ -264,14 +264,23 @@ func (c *Connection) handleOpDelete(msg *wire.OpDeleteMessage) error {
 
 // buildContext creates a command execution context for the current connection state.
 func (c *Connection) buildContext(db string) *commands.Context {
+	srv := c.server
 	ctx := &commands.Context{
 		DB:         db,
-		Engine:     c.server.engine,
-		Auth:       c.server.authMgr,
+		Engine:     srv.engine,
+		Auth:       srv.authMgr,
 		Logger:     c.logger,
 		ConnID:     c.id,
-		NoAuth:     c.server.cfg.NoAuth,
+		NoAuth:     srv.cfg.NoAuth,
 		RemoteAddr: c.conn.RemoteAddr().String(),
+		// ShutdownFunc triggers a graceful shutdown after the response is sent.
+		// The 200 ms delay ensures the response is flushed to the client first.
+		ShutdownFunc: func() {
+			go func() {
+				time.Sleep(200 * time.Millisecond)
+				srv.Shutdown() //nolint:errcheck
+			}()
+		},
 	}
 
 	if c.authed {
