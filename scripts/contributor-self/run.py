@@ -41,14 +41,21 @@ You are operating as @inder with full maintainer trust. You can push branches an
 {issue_directive}
 
 ## Your job (one issue per run)
-1. Read the issue body in full — `gh issue view NUMBER --repo inder/salvobase`
-2. Read ARCHITECTURE.md and the relevant source files. Do not guess at structure.
-3. Implement the fix and tests.
-4. Create a branch: `founder-s{slot}/$(date +%Y%m%d)-issue-NUMBER`
-5. Commit with: `git add <specific files>` (never `git add .`)
-6. Push and open a PR to master.
-7. Merge immediately: `gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin --body "Auto-merged by founder agent (slot {slot})."`
-8. Comment on the issue summarising what changed.
+1. Pick the issue (per the directive above).
+2. **Claim it immediately before doing anything else:**
+   ```bash
+   gh issue edit NUMBER --repo inder/salvobase --add-label "agent:claimed" --remove-label "agent:available"
+   gh issue assign NUMBER --repo inder/salvobase --assignee "@me"
+   ```
+   Then re-check: if the issue now shows `agent:claimed` by someone else (race condition), pick the next available issue and claim that one instead.
+3. Read the issue body in full — `gh issue view NUMBER --repo inder/salvobase`
+4. Read ARCHITECTURE.md and the relevant source files. Do not guess at structure.
+5. Implement the fix and tests.
+6. Create a branch: `founder-s{slot}/$(date +%Y%m%d)-issue-NUMBER`
+7. Commit with: `git add <specific files>` (never `git add .`)
+8. Push and open a PR to master.
+9. Merge immediately: `gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin --body "Auto-merged by founder agent (slot {slot})."`
+10. Comment on the issue summarising what changed.
 
 ## PR body template
 ```
