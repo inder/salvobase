@@ -158,6 +158,22 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 	}
 
 	c.engine.opInsert.Add(successCount)
+
+	// Publish ChangeInsert events for each successfully inserted document.
+	if c.engine.eventBus.HasStream(c.db, c.coll) {
+		for i, id := range ids {
+			if id == (bson.ObjectID{}) {
+				continue // insert failed (dup key or prep error)
+			}
+			doc := results[i].prep.finalDoc
+			c.engine.eventBus.Publish(c.db, c.coll, ChangeEvent{
+				OperationType: ChangeInsert,
+				DocumentKey:   makeDocumentKey(doc.Lookup("_id")),
+				FullDocument:  doc,
+			})
+		}
+	}
+
 	return ids, insertErr
 }
 
@@ -1378,6 +1394,7 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 	}
 
 	var result UpdateResult
+	var pendingEvents []ChangeEvent // collected inside tx, published after commit
 
 	if err := boltDB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(collBucket(c.coll)))
@@ -1447,6 +1464,11 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			result.UpsertedCount = 1
 			result.UpsertedID = newDoc.Lookup("_id")
 			c.engine.opInsert.Add(1)
+			pendingEvents = append(pendingEvents, ChangeEvent{
+				OperationType: ChangeInsert,
+				DocumentKey:   makeDocumentKey(newDoc.Lookup("_id")),
+				FullDocument:  newDoc,
+			})
 			return nil
 		}
 
@@ -1484,6 +1506,11 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			}
 			c.engine.insertIntoIndexes(tx, c.db, c.coll, newKey, newDoc) //nolint:errcheck
 			result.ModifiedCount++
+			pendingEvents = append(pendingEvents, ChangeEvent{
+				OperationType:     ChangeUpdate,
+				DocumentKey:       makeDocumentKey(newDoc.Lookup("_id")),
+				UpdateDescription: updateDescriptionPlaceholder,
+			})
 		}
 		return nil
 	}); err != nil {
@@ -1491,6 +1518,14 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 	}
 
 	c.engine.opUpdate.Add(1)
+
+	// Publish change events for committed mutations.
+	if c.engine.eventBus.HasStream(c.db, c.coll) {
+		for _, ev := range pendingEvents {
+			c.engine.eventBus.Publish(c.db, c.coll, ev)
+		}
+	}
+
 	return result, nil
 }
 
@@ -1501,6 +1536,7 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 	}
 
 	var result UpdateResult
+	var pendingEvent *ChangeEvent // at most one event for ReplaceOne
 
 	if err := boltDB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(collBucket(c.coll)))
@@ -1567,6 +1603,12 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 				c.engine.insertIntoIndexes(tx, c.db, c.coll, upsertKey, newDoc) //nolint:errcheck
 				result.UpsertedCount = 1
 				result.UpsertedID = newDoc.Lookup("_id")
+				ev := ChangeEvent{
+					OperationType: ChangeInsert,
+					DocumentKey:   makeDocumentKey(newDoc.Lookup("_id")),
+					FullDocument:  newDoc,
+				}
+				pendingEvent = &ev
 			}
 			return nil
 		}
@@ -1608,12 +1650,24 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 		c.engine.insertIntoIndexes(tx, c.db, c.coll, newKey, newDoc) //nolint:errcheck
 		result.MatchedCount = 1
 		result.ModifiedCount = 1
+		ev := ChangeEvent{
+			OperationType: ChangeReplace,
+			DocumentKey:   makeDocumentKey(newDoc.Lookup("_id")),
+			FullDocument:  newDoc,
+		}
+		pendingEvent = &ev
 		return nil
 	}); err != nil {
 		return result, err
 	}
 
 	c.engine.opUpdate.Add(1)
+
+	// Publish the change event for the committed mutation.
+	if pendingEvent != nil && c.engine.eventBus.HasStream(c.db, c.coll) {
+		c.engine.eventBus.Publish(c.db, c.coll, *pendingEvent)
+	}
+
 	return result, nil
 }
 
@@ -1716,6 +1770,7 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 	}
 
 	var deleted int64
+	var deletedDocs []bson.Raw // document keys collected for change events
 
 	if err := boltDB.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(collBucket(c.coll)))
@@ -1762,6 +1817,7 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 			idKey := encodeIDValue(item.doc.Lookup("_id"))
 			c.engine.removeFromIndexes(tx, c.db, c.coll, idKey, item.doc) //nolint:errcheck
 			deleted++
+			deletedDocs = append(deletedDocs, item.doc)
 		}
 		return nil
 	}); err != nil {
@@ -1769,6 +1825,17 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 	}
 
 	c.engine.opDelete.Add(1)
+
+	// Publish ChangeDelete events for each deleted document.
+	if len(deletedDocs) > 0 && c.engine.eventBus.HasStream(c.db, c.coll) {
+		for _, doc := range deletedDocs {
+			c.engine.eventBus.Publish(c.db, c.coll, ChangeEvent{
+				OperationType: ChangeDelete,
+				DocumentKey:   makeDocumentKey(doc.Lookup("_id")),
+			})
+		}
+	}
+
 	return deleted, nil
 }
 
