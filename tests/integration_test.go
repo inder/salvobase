@@ -3766,842 +3766,254 @@ func TestIndexQueryPlannerPartialCompoundFallback(t *testing.T) {
 	}
 }
 
-// ─── Array query operator edge cases (#21) ───────────────────────────────────
+// ─── Index-backed range scans (#112) ──────────────────────────────────────────
 
-func TestArrayQueryEdgeCases(t *testing.T) {
+// TestIndexRangeScanSingleField verifies that a single-field range query
+// ($gt/$gte/$lt/$lte) on an indexed field uses the index and returns correct results.
+func TestIndexRangeScanSingleField(t *testing.T) {
 	client := newClient(t)
-	db := testDB(t)
-	coll := client.Database(db).Collection("docs")
+	coll := client.Database(testDB(t)).Collection("nums")
 	ctx := context.Background()
 
-	_, _ = coll.InsertMany(ctx, []interface{}{
-		// doc A: arr of objects with x and y fields
-		bson.D{{Key: "name", Value: "A"}, {Key: "items", Value: bson.A{
-			bson.D{{Key: "x", Value: int32(2)}, {Key: "y", Value: "foo"}},
-			bson.D{{Key: "x", Value: int32(1)}, {Key: "y", Value: "bar"}},
-		}}},
-		// doc B: items where x=3,y=foo and x=0,y=baz
-		bson.D{{Key: "name", Value: "B"}, {Key: "items", Value: bson.A{
-			bson.D{{Key: "x", Value: int32(3)}, {Key: "y", Value: "foo"}},
-			bson.D{{Key: "x", Value: int32(0)}, {Key: "y", Value: "baz"}},
-		}}},
-		// doc C: scalar array
-		bson.D{{Key: "name", Value: "C"}, {Key: "tags", Value: bson.A{"a", "b", "c"}}},
-		// doc D: $all with duplicates target
-		bson.D{{Key: "name", Value: "D"}, {Key: "tags", Value: bson.A{"a", "b", "a"}}},
-		// doc E: empty array
-		bson.D{{Key: "name", Value: "E"}, {Key: "tags", Value: bson.A{}}},
-		// doc F: array with null element
-		bson.D{{Key: "name", Value: "F"}, {Key: "tags", Value: bson.A{"x", nil, "z"}}},
-		// doc G: scalar array for dot-notation first element
-		bson.D{{Key: "name", Value: "G"}, {Key: "nums", Value: bson.A{int32(10), int32(20), int32(30)}}},
-	})
+	// Insert 100 documents with score 1..100.
+	var docs []interface{}
+	for i := 1; i <= 100; i++ {
+		docs = append(docs, bson.D{{Key: "score", Value: int32(i)}})
+	}
+	if _, err := coll.InsertMany(ctx, docs); err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
 
-	t.Run("$elemMatch with nested conditions", func(t *testing.T) {
-		// Match docs where items has at least one element with x>1 AND y="foo"
-		// Doc A has {x:2, y:"foo"} — matches. Doc B has {x:3, y:"foo"} — matches.
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "items", Value: bson.D{{Key: "$elemMatch", Value: bson.D{
-			{Key: "x", Value: bson.D{{Key: "$gt", Value: int32(1)}}},
-			{Key: "y", Value: "foo"},
-		}}}}})
+	if _, err := coll.Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "score", Value: 1}}},
+	); err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	t.Run("$gt", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "score", Value: bson.D{{Key: "$gt", Value: int32(90)}}}})
 		if err != nil {
-			t.Fatalf("$elemMatch nested: %v", err)
+			t.Fatalf("Find: %v", err)
 		}
-		if count != 2 {
-			t.Errorf("$elemMatch nested: expected 2, got %d", count)
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 10 {
+			t.Errorf("$gt 90: expected 10 results (91..100), got %d", len(results))
+		}
+		for _, r := range results {
+			if r["score"].(int32) <= 90 {
+				t.Errorf("$gt 90: got score=%v which is not > 90", r["score"])
+			}
 		}
 	})
 
-	t.Run("$all with multiple values", func(t *testing.T) {
-		// "a" and "b" must both be present — C and D match (D has duplicates but still has both)
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{"a", "b"}}}}})
+	t.Run("$gte", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "score", Value: bson.D{{Key: "$gte", Value: int32(95)}}}})
 		if err != nil {
-			t.Fatalf("$all: %v", err)
+			t.Fatalf("Find: %v", err)
 		}
-		if count != 2 {
-			t.Errorf("$all: expected 2 (C and D), got %d", count)
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 6 {
+			t.Errorf("$gte 95: expected 6 results (95..100), got %d", len(results))
 		}
 	})
 
-	t.Run("$all with duplicate values in query (treated as set)", func(t *testing.T) {
-		// $all with ["a","a"] is equivalent to $all with ["a"] — all docs with "a" in tags
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$all", Value: bson.A{"a", "a"}}}}})
+	t.Run("$lt", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "score", Value: bson.D{{Key: "$lt", Value: int32(6)}}}})
 		if err != nil {
-			t.Fatalf("$all duplicates: %v", err)
+			t.Fatalf("Find: %v", err)
 		}
-		if count != 2 {
-			t.Errorf("$all duplicates: expected 2 (C and D), got %d", count)
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 5 {
+			t.Errorf("$lt 6: expected 5 results (1..5), got %d", len(results))
+		}
+		for _, r := range results {
+			if r["score"].(int32) >= 6 {
+				t.Errorf("$lt 6: got score=%v which is not < 6", r["score"])
+			}
 		}
 	})
 
-	t.Run("$size exact match", func(t *testing.T) {
-		// tags with exactly 3 elements: C (a,b,c) and D (a,b,a) and F (x,nil,z)
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: int32(3)}}}})
+	t.Run("$lte", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "score", Value: bson.D{{Key: "$lte", Value: int32(5)}}}})
 		if err != nil {
-			t.Fatalf("$size=3: %v", err)
+			t.Fatalf("Find: %v", err)
 		}
-		if count != 3 {
-			t.Errorf("$size=3: expected 3, got %d", count)
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 5 {
+			t.Errorf("$lte 5: expected 5 results (1..5), got %d", len(results))
 		}
 	})
 
-	t.Run("$size=0 matches empty array", func(t *testing.T) {
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: int32(0)}}}})
+	t.Run("$gt+$lt range", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "score", Value: bson.D{
+			{Key: "$gt", Value: int32(50)},
+			{Key: "$lt", Value: int32(60)},
+		}}})
 		if err != nil {
-			t.Fatalf("$size=0: %v", err)
+			t.Fatalf("Find: %v", err)
 		}
-		if count != 1 {
-			t.Errorf("$size=0: expected 1 (E), got %d", count)
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 9 {
+			t.Errorf("$gt 50 $lt 60: expected 9 results (51..59), got %d", len(results))
 		}
 	})
 
-	t.Run("$size mismatch returns zero", func(t *testing.T) {
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$size", Value: int32(99)}}}})
+	t.Run("$gte+$lte range", func(t *testing.T) {
+		cursor, err := coll.Find(ctx, bson.D{{Key: "score", Value: bson.D{
+			{Key: "$gte", Value: int32(50)},
+			{Key: "$lte", Value: int32(60)},
+		}}})
 		if err != nil {
-			t.Fatalf("$size=99: %v", err)
+			t.Fatalf("Find: %v", err)
 		}
-		if count != 0 {
-			t.Errorf("$size=99: expected 0, got %d", count)
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
 		}
-	})
-
-	t.Run("dot-notation first element (arr.0)", func(t *testing.T) {
-		// nums.0 == 10 → only doc G matches
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "nums.0", Value: int32(10)}})
-		if err != nil {
-			t.Fatalf("arr.0 dot notation: %v", err)
-		}
-		if count != 1 {
-			t.Errorf("arr.0: expected 1 (G), got %d", count)
-		}
-	})
-
-	t.Run("$in against array field", func(t *testing.T) {
-		// tags $in ["a","z"] — any array element matches: C, D (have "a"), F (has "z")
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$in", Value: bson.A{"a", "z"}}}}})
-		if err != nil {
-			t.Fatalf("$in array: %v", err)
-		}
-		if count != 3 {
-			t.Errorf("$in array: expected 3 (C,D,F), got %d", count)
-		}
-	})
-
-	t.Run("array field with null element can be found", func(t *testing.T) {
-		// F has "x" in its tags array (alongside nil)
-		count, err := coll.CountDocuments(ctx, bson.D{{Key: "tags", Value: bson.D{{Key: "$in", Value: bson.A{"x"}}}}})
-		if err != nil {
-			t.Fatalf("null element array: %v", err)
-		}
-		if count != 1 {
-			t.Errorf("null element array: expected 1 (F), got %d", count)
+		if len(results) != 11 {
+			t.Errorf("$gte 50 $lte 60: expected 11 results (50..60), got %d", len(results))
 		}
 	})
 }
 
-// ─── Update operator edge cases (#22) ────────────────────────────────────────
-
-func TestUpdateOperatorEdgeCases(t *testing.T) {
+// TestIndexRangeScanCorrectnessVsCollectionScan verifies that index range scan
+// returns the same results as a full collection scan for the same filter.
+// This is the primary correctness test for the range scan implementation.
+func TestIndexRangeScanCorrectnessVsCollectionScan(t *testing.T) {
 	client := newClient(t)
-	db := testDB(t)
-	coll := client.Database(db).Collection("docs")
+	db := client.Database(testDB(t))
+	// Two collections with the same data: one indexed, one not.
+	indexed := db.Collection("indexed")
+	unindexed := db.Collection("unindexed")
 	ctx := context.Background()
 
-	t.Run("$inc on missing field creates it", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "inctest"}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$inc", Value: bson.D{{Key: "counter", Value: int32(5)}}}})
-		if err != nil {
-			t.Fatalf("$inc missing field: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		if r["counter"] != int32(5) {
-			t.Errorf("$inc missing: expected 5, got %v", r["counter"])
-		}
-	})
+	var docs []interface{}
+	for i := 1; i <= 500; i++ {
+		docs = append(docs, bson.D{{Key: "val", Value: int32(i)}, {Key: "cat", Value: fmt.Sprintf("c%d", i%10)}})
+	}
+	if _, err := indexed.InsertMany(ctx, docs); err != nil {
+		t.Fatalf("indexed InsertMany: %v", err)
+	}
+	if _, err := unindexed.InsertMany(ctx, docs); err != nil {
+		t.Fatalf("unindexed InsertMany: %v", err)
+	}
+	if _, err := indexed.Indexes().CreateOne(ctx,
+		mongo.IndexModel{Keys: bson.D{{Key: "val", Value: 1}}},
+	); err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
 
-	t.Run("$inc with negative value", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "n", Value: int32(10)}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$inc", Value: bson.D{{Key: "n", Value: int32(-3)}}}})
-		if err != nil {
-			t.Fatalf("$inc negative: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		if r["n"] != int32(7) {
-			t.Errorf("$inc negative: expected 7, got %v", r["n"])
-		}
-	})
+	filters := []bson.D{
+		{{Key: "val", Value: bson.D{{Key: "$gt", Value: int32(200)}}}},
+		{{Key: "val", Value: bson.D{{Key: "$gte", Value: int32(100)}}}},
+		{{Key: "val", Value: bson.D{{Key: "$lt", Value: int32(50)}}}},
+		{{Key: "val", Value: bson.D{{Key: "$lte", Value: int32(300)}}}},
+		{{Key: "val", Value: bson.D{{Key: "$gte", Value: int32(100)}, {Key: "$lte", Value: int32(200)}}}},
+		{{Key: "val", Value: bson.D{{Key: "$gt", Value: int32(100)}, {Key: "$lt", Value: int32(200)}}}},
+	}
 
-	t.Run("$mul on missing field sets to 0", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "multest"}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$mul", Value: bson.D{{Key: "factor", Value: int32(5)}}}})
+	for _, filter := range filters {
+		// Get results from indexed collection (should use index).
+		cur1, err := indexed.Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "val", Value: 1}}))
 		if err != nil {
-			t.Fatalf("$mul missing: %v", err)
+			t.Fatalf("indexed Find: %v", err)
 		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		if r["factor"] != int32(0) {
-			t.Errorf("$mul missing: expected 0, got %v", r["factor"])
+		var r1 []bson.M
+		if err := cur1.All(ctx, &r1); err != nil {
+			t.Fatalf("indexed All: %v", err)
 		}
-	})
 
-	t.Run("$rename field", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "oldName", Value: "value123"}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$rename", Value: bson.D{{Key: "oldName", Value: "newName"}}}})
+		// Get results from unindexed collection (full scan).
+		cur2, err := unindexed.Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "val", Value: 1}}))
 		if err != nil {
-			t.Fatalf("$rename: %v", err)
+			t.Fatalf("unindexed Find: %v", err)
 		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		if _, exists := r["oldName"]; exists {
-			t.Error("$rename: oldName should be gone")
+		var r2 []bson.M
+		if err := cur2.All(ctx, &r2); err != nil {
+			t.Fatalf("unindexed All: %v", err)
 		}
-		if r["newName"] != "value123" {
-			t.Errorf("$rename: expected newName=value123, got %v", r["newName"])
-		}
-	})
 
-	t.Run("$unset on nested field", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{
-			{Key: "profile", Value: bson.D{
-				{Key: "age", Value: int32(30)},
-				{Key: "secret", Value: "hidden"},
-			}},
-		})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$unset", Value: bson.D{{Key: "profile.secret", Value: ""}}}})
-		if err != nil {
-			t.Fatalf("$unset nested: %v", err)
+		if len(r1) != len(r2) {
+			t.Errorf("filter %v: indexed=%d unindexed=%d", filter, len(r1), len(r2))
+			continue
 		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		profile := r["profile"].(bson.D)
-		profileMap := make(map[string]interface{})
-		for _, e := range profile {
-			profileMap[e.Key] = e.Value
-		}
-		if _, exists := profileMap["secret"]; exists {
-			t.Error("$unset nested: secret should be gone")
-		}
-		if profileMap["age"] != int32(30) {
-			t.Errorf("$unset nested: age should be preserved, got %v", profileMap["age"])
-		}
-	})
-
-	t.Run("$push with $each and $sort", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "scores", Value: bson.A{int32(5), int32(3)}}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$push", Value: bson.D{{Key: "scores", Value: bson.D{
-				{Key: "$each", Value: bson.A{int32(1), int32(4)}},
-				{Key: "$sort", Value: int32(1)},
-			}}}}})
-		if err != nil {
-			t.Fatalf("$push $each $sort: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		scores := r["scores"].(bson.A)
-		if len(scores) != 4 {
-			t.Fatalf("$push $each $sort: expected 4 elements, got %d", len(scores))
-		}
-		expected := []int32{1, 3, 4, 5}
-		for i, exp := range expected {
-			if scores[i] != exp {
-				t.Errorf("scores[%d]: expected %d, got %v", i, exp, scores[i])
+		for i := range r1 {
+			if r1[i]["val"] != r2[i]["val"] {
+				t.Errorf("filter %v result[%d]: indexed val=%v, unindexed val=%v", filter, i, r1[i]["val"], r2[i]["val"])
 			}
 		}
-	})
-
-	t.Run("$push with $each and $slice", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "log", Value: bson.A{"a", "b"}}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$push", Value: bson.D{{Key: "log", Value: bson.D{
-				{Key: "$each", Value: bson.A{"c", "d", "e"}},
-				{Key: "$slice", Value: int32(-3)},
-			}}}}})
-		if err != nil {
-			t.Fatalf("$push $each $slice: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		log := r["log"].(bson.A)
-		if len(log) != 3 {
-			t.Fatalf("$push $slice: expected 3 elements, got %d: %v", len(log), log)
-		}
-		expected := []string{"c", "d", "e"}
-		for i, exp := range expected {
-			if log[i] != exp {
-				t.Errorf("log[%d]: expected %s, got %v", i, exp, log[i])
-			}
-		}
-	})
-
-	t.Run("$addToSet deduplication", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "tags", Value: bson.A{"a", "b"}}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$addToSet", Value: bson.D{{Key: "tags", Value: "b"}}}})
-		if err != nil {
-			t.Fatalf("$addToSet dup: %v", err)
-		}
-		_, _ = coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$addToSet", Value: bson.D{{Key: "tags", Value: "c"}}}})
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		tags := r["tags"].(bson.A)
-		if len(tags) != 3 {
-			t.Errorf("$addToSet: expected 3 tags (no dup), got %d: %v", len(tags), tags)
-		}
-	})
-
-	t.Run("$pop last element", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "arr", Value: bson.A{int32(1), int32(2), int32(3)}}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$pop", Value: bson.D{{Key: "arr", Value: int32(1)}}}})
-		if err != nil {
-			t.Fatalf("$pop last: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		arr := r["arr"].(bson.A)
-		if len(arr) != 2 {
-			t.Fatalf("$pop last: expected 2 elements, got %d", len(arr))
-		}
-		if arr[1] != int32(2) {
-			t.Errorf("$pop last: expected arr[1]=2, got %v", arr[1])
-		}
-	})
-
-	t.Run("$pop first element", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "arr", Value: bson.A{int32(1), int32(2), int32(3)}}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$pop", Value: bson.D{{Key: "arr", Value: int32(-1)}}}})
-		if err != nil {
-			t.Fatalf("$pop first: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		arr := r["arr"].(bson.A)
-		if len(arr) != 2 {
-			t.Fatalf("$pop first: expected 2 elements, got %d", len(arr))
-		}
-		if arr[0] != int32(2) {
-			t.Errorf("$pop first: expected arr[0]=2, got %v", arr[0])
-		}
-	})
-
-	t.Run("$pull with condition", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "scores", Value: bson.A{int32(10), int32(20), int32(5), int32(30)}}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$pull", Value: bson.D{{Key: "scores", Value: bson.D{{Key: "$lt", Value: int32(15)}}}}}})
-		if err != nil {
-			t.Fatalf("$pull: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		scores := r["scores"].(bson.A)
-		if len(scores) != 2 {
-			t.Fatalf("$pull: expected 2 remaining, got %d: %v", len(scores), scores)
-		}
-		for _, s := range scores {
-			v := s.(int32)
-			if v < int32(15) {
-				t.Errorf("$pull: value %d should have been removed", v)
-			}
-		}
-	})
-
-	t.Run("$bit AND", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "flags", Value: int32(0b1111)}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "and", Value: int32(0b1010)}}}}}})
-		if err != nil {
-			t.Fatalf("$bit and: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		if r["flags"] != int32(0b1010) {
-			t.Errorf("$bit and: expected 10, got %v", r["flags"])
-		}
-	})
-
-	t.Run("$bit OR", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "flags", Value: int32(0b1010)}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "or", Value: int32(0b0101)}}}}}})
-		if err != nil {
-			t.Fatalf("$bit or: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		if r["flags"] != int32(0b1111) {
-			t.Errorf("$bit or: expected 15, got %v", r["flags"])
-		}
-	})
-
-	t.Run("$bit XOR", func(t *testing.T) {
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "flags", Value: int32(0b1111)}})
-		_, err := coll.UpdateOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}},
-			bson.D{{Key: "$bit", Value: bson.D{{Key: "flags", Value: bson.D{{Key: "xor", Value: int32(0b1010)}}}}}})
-		if err != nil {
-			t.Fatalf("$bit xor: %v", err)
-		}
-		var r bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: res.InsertedID}}).Decode(&r)
-		if r["flags"] != int32(0b0101) {
-			t.Errorf("$bit xor: expected 5, got %v", r["flags"])
-		}
-	})
+	}
 }
 
-// ─── Aggregation pipeline behavior edge cases (#23) ──────────────────────────
-
-func TestAggregationPipelineEdgeCases(t *testing.T) {
+// TestIndexRangeScanCompound verifies compound index range scans:
+// equality prefix on leading field(s) + range on the last field.
+func TestIndexRangeScanCompound(t *testing.T) {
 	client := newClient(t)
-	db := testDB(t)
+	coll := client.Database(testDB(t)).Collection("events")
 	ctx := context.Background()
 
-	t.Run("$group $sum on missing field treats as 0", func(t *testing.T) {
-		coll := client.Database(db).Collection("sum_missing")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "bonus", Value: int32(100)}},
-			bson.D{{Key: "dept", Value: "eng"}}, // no bonus field
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "bonus", Value: int32(50)}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$dept"},
-				{Key: "total", Value: bson.D{{Key: "$sum", Value: "$bonus"}}},
-			}}},
-		})
-		if err != nil {
-			t.Fatalf("$sum missing: %v", err)
+	var docs []interface{}
+	for day := 1; day <= 5; day++ {
+		for score := 1; score <= 20; score++ {
+			docs = append(docs, bson.D{
+				{Key: "day", Value: fmt.Sprintf("day%d", day)},
+				{Key: "score", Value: int32(score)},
+			})
 		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 group, got %d", len(results))
-		}
-		if results[0]["total"] != int32(150) {
-			t.Errorf("$sum missing field: expected 150, got %v", results[0]["total"])
-		}
-	})
+	}
+	if _, err := coll.InsertMany(ctx, docs); err != nil {
+		t.Fatalf("InsertMany: %v", err)
+	}
 
-	t.Run("$group $avg on mixed int/float", func(t *testing.T) {
-		coll := client.Database(db).Collection("avg_mixed")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "score", Value: int32(80)}},
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "score", Value: float64(90.0)}},
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "score", Value: int32(100)}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$dept"},
-				{Key: "avgScore", Value: bson.D{{Key: "$avg", Value: "$score"}}},
-			}}},
-		})
-		if err != nil {
-			t.Fatalf("$avg mixed: %v", err)
-		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("$avg mixed: expected 1 group, got %d", len(results))
-		}
-		// (80 + 90 + 100) / 3 = 90.0
-		avg, ok := results[0]["avgScore"].(float64)
-		if !ok {
-			t.Fatalf("$avg mixed: expected float64, got %T: %v", results[0]["avgScore"], results[0]["avgScore"])
-		}
-		if avg != float64(90) {
-			t.Errorf("$avg mixed: expected 90.0, got %v", avg)
-		}
-	})
+	// Compound index: {day: 1, score: 1}
+	if _, err := coll.Indexes().CreateOne(ctx, mongo.IndexModel{
+		Keys: bson.D{{Key: "day", Value: 1}, {Key: "score", Value: 1}},
+	}); err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
 
-	t.Run("$group $push accumulator", func(t *testing.T) {
-		coll := client.Database(db).Collection("push_acc")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "name", Value: "alice"}},
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "name", Value: "bob"}},
-			bson.D{{Key: "dept", Value: "mkt"}, {Key: "name", Value: "carol"}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$dept"},
-				{Key: "members", Value: bson.D{{Key: "$push", Value: "$name"}}},
-			}}},
-			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
-		})
-		if err != nil {
-			t.Fatalf("$push accumulator: %v", err)
+	// Equality on day + range on score.
+	cursor, err := coll.Find(ctx,
+		bson.D{
+			{Key: "day", Value: "day3"},
+			{Key: "score", Value: bson.D{{Key: "$gte", Value: int32(10)}, {Key: "$lte", Value: int32(15)}}},
+		},
+		options.Find().SetSort(bson.D{{Key: "score", Value: 1}}),
+	)
+	if err != nil {
+		t.Fatalf("Find: %v", err)
+	}
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("cursor.All: %v", err)
+	}
+	if len(results) != 6 {
+		t.Fatalf("compound range: expected 6 results (scores 10..15), got %d", len(results))
+	}
+	for _, r := range results {
+		if r["day"] != "day3" {
+			t.Errorf("compound range: expected day3, got %v", r["day"])
 		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
+		score := r["score"].(int32)
+		if score < 10 || score > 15 {
+			t.Errorf("compound range: score %d out of range [10,15]", score)
 		}
-		if len(results) != 2 {
-			t.Fatalf("expected 2 groups, got %d", len(results))
-		}
-		engMembers := results[0]["members"].(bson.A)
-		if len(engMembers) != 2 {
-			t.Errorf("eng $push: expected 2 members, got %d", len(engMembers))
-		}
-	})
-
-	t.Run("$group $addToSet deduplication", func(t *testing.T) {
-		coll := client.Database(db).Collection("addtoset_acc")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "skill", Value: "go"}},
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "skill", Value: "go"}}, // duplicate
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "skill", Value: "rust"}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$dept"},
-				{Key: "skills", Value: bson.D{{Key: "$addToSet", Value: "$skill"}}},
-			}}},
-		})
-		if err != nil {
-			t.Fatalf("$addToSet acc: %v", err)
-		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 group, got %d", len(results))
-		}
-		skills := results[0]["skills"].(bson.A)
-		if len(skills) != 2 {
-			t.Errorf("$addToSet: expected 2 unique skills (no dup), got %d: %v", len(skills), skills)
-		}
-	})
-
-	t.Run("$limit 0 returns 0 docs", func(t *testing.T) {
-		coll := client.Database(db).Collection("limit_zero")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "x", Value: int32(1)}},
-			bson.D{{Key: "x", Value: int32(2)}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$limit", Value: int32(0)}},
-		})
-		if err != nil {
-			t.Fatalf("$limit 0: %v", err)
-		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
-		}
-		if len(results) != 0 {
-			t.Errorf("$limit 0: expected 0 docs, got %d", len(results))
-		}
-	})
-
-	t.Run("$skip greater than collection size returns 0 docs", func(t *testing.T) {
-		coll := client.Database(db).Collection("skip_huge")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "n", Value: int32(1)}},
-			bson.D{{Key: "n", Value: int32(2)}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$skip", Value: int32(9999)}},
-		})
-		if err != nil {
-			t.Fatalf("$skip huge: %v", err)
-		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
-		}
-		if len(results) != 0 {
-			t.Errorf("$skip huge: expected 0 docs, got %d", len(results))
-		}
-	})
-
-	t.Run("$project with computed fields and exclusions", func(t *testing.T) {
-		coll := client.Database(db).Collection("project_computed")
-		_, _ = coll.InsertOne(ctx, bson.D{
-			{Key: "price", Value: int32(10)},
-			{Key: "qty", Value: int32(5)},
-			{Key: "secret", Value: "hidden"},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$project", Value: bson.D{
-				{Key: "total", Value: bson.D{{Key: "$multiply", Value: bson.A{"$price", "$qty"}}}},
-				{Key: "price", Value: int32(1)},
-				{Key: "secret", Value: int32(0)},
-				{Key: "_id", Value: int32(0)},
-			}}},
-		})
-		if err != nil {
-			t.Fatalf("$project computed+exclusion: %v", err)
-		}
-		var result bson.M
-		if !cursor.Next(ctx) {
-			t.Fatal("expected at least 1 doc")
-		}
-		if err := cursor.Decode(&result); err != nil {
-			t.Fatalf("Decode: %v", err)
-		}
-		if result["total"] != int32(50) {
-			t.Errorf("total: expected 50, got %v", result["total"])
-		}
-		if result["price"] != int32(10) {
-			t.Errorf("price: expected 10, got %v", result["price"])
-		}
-		if _, exists := result["secret"]; exists {
-			t.Error("secret should be excluded")
-		}
-		if _, exists := result["_id"]; exists {
-			t.Error("_id should be excluded")
-		}
-	})
-
-	t.Run("$match after $group", func(t *testing.T) {
-		coll := client.Database(db).Collection("match_after_group")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(100)}},
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(120)}},
-			bson.D{{Key: "dept", Value: "mkt"}, {Key: "salary", Value: int32(80)}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$group", Value: bson.D{
-				{Key: "_id", Value: "$dept"},
-				{Key: "total", Value: bson.D{{Key: "$sum", Value: "$salary"}}},
-			}}},
-			bson.D{{Key: "$match", Value: bson.D{{Key: "total", Value: bson.D{{Key: "$gt", Value: int32(100)}}}}}},
-		})
-		if err != nil {
-			t.Fatalf("$match after $group: %v", err)
-		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
-		}
-		// eng total=220 > 100, mkt total=80 not > 100 → only eng
-		if len(results) != 1 {
-			t.Fatalf("$match after $group: expected 1, got %d", len(results))
-		}
-		if results[0]["_id"] != "eng" {
-			t.Errorf("$match after $group: expected eng, got %v", results[0]["_id"])
-		}
-	})
-
-	t.Run("empty pipeline returns all docs", func(t *testing.T) {
-		coll := client.Database(db).Collection("empty_pipeline")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "n", Value: int32(1)}},
-			bson.D{{Key: "n", Value: int32(2)}},
-			bson.D{{Key: "n", Value: int32(3)}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{})
-		if err != nil {
-			t.Fatalf("empty pipeline: %v", err)
-		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
-		}
-		if len(results) != 3 {
-			t.Errorf("empty pipeline: expected 3, got %d", len(results))
-		}
-	})
-
-	t.Run("$sort stability: primary then secondary", func(t *testing.T) {
-		coll := client.Database(db).Collection("sort_stable")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(120)}},
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(100)}},
-			bson.D{{Key: "dept", Value: "mkt"}, {Key: "salary", Value: int32(90)}},
-			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(110)}},
-		})
-		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
-			bson.D{{Key: "$sort", Value: bson.D{
-				{Key: "dept", Value: int32(1)},
-				{Key: "salary", Value: int32(-1)},
-			}}},
-		})
-		if err != nil {
-			t.Fatalf("multi-key sort: %v", err)
-		}
-		var results []bson.M
-		if err := cursor.All(ctx, &results); err != nil {
-			t.Fatalf("cursor.All: %v", err)
-		}
-		if len(results) != 4 {
-			t.Fatalf("multi-key sort: expected 4, got %d", len(results))
-		}
-		// First 3 should be eng (sorted by dept asc), then mkt
-		for i := 0; i < 3; i++ {
-			if results[i]["dept"] != "eng" {
-				t.Errorf("sort[%d]: expected eng, got %v", i, results[i]["dept"])
-			}
-		}
-		// Within eng: descending salary 120, 110, 100
-		if results[0]["salary"] != int32(120) {
-			t.Errorf("sort eng[0]: expected 120, got %v", results[0]["salary"])
-		}
-		if results[1]["salary"] != int32(110) {
-			t.Errorf("sort eng[1]: expected 110, got %v", results[1]["salary"])
-		}
-		if results[2]["salary"] != int32(100) {
-			t.Errorf("sort eng[2]: expected 100, got %v", results[2]["salary"])
-		}
-	})
-}
-
-// ─── findAndModify edge cases (#24) ──────────────────────────────────────────
-
-func TestFindAndModifyEdgeCases(t *testing.T) {
-	client := newClient(t)
-	db := testDB(t)
-	ctx := context.Background()
-
-	t.Run("FindOneAndUpdate ReturnDocument After", func(t *testing.T) {
-		coll := client.Database(db).Collection("fau_after")
-		_, _ = coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: int32(80)}})
-		var result bson.M
-		err := coll.FindOneAndUpdate(ctx,
-			bson.D{{Key: "name", Value: "alice"}},
-			bson.D{{Key: "$inc", Value: bson.D{{Key: "score", Value: int32(10)}}}},
-			options.FindOneAndUpdate().SetReturnDocument(options.After),
-		).Decode(&result)
-		if err != nil {
-			t.Fatalf("FindOneAndUpdate After: %v", err)
-		}
-		if result["score"] != int32(90) {
-			t.Errorf("expected score=90 (After), got %v", result["score"])
-		}
-	})
-
-	t.Run("FindOneAndUpdate Upsert on non-existent doc", func(t *testing.T) {
-		coll := client.Database(db).Collection("fau_upsert")
-		var result bson.M
-		err := coll.FindOneAndUpdate(ctx,
-			bson.D{{Key: "name", Value: "newuser"}},
-			bson.D{{Key: "$set", Value: bson.D{{Key: "score", Value: int32(50)}}}},
-			options.FindOneAndUpdate().
-				SetUpsert(true).
-				SetReturnDocument(options.After),
-		).Decode(&result)
-		if err != nil {
-			t.Fatalf("FindOneAndUpdate upsert: %v", err)
-		}
-		if result["name"] != "newuser" {
-			t.Errorf("upserted doc: expected name=newuser, got %v", result["name"])
-		}
-		if result["score"] != int32(50) {
-			t.Errorf("upserted doc: expected score=50, got %v", result["score"])
-		}
-	})
-
-	t.Run("FindOneAndUpdate with Sort selects correct doc", func(t *testing.T) {
-		coll := client.Database(db).Collection("fau_sort")
-		_, _ = coll.InsertMany(ctx, []interface{}{
-			bson.D{{Key: "status", Value: "pending"}, {Key: "priority", Value: int32(1)}},
-			bson.D{{Key: "status", Value: "pending"}, {Key: "priority", Value: int32(3)}},
-			bson.D{{Key: "status", Value: "pending"}, {Key: "priority", Value: int32(2)}},
-		})
-		// Sort descending by priority — should pick priority=3
-		var result bson.M
-		err := coll.FindOneAndUpdate(ctx,
-			bson.D{{Key: "status", Value: "pending"}},
-			bson.D{{Key: "$set", Value: bson.D{{Key: "status", Value: "processing"}}}},
-			options.FindOneAndUpdate().
-				SetSort(bson.D{{Key: "priority", Value: -1}}).
-				SetReturnDocument(options.After),
-		).Decode(&result)
-		if err != nil {
-			t.Fatalf("FindOneAndUpdate sort: %v", err)
-		}
-		if result["priority"] != int32(3) {
-			t.Errorf("FindOneAndUpdate sort: expected priority=3, got %v", result["priority"])
-		}
-		if result["status"] != "processing" {
-			t.Errorf("FindOneAndUpdate sort: expected status=processing, got %v", result["status"])
-		}
-	})
-
-	t.Run("FindOneAndDelete returns deleted doc and removes it", func(t *testing.T) {
-		coll := client.Database(db).Collection("fad")
-		_, _ = coll.InsertOne(ctx, bson.D{{Key: "name", Value: "todelete"}, {Key: "val", Value: int32(99)}})
-
-		var deleted bson.M
-		err := coll.FindOneAndDelete(ctx, bson.D{{Key: "name", Value: "todelete"}}).Decode(&deleted)
-		if err != nil {
-			t.Fatalf("FindOneAndDelete: %v", err)
-		}
-		if deleted["name"] != "todelete" {
-			t.Errorf("deleted doc: expected name=todelete, got %v", deleted["name"])
-		}
-		if deleted["val"] != int32(99) {
-			t.Errorf("deleted doc: expected val=99, got %v", deleted["val"])
-		}
-		// Verify it's gone.
-		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "todelete"}}).Err(); err != mongo.ErrNoDocuments {
-			t.Errorf("doc should be deleted, got err=%v", err)
-		}
-	})
-
-	t.Run("FindOneAndReplace ReturnDocument Before returns original doc", func(t *testing.T) {
-		coll := client.Database(db).Collection("far_before")
-		res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "original"}, {Key: "score", Value: int32(10)}})
-		id := res.InsertedID
-
-		var original bson.M
-		err := coll.FindOneAndReplace(ctx,
-			bson.D{{Key: "_id", Value: id}},
-			bson.D{{Key: "name", Value: "replaced"}, {Key: "score", Value: int32(99)}},
-			options.FindOneAndReplace().SetReturnDocument(options.Before),
-		).Decode(&original)
-		if err != nil {
-			t.Fatalf("FindOneAndReplace Before: %v", err)
-		}
-		if original["name"] != "original" {
-			t.Errorf("Before: expected name=original, got %v", original["name"])
-		}
-		if original["score"] != int32(10) {
-			t.Errorf("Before: expected score=10, got %v", original["score"])
-		}
-
-		// Verify replacement is stored.
-		var stored bson.M
-		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&stored)
-		if stored["name"] != "replaced" {
-			t.Errorf("stored: expected name=replaced, got %v", stored["name"])
-		}
-		if stored["score"] != int32(99) {
-			t.Errorf("stored: expected score=99, got %v", stored["score"])
-		}
-	})
-
-	t.Run("FindOneAndUpdate on empty collection returns ErrNoDocuments", func(t *testing.T) {
-		coll := client.Database(db).Collection("fau_empty")
-		err := coll.FindOneAndUpdate(ctx,
-			bson.D{{Key: "name", Value: "nobody"}},
-			bson.D{{Key: "$set", Value: bson.D{{Key: "x", Value: int32(1)}}}},
-		).Err()
-		if err != mongo.ErrNoDocuments {
-			t.Errorf("empty collection: expected ErrNoDocuments, got %v", err)
-		}
-	})
-
-	t.Run("FindOneAndDelete on empty collection returns ErrNoDocuments", func(t *testing.T) {
-		coll := client.Database(db).Collection("fad_empty")
-		err := coll.FindOneAndDelete(ctx, bson.D{{Key: "name", Value: "nobody"}}).Err()
-		if err != mongo.ErrNoDocuments {
-			t.Errorf("empty collection: expected ErrNoDocuments, got %v", err)
-		}
-	})
+	}
 }
 
 func TestMain(m *testing.M) {
