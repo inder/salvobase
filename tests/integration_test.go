@@ -4459,6 +4459,151 @@ func TestAggregationPipelineEdgeCases(t *testing.T) {
 	})
 }
 
+// ─── findAndModify edge cases (#24) ──────────────────────────────────────────
+
+func TestFindAndModifyEdgeCases(t *testing.T) {
+	client := newClient(t)
+	db := testDB(t)
+	ctx := context.Background()
+
+	t.Run("FindOneAndUpdate ReturnDocument After", func(t *testing.T) {
+		coll := client.Database(db).Collection("fau_after")
+		_, _ = coll.InsertOne(ctx, bson.D{{Key: "name", Value: "alice"}, {Key: "score", Value: int32(80)}})
+		var result bson.M
+		err := coll.FindOneAndUpdate(ctx,
+			bson.D{{Key: "name", Value: "alice"}},
+			bson.D{{Key: "$inc", Value: bson.D{{Key: "score", Value: int32(10)}}}},
+			options.FindOneAndUpdate().SetReturnDocument(options.After),
+		).Decode(&result)
+		if err != nil {
+			t.Fatalf("FindOneAndUpdate After: %v", err)
+		}
+		if result["score"] != int32(90) {
+			t.Errorf("expected score=90 (After), got %v", result["score"])
+		}
+	})
+
+	t.Run("FindOneAndUpdate Upsert on non-existent doc", func(t *testing.T) {
+		coll := client.Database(db).Collection("fau_upsert")
+		var result bson.M
+		err := coll.FindOneAndUpdate(ctx,
+			bson.D{{Key: "name", Value: "newuser"}},
+			bson.D{{Key: "$set", Value: bson.D{{Key: "score", Value: int32(50)}}}},
+			options.FindOneAndUpdate().
+				SetUpsert(true).
+				SetReturnDocument(options.After),
+		).Decode(&result)
+		if err != nil {
+			t.Fatalf("FindOneAndUpdate upsert: %v", err)
+		}
+		if result["name"] != "newuser" {
+			t.Errorf("upserted doc: expected name=newuser, got %v", result["name"])
+		}
+		if result["score"] != int32(50) {
+			t.Errorf("upserted doc: expected score=50, got %v", result["score"])
+		}
+	})
+
+	t.Run("FindOneAndUpdate with Sort selects correct doc", func(t *testing.T) {
+		coll := client.Database(db).Collection("fau_sort")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "status", Value: "pending"}, {Key: "priority", Value: int32(1)}},
+			bson.D{{Key: "status", Value: "pending"}, {Key: "priority", Value: int32(3)}},
+			bson.D{{Key: "status", Value: "pending"}, {Key: "priority", Value: int32(2)}},
+		})
+		// Sort descending by priority — should pick priority=3
+		var result bson.M
+		err := coll.FindOneAndUpdate(ctx,
+			bson.D{{Key: "status", Value: "pending"}},
+			bson.D{{Key: "$set", Value: bson.D{{Key: "status", Value: "processing"}}}},
+			options.FindOneAndUpdate().
+				SetSort(bson.D{{Key: "priority", Value: -1}}).
+				SetReturnDocument(options.After),
+		).Decode(&result)
+		if err != nil {
+			t.Fatalf("FindOneAndUpdate sort: %v", err)
+		}
+		if result["priority"] != int32(3) {
+			t.Errorf("FindOneAndUpdate sort: expected priority=3, got %v", result["priority"])
+		}
+		if result["status"] != "processing" {
+			t.Errorf("FindOneAndUpdate sort: expected status=processing, got %v", result["status"])
+		}
+	})
+
+	t.Run("FindOneAndDelete returns deleted doc and removes it", func(t *testing.T) {
+		coll := client.Database(db).Collection("fad")
+		_, _ = coll.InsertOne(ctx, bson.D{{Key: "name", Value: "todelete"}, {Key: "val", Value: int32(99)}})
+
+		var deleted bson.M
+		err := coll.FindOneAndDelete(ctx, bson.D{{Key: "name", Value: "todelete"}}).Decode(&deleted)
+		if err != nil {
+			t.Fatalf("FindOneAndDelete: %v", err)
+		}
+		if deleted["name"] != "todelete" {
+			t.Errorf("deleted doc: expected name=todelete, got %v", deleted["name"])
+		}
+		if deleted["val"] != int32(99) {
+			t.Errorf("deleted doc: expected val=99, got %v", deleted["val"])
+		}
+		// Verify it's gone.
+		if err := coll.FindOne(ctx, bson.D{{Key: "name", Value: "todelete"}}).Err(); err != mongo.ErrNoDocuments {
+			t.Errorf("doc should be deleted, got err=%v", err)
+		}
+	})
+
+	t.Run("FindOneAndReplace ReturnDocument Before returns original doc", func(t *testing.T) {
+		coll := client.Database(db).Collection("far_before")
+		res, _ := coll.InsertOne(ctx, bson.D{{Key: "name", Value: "original"}, {Key: "score", Value: int32(10)}})
+		id := res.InsertedID
+
+		var original bson.M
+		err := coll.FindOneAndReplace(ctx,
+			bson.D{{Key: "_id", Value: id}},
+			bson.D{{Key: "name", Value: "replaced"}, {Key: "score", Value: int32(99)}},
+			options.FindOneAndReplace().SetReturnDocument(options.Before),
+		).Decode(&original)
+		if err != nil {
+			t.Fatalf("FindOneAndReplace Before: %v", err)
+		}
+		if original["name"] != "original" {
+			t.Errorf("Before: expected name=original, got %v", original["name"])
+		}
+		if original["score"] != int32(10) {
+			t.Errorf("Before: expected score=10, got %v", original["score"])
+		}
+
+		// Verify replacement is stored.
+		var stored bson.M
+		_ = coll.FindOne(ctx, bson.D{{Key: "_id", Value: id}}).Decode(&stored)
+		if stored["name"] != "replaced" {
+			t.Errorf("stored: expected name=replaced, got %v", stored["name"])
+		}
+		if stored["score"] != int32(99) {
+			t.Errorf("stored: expected score=99, got %v", stored["score"])
+		}
+	})
+
+	t.Run("FindOneAndUpdate on empty collection returns ErrNoDocuments", func(t *testing.T) {
+		coll := client.Database(db).Collection("fau_empty")
+		err := coll.FindOneAndUpdate(ctx,
+			bson.D{{Key: "name", Value: "nobody"}},
+			bson.D{{Key: "$set", Value: bson.D{{Key: "x", Value: int32(1)}}}},
+		).Err()
+		if err != mongo.ErrNoDocuments {
+			t.Errorf("empty collection: expected ErrNoDocuments, got %v", err)
+		}
+	})
+
+	t.Run("FindOneAndDelete on empty collection returns ErrNoDocuments", func(t *testing.T) {
+		coll := client.Database(db).Collection("fad_empty")
+		err := coll.FindOneAndDelete(ctx, bson.D{{Key: "name", Value: "nobody"}}).Err()
+		if err != mongo.ErrNoDocuments {
+			t.Errorf("empty collection: expected ErrNoDocuments, got %v", err)
+		}
+	})
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
