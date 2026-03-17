@@ -1511,6 +1511,50 @@ func TestAggregateReplaceRoot(t *testing.T) {
 	// Original _id should not be present (it was inside the user subdoc which had none).
 }
 
+// TestAggregateReplaceWith verifies that $replaceWith behaves identically to
+// $replaceRoot (it is a syntactic alias per the MongoDB spec).
+func TestAggregateReplaceWith(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("docs")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "user", Value: bson.D{{Key: "name", Value: "alice"}, {Key: "age", Value: int32(30)}}}, {Key: "score", Value: int32(100)}},
+		bson.D{{Key: "user", Value: bson.D{{Key: "name", Value: "bob"}, {Key: "age", Value: int32(25)}}}, {Key: "score", Value: int32(80)}},
+	})
+
+	cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		// $replaceWith accepts the expression directly (not wrapped in {newRoot: ...})
+		bson.D{{Key: "$replaceWith", Value: "$user"}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "name", Value: 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("$replaceWith: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("$replaceWith cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("$replaceWith: expected 2 results, got %d", len(results))
+	}
+	// Output should be the user subdocument — no "score" field, no outer "_id".
+	if results[0]["name"] != "alice" {
+		t.Errorf("$replaceWith[0]: expected name=alice, got %v", results[0]["name"])
+	}
+	if results[0]["age"] != int32(30) {
+		t.Errorf("$replaceWith[0]: expected age=30, got %v", results[0]["age"])
+	}
+	if _, ok := results[0]["score"]; ok {
+		t.Error("$replaceWith[0]: score should not be present in replaced document")
+	}
+	if results[1]["name"] != "bob" {
+		t.Errorf("$replaceWith[1]: expected name=bob, got %v", results[1]["name"])
+	}
+}
+
 func TestAggregateCountStage(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
