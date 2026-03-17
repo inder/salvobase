@@ -5501,6 +5501,54 @@ func TestCreateRoleMissingPrivileges(t *testing.T) {
 	}
 }
 
+// ─── compact ──────────────────────────────────────────────────────────────────
+
+func TestCompactCommandRegistered(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	db := client.Database(testDB(t))
+	coll := db.Collection("compactcoll")
+
+	_, _ = coll.InsertOne(ctx, bson.D{{Key: "x", Value: 1}})
+
+	var result bson.M
+	err := db.RunCommand(ctx, bson.D{{Key: "compact", Value: "compactcoll"}}).Decode(&result)
+	if err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if ok, _ := result["ok"].(float64); ok != 1 {
+		t.Errorf("compact: expected ok=1, got %v", result["ok"])
+	}
+	if _, exists := result["bytesFreed"]; !exists {
+		t.Error("compact: expected 'bytesFreed' field in response")
+	}
+}
+
+func TestCompactNonExistentCollection(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	err := client.Database(testDB(t)).RunCommand(ctx, bson.D{{Key: "compact", Value: "nosuchcoll"}}).Err()
+	if err == nil {
+		t.Fatal("compact on non-existent collection should return an error")
+	}
+
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		if cmdErr.Code == 59 {
+			t.Errorf("compact command is not registered (CommandNotFound)")
+		}
+	}
+}
+
+func TestCompactMissingArg(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+	err := client.Database(testDB(t)).RunCommand(ctx, bson.D{{Key: "compact", Value: 1}}).Err()
+	if err == nil {
+		t.Fatal("compact with non-string arg should return an error")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
