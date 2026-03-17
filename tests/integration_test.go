@@ -1625,6 +1625,53 @@ func TestAggregateUnionWith(t *testing.T) {
 	}
 }
 
+// TestAggregateUnionWithPipeline verifies $unionWith with a sub-pipeline that
+// filters documents from the second collection before appending them.
+func TestAggregateUnionWithPipeline(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	_, _ = db.Collection("setA").InsertMany(ctx, []interface{}{
+		bson.D{{Key: "type", Value: "a"}, {Key: "val", Value: int32(1)}},
+	})
+	_, _ = db.Collection("setB").InsertMany(ctx, []interface{}{
+		bson.D{{Key: "type", Value: "b"}, {Key: "val", Value: int32(2)}},
+		bson.D{{Key: "type", Value: "b"}, {Key: "val", Value: int32(3)}},
+		bson.D{{Key: "type", Value: "b"}, {Key: "val", Value: int32(4)}},
+	})
+
+	// Only include setB docs where val > 2
+	cursor, err := db.Collection("setA").Aggregate(ctx, mongo.Pipeline{
+		bson.D{{Key: "$unionWith", Value: bson.D{
+			{Key: "coll", Value: "setB"},
+			{Key: "pipeline", Value: bson.A{
+				bson.D{{Key: "$match", Value: bson.D{{Key: "val", Value: bson.D{{Key: "$gt", Value: int32(2)}}}}}},
+			}},
+		}}},
+		bson.D{{Key: "$sort", Value: bson.D{{Key: "val", Value: 1}}}},
+	})
+	if err != nil {
+		t.Fatalf("$unionWith pipeline: %v", err)
+	}
+	defer cursor.Close(ctx)
+
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("$unionWith pipeline cursor.All: %v", err)
+	}
+	// Expect: {val:1 from setA} + {val:3, val:4 from setB (val:2 filtered out)}
+	if len(results) != 3 {
+		t.Fatalf("$unionWith pipeline: expected 3 results, got %d", len(results))
+	}
+	wantVals := []int32{1, 3, 4}
+	for i, r := range results {
+		if r["val"] != wantVals[i] {
+			t.Errorf("$unionWith pipeline[%d]: expected val=%d, got %v", i, wantVals[i], r["val"])
+		}
+	}
+}
+
 // ─── $switch and $ifNull expressions ─────────────────────────────────────────
 
 func TestAggregateSwitchAndIfNull(t *testing.T) {
