@@ -4158,6 +4158,307 @@ func TestUpdateOperatorEdgeCases(t *testing.T) {
 	})
 }
 
+// ─── Aggregation pipeline behavior edge cases (#23) ──────────────────────────
+
+func TestAggregationPipelineEdgeCases(t *testing.T) {
+	client := newClient(t)
+	db := testDB(t)
+	ctx := context.Background()
+
+	t.Run("$group $sum on missing field treats as 0", func(t *testing.T) {
+		coll := client.Database(db).Collection("sum_missing")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "bonus", Value: int32(100)}},
+			bson.D{{Key: "dept", Value: "eng"}}, // no bonus field
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "bonus", Value: int32(50)}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$dept"},
+				{Key: "total", Value: bson.D{{Key: "$sum", Value: "$bonus"}}},
+			}}},
+		})
+		if err != nil {
+			t.Fatalf("$sum missing: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 group, got %d", len(results))
+		}
+		if results[0]["total"] != int32(150) {
+			t.Errorf("$sum missing field: expected 150, got %v", results[0]["total"])
+		}
+	})
+
+	t.Run("$group $avg on mixed int/float", func(t *testing.T) {
+		coll := client.Database(db).Collection("avg_mixed")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "score", Value: int32(80)}},
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "score", Value: float64(90.0)}},
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "score", Value: int32(100)}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$dept"},
+				{Key: "avgScore", Value: bson.D{{Key: "$avg", Value: "$score"}}},
+			}}},
+		})
+		if err != nil {
+			t.Fatalf("$avg mixed: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("$avg mixed: expected 1 group, got %d", len(results))
+		}
+		// (80 + 90 + 100) / 3 = 90.0
+		avg, ok := results[0]["avgScore"].(float64)
+		if !ok {
+			t.Fatalf("$avg mixed: expected float64, got %T: %v", results[0]["avgScore"], results[0]["avgScore"])
+		}
+		if avg != float64(90) {
+			t.Errorf("$avg mixed: expected 90.0, got %v", avg)
+		}
+	})
+
+	t.Run("$group $push accumulator", func(t *testing.T) {
+		coll := client.Database(db).Collection("push_acc")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "name", Value: "alice"}},
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "name", Value: "bob"}},
+			bson.D{{Key: "dept", Value: "mkt"}, {Key: "name", Value: "carol"}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$dept"},
+				{Key: "members", Value: bson.D{{Key: "$push", Value: "$name"}}},
+			}}},
+			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
+		})
+		if err != nil {
+			t.Fatalf("$push accumulator: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 2 {
+			t.Fatalf("expected 2 groups, got %d", len(results))
+		}
+		engMembers := results[0]["members"].(bson.A)
+		if len(engMembers) != 2 {
+			t.Errorf("eng $push: expected 2 members, got %d", len(engMembers))
+		}
+	})
+
+	t.Run("$group $addToSet deduplication", func(t *testing.T) {
+		coll := client.Database(db).Collection("addtoset_acc")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "skill", Value: "go"}},
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "skill", Value: "go"}}, // duplicate
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "skill", Value: "rust"}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$dept"},
+				{Key: "skills", Value: bson.D{{Key: "$addToSet", Value: "$skill"}}},
+			}}},
+		})
+		if err != nil {
+			t.Fatalf("$addToSet acc: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 group, got %d", len(results))
+		}
+		skills := results[0]["skills"].(bson.A)
+		if len(skills) != 2 {
+			t.Errorf("$addToSet: expected 2 unique skills (no dup), got %d: %v", len(skills), skills)
+		}
+	})
+
+	t.Run("$limit 0 returns 0 docs", func(t *testing.T) {
+		coll := client.Database(db).Collection("limit_zero")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "x", Value: int32(1)}},
+			bson.D{{Key: "x", Value: int32(2)}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$limit", Value: int32(0)}},
+		})
+		if err != nil {
+			t.Fatalf("$limit 0: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("$limit 0: expected 0 docs, got %d", len(results))
+		}
+	})
+
+	t.Run("$skip greater than collection size returns 0 docs", func(t *testing.T) {
+		coll := client.Database(db).Collection("skip_huge")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "n", Value: int32(1)}},
+			bson.D{{Key: "n", Value: int32(2)}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$skip", Value: int32(9999)}},
+		})
+		if err != nil {
+			t.Fatalf("$skip huge: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("$skip huge: expected 0 docs, got %d", len(results))
+		}
+	})
+
+	t.Run("$project with computed fields and exclusions", func(t *testing.T) {
+		coll := client.Database(db).Collection("project_computed")
+		_, _ = coll.InsertOne(ctx, bson.D{
+			{Key: "price", Value: int32(10)},
+			{Key: "qty", Value: int32(5)},
+			{Key: "secret", Value: "hidden"},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$project", Value: bson.D{
+				{Key: "total", Value: bson.D{{Key: "$multiply", Value: bson.A{"$price", "$qty"}}}},
+				{Key: "price", Value: int32(1)},
+				{Key: "secret", Value: int32(0)},
+				{Key: "_id", Value: int32(0)},
+			}}},
+		})
+		if err != nil {
+			t.Fatalf("$project computed+exclusion: %v", err)
+		}
+		var result bson.M
+		if !cursor.Next(ctx) {
+			t.Fatal("expected at least 1 doc")
+		}
+		if err := cursor.Decode(&result); err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if result["total"] != int32(50) {
+			t.Errorf("total: expected 50, got %v", result["total"])
+		}
+		if result["price"] != int32(10) {
+			t.Errorf("price: expected 10, got %v", result["price"])
+		}
+		if _, exists := result["secret"]; exists {
+			t.Error("secret should be excluded")
+		}
+		if _, exists := result["_id"]; exists {
+			t.Error("_id should be excluded")
+		}
+	})
+
+	t.Run("$match after $group", func(t *testing.T) {
+		coll := client.Database(db).Collection("match_after_group")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(100)}},
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(120)}},
+			bson.D{{Key: "dept", Value: "mkt"}, {Key: "salary", Value: int32(80)}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$dept"},
+				{Key: "total", Value: bson.D{{Key: "$sum", Value: "$salary"}}},
+			}}},
+			bson.D{{Key: "$match", Value: bson.D{{Key: "total", Value: bson.D{{Key: "$gt", Value: int32(100)}}}}}},
+		})
+		if err != nil {
+			t.Fatalf("$match after $group: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		// eng total=220 > 100, mkt total=80 not > 100 → only eng
+		if len(results) != 1 {
+			t.Fatalf("$match after $group: expected 1, got %d", len(results))
+		}
+		if results[0]["_id"] != "eng" {
+			t.Errorf("$match after $group: expected eng, got %v", results[0]["_id"])
+		}
+	})
+
+	t.Run("empty pipeline returns all docs", func(t *testing.T) {
+		coll := client.Database(db).Collection("empty_pipeline")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "n", Value: int32(1)}},
+			bson.D{{Key: "n", Value: int32(2)}},
+			bson.D{{Key: "n", Value: int32(3)}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{})
+		if err != nil {
+			t.Fatalf("empty pipeline: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 3 {
+			t.Errorf("empty pipeline: expected 3, got %d", len(results))
+		}
+	})
+
+	t.Run("$sort stability: primary then secondary", func(t *testing.T) {
+		coll := client.Database(db).Collection("sort_stable")
+		_, _ = coll.InsertMany(ctx, []interface{}{
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(120)}},
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(100)}},
+			bson.D{{Key: "dept", Value: "mkt"}, {Key: "salary", Value: int32(90)}},
+			bson.D{{Key: "dept", Value: "eng"}, {Key: "salary", Value: int32(110)}},
+		})
+		cursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+			bson.D{{Key: "$sort", Value: bson.D{
+				{Key: "dept", Value: int32(1)},
+				{Key: "salary", Value: int32(-1)},
+			}}},
+		})
+		if err != nil {
+			t.Fatalf("multi-key sort: %v", err)
+		}
+		var results []bson.M
+		if err := cursor.All(ctx, &results); err != nil {
+			t.Fatalf("cursor.All: %v", err)
+		}
+		if len(results) != 4 {
+			t.Fatalf("multi-key sort: expected 4, got %d", len(results))
+		}
+		// First 3 should be eng (sorted by dept asc), then mkt
+		for i := 0; i < 3; i++ {
+			if results[i]["dept"] != "eng" {
+				t.Errorf("sort[%d]: expected eng, got %v", i, results[i]["dept"])
+			}
+		}
+		// Within eng: descending salary 120, 110, 100
+		if results[0]["salary"] != int32(120) {
+			t.Errorf("sort eng[0]: expected 120, got %v", results[0]["salary"])
+		}
+		if results[1]["salary"] != int32(110) {
+			t.Errorf("sort eng[1]: expected 110, got %v", results[1]["salary"])
+		}
+		if results[2]["salary"] != int32(100) {
+			t.Errorf("sort eng[2]: expected 100, got %v", results[2]["salary"])
+		}
+	})
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
