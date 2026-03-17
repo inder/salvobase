@@ -1,0 +1,196 @@
+name: Self-Hosted Contributor Agents
+
+# Trigger manually from the Actions tab. Spin up 1-5 parallel contributor agents.
+# Each agent picks one available issue, implements it, and opens a PR.
+# Agents run directly in the upstream repo — no fork required.
+#
+# Requirements (set once in repo Settings → Secrets and Variables):
+#   Secrets:  ANTHROPIC_API_KEY, FOUNDER_TOKEN
+#   No other setup needed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent_count:
+        description: "Number of parallel agents (1–5)"
+        required: true
+        default: "3"
+        type: choice
+        options: ["1", "2", "3", "4", "5"]
+      issue_numbers:
+        description: "Optional: comma-separated issue numbers to target (e.g. '6,9,18'). Leave blank to auto-pick."
+        required: false
+        default: ""
+
+concurrency:
+  group: contributor-self
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  # Distribute issues across agent slots
+  plan:
+    name: Plan work distribution
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - name: Build agent matrix
+        id: build
+        env:
+          GH_TOKEN: ${{ secrets.FOUNDER_TOKEN }}
+          AGENT_COUNT: ${{ inputs.agent_count }}
+          ISSUE_NUMBERS: ${{ inputs.issue_numbers }}
+        run: |
+          COUNT=$AGENT_COUNT
+
+          if [ -n "$ISSUE_NUMBERS" ]; then
+            # User specified issues — split them across agents
+            IFS=',' read -ra ISSUES <<< "$ISSUE_NUMBERS"
+            TOTAL=${#ISSUES[@]}
+            MATRIX="["
+            for i in $(seq 0 $((COUNT-1))); do
+              IDX=$((i % TOTAL))
+              ISSUE="${ISSUES[$IDX]// /}"
+              [ $i -gt 0 ] && MATRIX+=","
+              MATRIX+="{\"slot\":$((i+1)),\"target_issue\":\"$ISSUE\"}"
+            done
+            MATRIX+="]"
+          else
+            # Auto-pick — build slot matrix, agents will self-select
+            MATRIX="["
+            for i in $(seq 1 $COUNT); do
+              [ $i -gt 1 ] && MATRIX+=","
+              MATRIX+="{\"slot\":$i,\"target_issue\":\"\"}"
+            done
+            MATRIX+="]"
+          fi
+
+          echo "matrix={\"include\":$MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "Matrix: {\"include\":$MATRIX}"
+
+  contribute:
+    name: "Agent ${{ matrix.slot }}"
+    runs-on: ubuntu-latest
+    needs: plan
+    strategy:
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+      fail-fast: false   # one agent failing shouldn't kill the others
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.FOUNDER_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --global user.name "founder-agent"
+          git config --global user.email "founder-agent@users.noreply.github.com"
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@2.1.76
+
+      - name: Run contributor agent (slot ${{ matrix.slot }})
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.FOUNDER_TOKEN }}
+          AGENT_SLOT: ${{ matrix.slot }}
+          TARGET_ISSUE: ${{ matrix.target_issue }}
+        run: |
+          # Build the prompt dynamically so we can inject target issue if specified
+          if [ -n "$TARGET_ISSUE" ]; then
+            ISSUE_DIRECTIVE="Your target issue is #${TARGET_ISSUE}. Go directly to it — skip the auto-discovery step."
+          else
+            ISSUE_DIRECTIVE="Auto-select the highest priority available issue you're eligible for."
+          fi
+
+          claude -p "$(cat <<PROMPT
+          You are a founder-tier contributor agent (agent slot ${AGENT_SLOT}) for Salvobase, running headlessly in GitHub Actions.
+          You are operating as @inder with full maintainer trust. You can push branches directly to the upstream repo and merge PRs.
+
+          ${ISSUE_DIRECTIVE}
+
+          ## Your job
+          1. Pick one issue (or use TARGET_ISSUE if specified)
+          2. Read the issue body in full
+          3. Read ARCHITECTURE.md and the relevant source files
+          4. Implement the fix + tests
+          5. Create a branch: founder-s${AGENT_SLOT}/\$(date +%Y%m%d)-issue-NUMBER
+          6. Commit, push, open PR to master
+          7. Merge immediately with: gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin
+          8. Comment on the issue with what changed
+
+          ## Issue selection (if auto-picking)
+          Find available high-priority issues:
+          \`\`\`bash
+          gh issue list --repo inder/salvobase --state open \\
+            --label "agent:available" --limit 50 \\
+            --json number,title,labels \\
+            --jq '[.[] | select(
+              (.labels|map(.name)|contains(["agent:claimed"]) | not)
+            )] | sort_by(
+              if (.labels|map(.name)|contains(["priority:p0"])) then 0
+              elif (.labels|map(.name)|contains(["priority:critical"])) then 1
+              elif (.labels|map(.name)|contains(["priority:high"])) then 2
+              elif (.labels|map(.name)|contains(["priority:medium"])) then 3
+              else 4 end
+            ) | .[0]'
+          \`\`\`
+
+          Skip issues already in progress (check if a PR referencing the issue was opened in the last 8h).
+
+          ## PR body template
+          \`\`\`
+          Closes #NUMBER
+
+          ## What
+          <what changed>
+
+          ## Why
+          <why this matters>
+
+          \\\`\\\`\\\`yaml
+          agent:
+            id: founder-agent-s${AGENT_SLOT}
+            type: claude-code
+            model: claude-sonnet-4-6
+            operator: inder
+            trust_tier: maintainer
+            issues: ["#NUMBER"]
+          \\\`\\\`\\\`
+
+          *Posted by the founder agent on behalf of @inder*
+          \`\`\`
+
+          ## Merge command (skip --approve, go straight to merge)
+          \`\`\`bash
+          gh pr merge PR_NUMBER --repo inder/salvobase --squash --admin \\
+            --body "Auto-merged by founder agent (slot ${AGENT_SLOT})."
+          \`\`\`
+
+          ## Notes
+          - Go is available via \`make\` — run \`make test\` to verify before committing
+          - If CI fails after merge, file a follow-up issue, don't revert
+          - One issue per run. Stop after merging one PR.
+          - After every GitHub comment/review, end with: *Posted by the founder agent on behalf of @inder*
+          PROMPT
+          )" \
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,Agent" \
+            --output-format text
+
+      - name: File failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: python3 scripts/founder/file_failure_issue.py
