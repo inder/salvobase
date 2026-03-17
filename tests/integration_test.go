@@ -5186,6 +5186,31 @@ func TestCappedCollectionMaxDocs(t *testing.T) {
 	}
 }
 
+// ─── Shutdown ─────────────────────────────────────────────────────────────────
+
+// TestZShutdownCommandErrors verifies error handling for the shutdown command
+// without triggering an actual server shutdown.
+// The "Z" prefix keeps it near the end of the alphabetical test order.
+func TestZShutdownCommandErrors(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// Calling shutdown against a non-admin database must be rejected.
+	var result bson.M
+	err := client.Database("test").RunCommand(ctx, bson.D{{Key: "shutdown", Value: 1}}).Decode(&result)
+	if err == nil {
+		t.Fatal("expected error when running shutdown against non-admin database, got nil")
+	}
+
+	// Calling shutdown with a negative timeoutSecs must be rejected.
+	err = client.Database("admin").RunCommand(ctx,
+		bson.D{{Key: "shutdown", Value: 1}, {Key: "timeoutSecs", Value: int32(-1)}},
+	).Decode(&result)
+	if err == nil {
+		t.Fatal("expected error for negative timeoutSecs, got nil")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

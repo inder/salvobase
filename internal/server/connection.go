@@ -272,6 +272,9 @@ func (c *Connection) buildContext(db string) *commands.Context {
 		ConnID:     c.id,
 		NoAuth:     c.server.cfg.NoAuth,
 		RemoteAddr: c.conn.RemoteAddr().String(),
+		ShutdownFunc: func() {
+			_ = c.server.Shutdown()
+		},
 	}
 
 	if c.authed {
