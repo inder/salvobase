@@ -171,7 +171,7 @@ func (b *EventBus) Publish(db, coll string, event ChangeEvent) {
 // Obtain via EventBus.Subscribe; release with EventBus.Unsubscribe.
 type Subscription struct {
 	stream  *nsStream
-	readSeq int64      // last consumed sequence number (0 = nothing consumed yet)
+	readSeq int64 // last consumed sequence number (0 = nothing consumed yet)
 	closed  atomic.Bool
 }
 
@@ -215,7 +215,7 @@ func (b *EventBus) Unsubscribe(sub *Subscription) {
 //     subscription has been closed.
 //   - Returns (nil, ErrBufOverflow) when the subscriber has fallen more than
 //     bufSize events behind (ring buffer has lapped the read position).
-//   - Returns (nil, ctx.Err()) when the context is cancelled.
+//   - Returns (nil, ctx.Err()) when the context is canceled.
 func (sub *Subscription) Recv(ctx context.Context, maxWaitMS int64) ([]ChangeEvent, error) {
 	if sub.closed.Load() {
 		return nil, nil
@@ -237,7 +237,7 @@ func (sub *Subscription) Recv(ctx context.Context, maxWaitMS int64) ([]ChangeEve
 	})
 	defer timer.Stop()
 
-	// Wake the cond if the context is cancelled, so we don't block forever.
+	// Wake the cond if the context is canceled, so we don't block forever.
 	watchDone := make(chan struct{})
 	defer close(watchDone)
 	go func() {
@@ -256,7 +256,7 @@ func (sub *Subscription) Recv(ctx context.Context, maxWaitMS int64) ([]ChangeEve
 			return nil, nil
 		}
 
-		// Check context cancelled.
+		// Check context canceled.
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

@@ -874,9 +874,9 @@ func (e *BBoltEngine) getCollectionInfo(db, coll string) (CollectionInfo, bool) 
 
 // ─── Cursors / Users ──────────────────────────────────────────────────────────
 
-func (e *BBoltEngine) Cursors() CursorStore   { return e.cursors }
-func (e *BBoltEngine) Users() UserStore       { return e.users }
-func (e *BBoltEngine) EventBus() *EventBus    { return e.eventBus }
+func (e *BBoltEngine) Cursors() CursorStore { return e.cursors }
+func (e *BBoltEngine) Users() UserStore     { return e.users }
+func (e *BBoltEngine) EventBus() *EventBus  { return e.eventBus }
 
 // ─── Close ────────────────────────────────────────────────────────────────────
 

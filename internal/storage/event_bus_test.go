@@ -195,7 +195,7 @@ func TestEventBusUnsubscribeWakesRecv(t *testing.T) {
 	}
 }
 
-// TestEventBusContextCancel verifies that a cancelled context unblocks Recv.
+// TestEventBusContextCancel verifies that a canceled context unblocks Recv.
 func TestEventBusContextCancel(t *testing.T) {
 	bus := NewEventBus(10)
 	sub := bus.Subscribe("db.ctx")
@@ -301,9 +301,8 @@ func TestEventBusHasStream(t *testing.T) {
 // TestEventBusMakeDocumentKey verifies the makeDocumentKey helper.
 func TestEventBusMakeDocumentKey(t *testing.T) {
 	id := bson.NewObjectID()
-	idVal := bson.RawValue{Type: bson.TypeObjectID}
 	raw, _ := bson.Marshal(bson.D{{Key: "_id", Value: id}})
-	idVal = bson.Raw(raw).Lookup("_id")
+	idVal := bson.Raw(raw).Lookup("_id")
 
 	key := makeDocumentKey(idVal)
 	if key == nil {
