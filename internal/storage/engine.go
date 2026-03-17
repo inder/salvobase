@@ -131,11 +131,17 @@ func (e *BBoltEngine) getDB(name string) (*bolt.DB, error) {
 
 // ─── Engine interface implementation ─────────────────────────────────────────
 
+// CreateDatabase ensures the named database exists by opening (or creating) its
+// underlying bbolt file. It is safe to call concurrently; the first call wins
+// and subsequent calls are no-ops if the file already exists.
 func (e *BBoltEngine) CreateDatabase(name string) error {
 	_, err := e.openDB(name)
 	return err
 }
 
+// DropDatabase closes and removes the database file for name. Any in-flight
+// reads or writes against the database may fail with an error after this call
+// returns. If the database does not exist the call is a no-op (no error).
 func (e *BBoltEngine) DropDatabase(name string) error {
 	e.mu.Lock()
 	db, ok := e.dbs[name]
@@ -156,6 +162,9 @@ func (e *BBoltEngine) DropDatabase(name string) error {
 	return nil
 }
 
+// ListDatabases returns metadata for every database whose .db file exists in
+// the data directory. Databases that have no collections are reported with
+// Empty=true. The list is unordered.
 func (e *BBoltEngine) ListDatabases() ([]DatabaseInfo, error) {
 	entries, err := os.ReadDir(e.dataDir)
 	if err != nil {
@@ -181,12 +190,17 @@ func (e *BBoltEngine) ListDatabases() ([]DatabaseInfo, error) {
 	return result, nil
 }
 
+// HasDatabase reports whether the named database exists on disk. It does not
+// require the database to be currently open.
 func (e *BBoltEngine) HasDatabase(name string) bool {
 	path := filepath.Join(e.dataDir, name+".db")
 	_, err := os.Stat(path)
 	return err == nil
 }
 
+// CreateCollection explicitly creates collection coll in database db with the
+// given options. Returns ErrCodeCollectionAlreadyExists if the collection
+// already exists. The database is opened (or created) implicitly.
 func (e *BBoltEngine) CreateCollection(db, coll string, opts CreateCollectionOptions) error {
 	boltDB, err := e.openDB(db)
 	if err != nil {
@@ -219,6 +233,8 @@ func (e *BBoltEngine) CreateCollection(db, coll string, opts CreateCollectionOpt
 	})
 }
 
+// DropCollection removes collection coll and all of its indexes from database
+// db. If the collection does not exist the call succeeds silently.
 func (e *BBoltEngine) DropCollection(db, coll string) error {
 	boltDB, err := e.getDB(db)
 	if err != nil {
@@ -264,6 +280,9 @@ func (e *BBoltEngine) DropCollection(db, coll string) error {
 	})
 }
 
+// ListCollections returns the CollectionInfo for every collection registered in
+// database db. Returns an empty (nil) slice — not an error — if the database
+// does not exist or has no collections.
 func (e *BBoltEngine) ListCollections(db string) ([]CollectionInfo, error) {
 	boltDB, err := e.getDB(db)
 	if err != nil {
@@ -290,6 +309,7 @@ func (e *BBoltEngine) ListCollections(db string) ([]CollectionInfo, error) {
 	})
 }
 
+// HasCollection reports whether collection coll exists in database db.
 func (e *BBoltEngine) HasCollection(db, coll string) bool {
 	boltDB, err := e.getDB(db)
 	if err != nil {
@@ -557,6 +577,11 @@ func renameBucket(tx *bolt.Tx, from, to string) error {
 
 // ─── Index management ─────────────────────────────────────────────────────────
 
+// CreateIndex builds a secondary index on collection coll in database db
+// according to spec. If spec.Name is empty an index name is derived from the
+// key pattern. Existing documents are back-filled into the index within the
+// same write transaction that registers the spec. Returns the final index name.
+// The operation is idempotent — calling it twice with the same name is safe.
 func (e *BBoltEngine) CreateIndex(db, coll string, spec IndexSpec) (string, error) {
 	boltDB, err := e.openDB(db)
 	if err != nil {
@@ -647,6 +672,9 @@ func (e *BBoltEngine) CreateIndex(db, coll string, spec IndexSpec) (string, erro
 	return spec.Name, nil
 }
 
+// DropIndex removes the named secondary index from collection coll in database
+// db. Returns ErrCodeIllegalOperation if the caller attempts to drop the
+// built-in _id_ index, and ErrCodeIndexNotFound if the index does not exist.
 func (e *BBoltEngine) DropIndex(db, coll, indexName string) error {
 	boltDB, err := e.getDB(db)
 	if err != nil {
@@ -667,6 +695,9 @@ func (e *BBoltEngine) DropIndex(db, coll, indexName string) error {
 	})
 }
 
+// ListIndexes returns all indexes for collection coll in database db. The
+// built-in _id_ index is always included as the first element. If the database
+// or collection does not yet exist, only the _id_ index descriptor is returned.
 func (e *BBoltEngine) ListIndexes(db, coll string) ([]IndexInfo, error) {
 	boltDB, err := e.getDB(db)
 	if err != nil {
@@ -725,6 +756,8 @@ func defaultIndexes(db, coll string) []IndexInfo {
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
+// DatabaseStats returns storage statistics for database db. If the database
+// does not exist an empty stats struct is returned with no error.
 func (e *BBoltEngine) DatabaseStats(db string) (DatabaseStats, error) {
 	boltDB, err := e.getDB(db)
 	if err != nil {
@@ -773,6 +806,9 @@ func (e *BBoltEngine) DatabaseStats(db string) (DatabaseStats, error) {
 	return stats, nil
 }
 
+// CollectionStats returns storage statistics for collection coll in database
+// db. If the database does not exist an empty stats struct is returned with no
+// error. The IndexSizes map is always non-nil.
 func (e *BBoltEngine) CollectionStats(db, coll string) (CollectionStats, error) {
 	boltDB, err := e.getDB(db)
 	if err != nil {
@@ -832,6 +868,10 @@ func (e *BBoltEngine) CollectionStats(db, coll string) (CollectionStats, error) 
 	return cs, nil
 }
 
+// ServerStats returns a snapshot of server-wide counters and system information
+// including uptime, operation counters (insert/query/update/delete/getMore/command),
+// and basic memory statistics. The returned struct is safe to read without
+// further synchronisation — all counters are read from atomic integers.
 func (e *BBoltEngine) ServerStats() (ServerStats, error) {
 	hostname, _ := os.Hostname()
 	uptime := int64(time.Since(e.startTime).Seconds())
@@ -874,12 +914,22 @@ func (e *BBoltEngine) getCollectionInfo(db, coll string) (CollectionInfo, bool) 
 
 // ─── Cursors / Users ──────────────────────────────────────────────────────────
 
+// Cursors returns the engine-wide CursorStore used to register and retrieve
+// server-side cursors across getMore commands. Thread-safe.
 func (e *BBoltEngine) Cursors() CursorStore { return e.cursors }
-func (e *BBoltEngine) Users() UserStore     { return e.users }
-func (e *BBoltEngine) EventBus() *EventBus  { return e.eventBus }
+
+// Users returns the UserStore backed by the admin database. Thread-safe.
+func (e *BBoltEngine) Users() UserStore { return e.users }
+
+// EventBus returns the engine-wide EventBus used to fan out change-stream
+// events to registered watchers. Thread-safe.
+func (e *BBoltEngine) EventBus() *EventBus { return e.eventBus }
 
 // ─── Close ────────────────────────────────────────────────────────────────────
 
+// Close flushes and closes all open bbolt databases. After Close returns the
+// engine must not be used. Any subsequent method call will likely panic or
+// return an error. Returns the first close error encountered, if any.
 func (e *BBoltEngine) Close() error {
 	if e.eventBus != nil {
 		e.eventBus.Close()
