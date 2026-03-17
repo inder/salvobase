@@ -788,10 +788,10 @@ func (c *bboltCollection) indexScanTx(
 // lower bound and iterates forward until the upper bound is exceeded.
 //
 // Index key layout for non-unique indexes:
-//   [eqPrefix [0x01 eqField]...] [0x01 rangeFieldEncoded] 0xFF [idBytes]
+// [eqPrefix [0x01 eqField]...] [0x01 rangeFieldEncoded] 0xFF [idBytes]
 //
 // For single-field range indexes (no equality prefix), the key is simply:
-//   [rangeFieldEncoded] 0xFF [idBytes]
+// [rangeFieldEncoded] 0xFF [idBytes]
 //
 // The equality prefix (plan.prefix) may be empty (single-field range index).
 // When present it ends without a field separator; the range field is always
