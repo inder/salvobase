@@ -370,8 +370,8 @@ func TestOpMsgDocumentSequenceRoundTrip(t *testing.T) {
 	// hdrBuf covers header (16 bytes) + flagBits (4 bytes)
 	hdrBuf := make([]byte, HeaderSize+4)
 	binary.LittleEndian.PutUint32(hdrBuf[0:], uint32(msgLen))
-	binary.LittleEndian.PutUint32(hdrBuf[4:], 7)  // requestID
-	binary.LittleEndian.PutUint32(hdrBuf[8:], 0)  // responseTo
+	binary.LittleEndian.PutUint32(hdrBuf[4:], 7) // requestID
+	binary.LittleEndian.PutUint32(hdrBuf[8:], 0) // responseTo
 	binary.LittleEndian.PutUint32(hdrBuf[12:], uint32(OpMsg))
 	binary.LittleEndian.PutUint32(hdrBuf[16:], 0) // flagBits
 	full := make([]byte, len(hdrBuf)+len(sectionsBuf))

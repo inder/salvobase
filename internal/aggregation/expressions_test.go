@@ -32,9 +32,9 @@ func TestExprAdd(t *testing.T) {
 	doc := makeDoc(t, bson.D{{Key: "a", Value: int32(10)}, {Key: "b", Value: int32(5)}})
 
 	tests := []struct {
-		name   string
-		expr   interface{}
-		want   interface{}
+		name string
+		expr interface{}
+		want interface{}
 	}{
 		{
 			"int32+int32",
