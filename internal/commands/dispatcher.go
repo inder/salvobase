@@ -342,6 +342,8 @@ func mongoErrorCodeName(code int32) string {
 		return "CommandFailed"
 	case 238:
 		return "NotImplemented"
+	case 286:
+		return "ChangeStreamHistoryLost"
 	default:
 		return "UnknownError"
 	}

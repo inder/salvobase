@@ -198,6 +198,77 @@ func (b *EventBus) Subscribe(ns string) *Subscription {
 	}
 }
 
+// SubscribeFrom creates a subscription starting after the given sequence number.
+// If afterSeq == 0, equivalent to Subscribe (only future events are returned).
+// Returns ErrBufOverflow if afterSeq is older than the ring buffer's oldest event.
+func (b *EventBus) SubscribeFrom(ns string, afterSeq int64) (*Subscription, error) {
+	b.mu.Lock()
+	st, ok := b.streams[ns]
+	if !ok {
+		st = newNsStream(b.bufSize)
+		b.streams[ns] = st
+	}
+	b.mu.Unlock()
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if afterSeq > 0 {
+		bufCap := int64(len(st.buf))
+		oldestSeq := st.seq - bufCap + 1
+		if oldestSeq < 1 {
+			oldestSeq = 1
+		}
+		if st.seq > 0 && afterSeq < oldestSeq-1 {
+			return nil, ErrBufOverflow
+		}
+	}
+
+	return &Subscription{
+		stream:  st,
+		readSeq: afterSeq,
+	}, nil
+}
+
+// SubscribeFromTime creates a subscription starting from the first event at or
+// after tsNS (a Unix nanosecond timestamp). Events older than tsNS are skipped.
+// Returns ErrBufOverflow if tsNS is older than the ring buffer's oldest event.
+func (b *EventBus) SubscribeFromTime(ns string, tsNS int64) (*Subscription, error) {
+	b.mu.Lock()
+	st, ok := b.streams[ns]
+	if !ok {
+		st = newNsStream(b.bufSize)
+		b.streams[ns] = st
+	}
+	b.mu.Unlock()
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if st.seq == 0 {
+		// No events yet; subscribe from current tail (only future events).
+		return &Subscription{stream: st, readSeq: 0}, nil
+	}
+
+	bufCap := int64(len(st.buf))
+	oldestSeq := st.seq - bufCap + 1
+	if oldestSeq < 1 {
+		oldestSeq = 1
+	}
+
+	// Scan from oldest to newest to find first event at or after tsNS.
+	for s := oldestSeq; s <= st.seq; s++ {
+		pos := (s - 1) % bufCap
+		if st.buf[pos].ResumeToken.TimestampNS >= tsNS {
+			// Position before this event so Recv will include it.
+			return &Subscription{stream: st, readSeq: s - 1}, nil
+		}
+	}
+
+	// All events are older than tsNS; subscribe from current tail.
+	return &Subscription{stream: st, readSeq: st.seq}, nil
+}
+
 // Unsubscribe marks the subscription as closed and wakes any goroutine blocked
 // in Recv so it can return promptly.
 func (b *EventBus) Unsubscribe(sub *Subscription) {

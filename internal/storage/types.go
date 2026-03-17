@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -49,8 +50,21 @@ type Engine interface {
 	// RenameCollection renames a collection, optionally across databases.
 	RenameCollection(fromDB, fromColl, toDB, toColl string, dropTarget bool) error
 
+	// EventBus returns the engine's event bus for change stream subscriptions.
+	EventBus() *EventBus
+
 	// Close flushes and closes all open database files.
 	Close() error
+}
+
+// TailableCursor extends Cursor for change streams.
+// Implemented by changeStreamCursor in internal/storage/change_stream_cursor.go.
+type TailableCursor interface {
+	Cursor
+	// NextBatchWait blocks until at least one event is available or maxWaitMS
+	// elapses, then returns the next batch and the post-batch resume token.
+	// postBatchResumeToken is a BSON document {"_data": "<base64url>"} or nil.
+	NextBatchWait(ctx context.Context, batchSize int, maxWaitMS int64) (docs []bson.Raw, postBatchResumeToken bson.Raw, err error)
 }
 
 // ─── Collection interface ────────────────────────────────────────────────────
@@ -371,7 +385,8 @@ const (
 	ErrCodeAuthenticationFailed    = int32(18)
 	ErrCodeUserNotFound            = int32(11)
 	ErrCodeUserAlreadyExists       = int32(51003)
-	ErrCodeCursorNotFound          = int32(43)
-	ErrCodeCommandFailed           = int32(125)
-	ErrCodeNotImplemented          = int32(238)
+	ErrCodeCursorNotFound              = int32(43)
+	ErrCodeCommandFailed               = int32(125)
+	ErrCodeNotImplemented              = int32(238)
+	ErrCodeChangeStreamHistoryLost     = int32(286)
 )

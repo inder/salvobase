@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,13 +41,51 @@ func handleGetMore(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 			"cursor id %d not found", cursorID)
 	}
 
+	ns := ctx.DB + "." + collName
+
+	// Tailable cursor (change stream): block until events arrive or timeout.
+	if tc, isTailable := cursor.(storage.TailableCursor); isTailable {
+		maxAwaitTimeMS := lookupInt64Field(cmd, "maxAwaitTimeMS")
+		if maxAwaitTimeMS <= 0 {
+			maxAwaitTimeMS = 1000
+		}
+
+		docs, postBatchResumeToken, err := tc.NextBatchWait(context.Background(), int(batchSize), maxAwaitTimeMS)
+		if err != nil {
+			me, isMongo := err.(*storage.MongoError)
+			if isMongo && me.Code == storage.ErrCodeChangeStreamHistoryLost {
+				ctx.Engine.Cursors().Delete(cursorID)
+			}
+			return nil, err
+		}
+
+		nextBatch := make(bson.A, len(docs))
+		for i, d := range docs {
+			nextBatch[i] = d
+		}
+
+		cursorDoc := bson.D{
+			{Key: "id", Value: cursorID},
+			{Key: "ns", Value: ns},
+			{Key: "nextBatch", Value: nextBatch},
+		}
+		if postBatchResumeToken != nil {
+			cursorDoc = append(cursorDoc, bson.E{Key: "postBatchResumeToken", Value: postBatchResumeToken})
+		}
+
+		return marshalResponse(bson.D{
+			{Key: "cursor", Value: cursorDoc},
+			{Key: "ok", Value: float64(1)},
+		}), nil
+	}
+
+	// Regular cursor.
 	docs, exhausted, err := cursor.NextBatch(int(batchSize))
 	if err != nil {
 		ctx.Engine.Cursors().Delete(cursorID)
 		return nil, err
 	}
 
-	ns := ctx.DB + "." + collName
 	var returnedCursorID int64
 
 	if exhausted {
