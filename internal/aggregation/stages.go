@@ -1257,8 +1257,16 @@ func (s *mergeStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 
 // ─── $facet ───────────────────────────────────────────────────────────────────
 
+// facetPipeline holds a single named sub-pipeline for $facet.
+// Using an ordered slice instead of a map preserves the field order
+// from the input specification (BSON is ordered; Go maps are not).
+type facetPipeline struct {
+	name   string
+	stages []Stage
+}
+
 type facetStage struct {
-	pipelines map[string][]Stage
+	pipelines []facetPipeline
 }
 
 func buildFacetStage(spec bson.Raw, engine storage.Engine, db string) (*facetStage, error) {
@@ -1267,7 +1275,7 @@ func buildFacetStage(spec bson.Raw, engine storage.Engine, db string) (*facetSta
 		return nil, err
 	}
 
-	s := &facetStage{pipelines: make(map[string][]Stage)}
+	s := &facetStage{}
 	for _, e := range elems {
 		arr, ok := e.Value().ArrayOK()
 		if !ok {
@@ -1286,28 +1294,30 @@ func buildFacetStage(spec bson.Raw, engine storage.Engine, db string) (*facetSta
 			}
 			stages = append(stages, stage)
 		}
-		s.pipelines[e.Key()] = stages
+		s.pipelines = append(s.pipelines, facetPipeline{name: e.Key(), stages: stages})
 	}
 	return s, nil
 }
 
 func (s *facetStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 	result := bson.D{}
-	for name, stages := range s.pipelines {
+	// Iterate over the ordered slice — not a map — so output field order matches
+	// the $facet specification order (MongoDB spec requirement).
+	for _, fp := range s.pipelines {
 		current := make([]bson.Raw, len(docs))
 		copy(current, docs)
-		for _, stage := range stages {
+		for _, stage := range fp.stages {
 			var err error
 			current, err = stage.Process(current)
 			if err != nil {
-				return nil, fmt.Errorf("$facet %s: %w", name, err)
+				return nil, fmt.Errorf("$facet %s: %w", fp.name, err)
 			}
 		}
 		arr := make(bson.A, len(current))
 		for i, d := range current {
 			arr[i] = d
 		}
-		result = append(result, bson.E{Key: name, Value: arr})
+		result = append(result, bson.E{Key: fp.name, Value: arr})
 	}
 	b, err := bson.Marshal(result)
 	if err != nil {
