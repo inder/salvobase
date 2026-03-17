@@ -25,8 +25,9 @@ type BBoltEngine struct {
 	mu  sync.RWMutex
 	dbs map[string]*bolt.DB // open bbolt databases, keyed by db name
 
-	cursors *cursorStore
-	users   *userStore
+	cursors  *cursorStore
+	users    *userStore
+	eventBus *EventBus
 
 	startTime time.Time
 	pid       int64
@@ -76,6 +77,7 @@ func NewBBoltEngine(dataDir, compression string, syncOnWrite bool) (*BBoltEngine
 	}
 	e.cursors = &cursorStore{cursors: make(map[int64]*cursorEntry)}
 	e.users = &userStore{engine: e}
+	e.eventBus = NewEventBus(0)
 
 	// Always open admin db eagerly so user storage is available immediately.
 	if _, err := e.openDB("admin"); err != nil {
@@ -872,12 +874,16 @@ func (e *BBoltEngine) getCollectionInfo(db, coll string) (CollectionInfo, bool) 
 
 // ─── Cursors / Users ──────────────────────────────────────────────────────────
 
-func (e *BBoltEngine) Cursors() CursorStore { return e.cursors }
-func (e *BBoltEngine) Users() UserStore     { return e.users }
+func (e *BBoltEngine) Cursors() CursorStore   { return e.cursors }
+func (e *BBoltEngine) Users() UserStore       { return e.users }
+func (e *BBoltEngine) EventBus() *EventBus    { return e.eventBus }
 
 // ─── Close ────────────────────────────────────────────────────────────────────
 
 func (e *BBoltEngine) Close() error {
+	if e.eventBus != nil {
+		e.eventBus.Close()
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	var firstErr error
