@@ -410,6 +410,137 @@ func handleRevokeRolesFromUser(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
+// handleRolesInfo handles the "rolesInfo" command.
+// Returns information about roles, both built-in and user-defined.
+func handleRolesInfo(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	rolesInfoVal, err := cmd.LookupErr("rolesInfo")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "rolesInfo: missing 'rolesInfo' field")
+	}
+
+	showBuiltinRoles := lookupBoolField(cmd, "showBuiltinRoles")
+	showPrivileges := lookupBoolField(cmd, "showPrivileges")
+
+	// builtinRoleNames are the standard MongoDB built-in roles for a given database.
+	builtinRoleNames := []string{"read", "readWrite", "dbAdmin", "dbOwner", "userAdmin"}
+	adminOnlyRoleNames := []string{
+		"clusterAdmin", "clusterManager", "clusterMonitor", "hostManager",
+		"backup", "restore", "readAnyDatabase", "readWriteAnyDatabase",
+		"userAdminAnyDatabase", "dbAdminAnyDatabase", "root",
+	}
+
+	buildRoleDoc := func(roleName, db string, isBuiltin bool) bson.D {
+		d := bson.D{
+			{Key: "role", Value: roleName},
+			{Key: "db", Value: db},
+			{Key: "isBuiltin", Value: isBuiltin},
+			{Key: "roles", Value: bson.A{}},
+			{Key: "inheritedRoles", Value: bson.A{}},
+		}
+		if showPrivileges {
+			d = append(d,
+				bson.E{Key: "privileges", Value: bson.A{}},
+				bson.E{Key: "inheritedPrivileges", Value: bson.A{}},
+			)
+		}
+		return d
+	}
+
+	isBuiltinRole := func(roleName, db string) bool {
+		for _, r := range builtinRoleNames {
+			if r == roleName {
+				return true
+			}
+		}
+		if db == "admin" {
+			for _, r := range adminOnlyRoleNames {
+				if r == roleName {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	var roleDocs bson.A
+
+	switch rolesInfoVal.Type {
+	case bson.TypeString:
+		// Single role by name in current db.
+		roleName := rolesInfoVal.StringValue()
+		if isBuiltinRole(roleName, ctx.DB) {
+			roleDocs = append(roleDocs, buildRoleDoc(roleName, ctx.DB, true))
+		}
+		// No custom roles stored — nothing to add.
+
+	case bson.TypeEmbeddedDocument:
+		// {role: "name", db: "dbName"}
+		spec, _ := rolesInfoVal.DocumentOK()
+		roleName := lookupStringField(spec, "role")
+		db := lookupStringField(spec, "db")
+		if db == "" {
+			db = ctx.DB
+		}
+		if roleName == "" {
+			return nil, storage.Errorf(storage.ErrCodeBadValue, "rolesInfo: role name must not be empty")
+		}
+		if isBuiltinRole(roleName, db) {
+			roleDocs = append(roleDocs, buildRoleDoc(roleName, db, true))
+		}
+
+	case bson.TypeArray:
+		// Array of role specs.
+		arr, _ := rolesInfoVal.ArrayOK()
+		vals, _ := arr.Values()
+		for _, elem := range vals {
+			switch elem.Type {
+			case bson.TypeString:
+				roleName := elem.StringValue()
+				if isBuiltinRole(roleName, ctx.DB) {
+					roleDocs = append(roleDocs, buildRoleDoc(roleName, ctx.DB, true))
+				}
+			case bson.TypeEmbeddedDocument:
+				spec, _ := elem.DocumentOK()
+				roleName := lookupStringField(spec, "role")
+				db := lookupStringField(spec, "db")
+				if db == "" {
+					db = ctx.DB
+				}
+				if roleName != "" && isBuiltinRole(roleName, db) {
+					roleDocs = append(roleDocs, buildRoleDoc(roleName, db, true))
+				}
+			}
+		}
+
+	case bson.TypeInt32, bson.TypeInt64, bson.TypeDouble:
+		// 1 = all roles in current db (optionally including built-ins).
+		if showBuiltinRoles {
+			for _, r := range builtinRoleNames {
+				roleDocs = append(roleDocs, buildRoleDoc(r, ctx.DB, true))
+			}
+			if ctx.DB == "admin" {
+				for _, r := range adminOnlyRoleNames {
+					roleDocs = append(roleDocs, buildRoleDoc(r, ctx.DB, true))
+				}
+			}
+		}
+		// No custom roles stored.
+
+	default:
+		return nil, storage.Errorf(storage.ErrCodeBadValue,
+			"rolesInfo: argument must be a string, document, array, or 1")
+	}
+
+	if roleDocs == nil {
+		roleDocs = bson.A{}
+	}
+
+	return marshalResponse(bson.D{
+		{Key: "roles", Value: roleDocs},
+		{Key: "ok", Value: float64(1)},
+	}), nil
+}
+
 // parseRolesFromCmd parses the "roles" array from a command document.
 // Each role can be a string (shorthand for role in current db) or a document
 // {"role": "roleName", "db": "dbName"}.
