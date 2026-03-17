@@ -371,6 +371,8 @@ const (
 	ErrCodeAuthenticationFailed    = int32(18)
 	ErrCodeUserNotFound            = int32(11)
 	ErrCodeUserAlreadyExists       = int32(51003)
+	ErrCodeRoleAlreadyExists       = int32(51002)
+	ErrCodeRoleNotFound            = int32(31)
 	ErrCodeCursorNotFound           = int32(43)
 	ErrCodeCommandFailed            = int32(125)
 	ErrCodeNotImplemented           = int32(238)

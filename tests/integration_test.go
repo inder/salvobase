@@ -5413,6 +5413,94 @@ func TestDropRoleMissingArg(t *testing.T) {
 	}
 }
 
+// ─── createRole ───────────────────────────────────────────────────────────────
+
+// TestCreateRole verifies that the createRole command is registered and
+// returns a successful response when creating a new custom role.
+func TestCreateRole(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// createRole must be run against the admin database.
+	adminDB := client.Database("admin")
+
+	roleName := fmt.Sprintf("testRole_%d", time.Now().UnixNano())
+
+	// Create a simple custom role with no privileges and no inherited roles.
+	res := adminDB.RunCommand(ctx, bson.D{
+		{Key: "createRole", Value: roleName},
+		{Key: "privileges", Value: bson.A{}},
+		{Key: "roles", Value: bson.A{}},
+	})
+	if err := res.Err(); err != nil {
+		t.Fatalf("createRole: unexpected error: %v", err)
+	}
+
+	var result bson.M
+	if err := res.Decode(&result); err != nil {
+		t.Fatalf("createRole: decode result: %v", err)
+	}
+	if ok, _ := result["ok"].(float64); ok != 1 {
+		t.Errorf("createRole: expected ok=1, got %v", result["ok"])
+	}
+}
+
+// TestCreateRoleDuplicate verifies that creating the same role twice returns an error.
+func TestCreateRoleDuplicate(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	adminDB := client.Database("admin")
+	roleName := fmt.Sprintf("dupRole_%d", time.Now().UnixNano())
+
+	createCmd := bson.D{
+		{Key: "createRole", Value: roleName},
+		{Key: "privileges", Value: bson.A{}},
+		{Key: "roles", Value: bson.A{}},
+	}
+
+	// First creation must succeed.
+	if err := adminDB.RunCommand(ctx, createCmd).Err(); err != nil {
+		t.Fatalf("first createRole: %v", err)
+	}
+
+	// Second creation must fail with RoleAlreadyExists (code 51002).
+	err := adminDB.RunCommand(ctx, createCmd).Err()
+	if err == nil {
+		t.Fatal("createRole duplicate: expected error, got nil")
+	}
+
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		if cmdErr.Code != 51002 {
+			t.Errorf("expected RoleAlreadyExists (51002), got code %d: %s", cmdErr.Code, cmdErr.Message)
+		}
+	}
+}
+
+// TestCreateRoleMissingPrivileges verifies that createRole rejects a command
+// without the required 'privileges' field.
+func TestCreateRoleMissingPrivileges(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	adminDB := client.Database("admin")
+	err := adminDB.RunCommand(ctx, bson.D{
+		{Key: "createRole", Value: "someRole"},
+		{Key: "roles", Value: bson.A{}},
+	}).Err()
+	if err == nil {
+		t.Fatal("createRole without privileges: expected error, got nil")
+	}
+
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		if cmdErr.Code == 59 {
+			t.Errorf("createRole command is not registered (CommandNotFound)")
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
