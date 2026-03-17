@@ -793,3 +793,101 @@ func TestEvalAll(t *testing.T) {
 		})
 	}
 }
+
+// ─── $expr (fallback evaluator) ───────────────────────────────────────────────
+
+// TestEvalExprFallback tests the built-in limited $expr evaluator directly
+// (without the aggregation package registered). Covers comparison and boolean
+// operators. Arithmetic support is tested via integration tests.
+func TestEvalExprFallback(t *testing.T) {
+	tests := []struct {
+		name      string
+		doc       bson.D
+		filter    bson.D
+		wantMatch bool
+		wantErr   bool
+	}{
+		{
+			name:      "$expr $gt field-to-field match",
+			doc:       bson.D{{Key: "price", Value: int32(10)}, {Key: "cost", Value: int32(5)}},
+			filter:    bson.D{{Key: "$expr", Value: bson.D{{Key: "$gt", Value: bson.A{"$price", "$cost"}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$expr $gt field-to-field no match",
+			doc:       bson.D{{Key: "price", Value: int32(3)}, {Key: "cost", Value: int32(7)}},
+			filter:    bson.D{{Key: "$expr", Value: bson.D{{Key: "$gt", Value: bson.A{"$price", "$cost"}}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "$expr $eq break-even",
+			doc:       bson.D{{Key: "price", Value: int32(8)}, {Key: "cost", Value: int32(8)}},
+			filter:    bson.D{{Key: "$expr", Value: bson.D{{Key: "$eq", Value: bson.A{"$price", "$cost"}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$expr boolean literal true",
+			doc:       bson.D{{Key: "x", Value: int32(1)}},
+			filter:    bson.D{{Key: "$expr", Value: true}},
+			wantMatch: true,
+		},
+		{
+			name:      "$expr boolean literal false",
+			doc:       bson.D{{Key: "x", Value: int32(1)}},
+			filter:    bson.D{{Key: "$expr", Value: false}},
+			wantMatch: false,
+		},
+		{
+			name: "$expr $and both true",
+			doc:  bson.D{{Key: "a", Value: int32(5)}, {Key: "b", Value: int32(3)}, {Key: "c", Value: int32(1)}},
+			filter: bson.D{{Key: "$expr", Value: bson.D{{Key: "$and", Value: bson.A{
+				bson.D{{Key: "$gt", Value: bson.A{"$a", "$b"}}},
+				bson.D{{Key: "$gt", Value: bson.A{"$b", "$c"}}},
+			}}}}},
+			wantMatch: true,
+		},
+		{
+			name: "$expr $and second false",
+			doc:  bson.D{{Key: "a", Value: int32(5)}, {Key: "b", Value: int32(3)}, {Key: "c", Value: int32(4)}},
+			filter: bson.D{{Key: "$expr", Value: bson.D{{Key: "$and", Value: bson.A{
+				bson.D{{Key: "$gt", Value: bson.A{"$a", "$b"}}},
+				bson.D{{Key: "$gt", Value: bson.A{"$b", "$c"}}},
+			}}}}},
+			wantMatch: false,
+		},
+		{
+			name: "$expr $not",
+			doc:  bson.D{{Key: "price", Value: int32(3)}, {Key: "cost", Value: int32(7)}},
+			filter: bson.D{{Key: "$expr", Value: bson.D{{Key: "$not", Value: bson.D{
+				{Key: "$gt", Value: bson.A{"$price", "$cost"}},
+			}}}}},
+			wantMatch: true,
+		},
+		{
+			name:    "$expr unsupported op in fallback returns error",
+			doc:     bson.D{{Key: "x", Value: int32(1)}},
+			filter:  bson.D{{Key: "$expr", Value: bson.D{{Key: "$multiply", Value: bson.A{"$x", 2}}}}},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := mustMarshal(tc.doc)
+			filter := mustMarshal(tc.filter)
+			match, err := Filter(doc, filter)
+			if tc.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if match != tc.wantMatch {
+				t.Errorf("got match=%v, want %v", match, tc.wantMatch)
+			}
+		})
+	}
+}
