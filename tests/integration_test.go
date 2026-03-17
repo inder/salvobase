@@ -3432,6 +3432,86 @@ func TestCurrentOpLowercase(t *testing.T) {
 	}
 }
 
+// ─── killOp command (#31) ─────────────────────────────────────────────────────
+
+func TestKillOp(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "killOp", Value: 1},
+		{Key: "op", Value: int32(12345)},
+	}).Decode(&result)
+	if err != nil {
+		t.Fatalf("killOp: %v", err)
+	}
+
+	ok64, _ := result["ok"].(float64)
+	if ok64 != 1 {
+		t.Errorf("killOp: expected ok=1, got %v", result["ok"])
+	}
+}
+
+func TestKillOpLowercase(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "killop", Value: 1},
+		{Key: "op", Value: int32(99)},
+	}).Decode(&result)
+	if err != nil {
+		t.Fatalf("killop (lowercase): %v", err)
+	}
+
+	ok64, _ := result["ok"].(float64)
+	if ok64 != 1 {
+		t.Errorf("killop lowercase: expected ok=1, got %v", result["ok"])
+	}
+}
+
+func TestKillOpNoOpField(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// killOp without an "op" field should still succeed.
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "killOp", Value: 1},
+	}).Decode(&result)
+	if err != nil {
+		t.Fatalf("killOp without op field: %v", err)
+	}
+
+	ok64, _ := result["ok"].(float64)
+	if ok64 != 1 {
+		t.Errorf("killOp no op field: expected ok=1, got %v", result["ok"])
+	}
+}
+
+func TestKillOpInvalidOpType(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// killOp with a non-numeric "op" field should return an error.
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "killOp", Value: 1},
+		{Key: "op", Value: "not-a-number"},
+	}).Err()
+	if err == nil {
+		t.Fatal("killOp with string op: expected error, got nil")
+	}
+
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) {
+		if cmdErr.Code == 59 {
+			t.Errorf("killOp command is not registered (CommandNotFound)")
+		}
+	}
+}
+
 // ─── $type query operator (#8) ────────────────────────────────────────────────
 
 func TestTypeQueryOperator(t *testing.T) {
