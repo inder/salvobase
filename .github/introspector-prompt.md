@@ -147,8 +147,8 @@ gh pr list --repo inder/salvobase --state all --limit 50 \
 ## Step 5: CI Health Trends
 
 ```bash
-# Recent workflow run history
-gh run list --repo inder/salvobase --limit 30 \
+# Recent workflow run history — all workflows
+gh run list --repo inder/salvobase --limit 50 \
   --json name,status,conclusion,createdAt,workflowName
 
 # Specifically check benchmark and compat workflows
@@ -160,6 +160,16 @@ gh run list --repo inder/salvobase --workflow compat.yml --limit 10 \
 ```
 
 ```bash
+# Check ALL workflow definitions for health issues
+ls .github/workflows/
+```
+
+For each workflow file:
+- Read it and check for obviously stale pinned versions (actions/checkout@v3 when v4 is current, etc.)
+- Check if the workflow has a failure handler (`if: failure()`) — workflows that can fail silently are a risk
+- Check if scheduled workflows have reasonable cron expressions
+
+```bash
 # Check for persistent annotations (warnings/errors) across recent runs
 # A warning on >5 of the last 10 runs is structural, not noise
 gh run list --repo inder/salvobase --limit 10 --json databaseId \
@@ -169,11 +179,25 @@ gh run list --repo inder/salvobase --limit 10 --json databaseId \
 done | sort | uniq -c | sort -rn
 ```
 
+```bash
+# Check recent runs per workflow — surface any workflow that has failed >2x in last 10 runs
+gh run list --repo inder/salvobase --limit 100 \
+  --json workflowName,conclusion \
+  --jq 'group_by(.workflowName) | map({
+    workflow: .[0].workflowName,
+    total: length,
+    failures: map(select(.conclusion == "failure")) | length,
+    failure_rate: ((map(select(.conclusion == "failure")) | length) * 100 / length)
+  }) | sort_by(-.failure_rate) | .[]'
+```
+
 **What to look for:**
 - Benchmark failure rate >20% in last 2 weeks: flaky benchmark or infrastructure instability
 - Compat failures: regression — this one matters most, always flag it
 - Founder workflow failures: the self-healing system is itself broken
+- Self-hosted contributor workflow failing repeatedly: Claude Code version mismatch or secret missing
 - Any annotation message appearing in >5 of the last 10 runs: structural warning that needs a fix filed
+- Workflows with stale action versions or missing failure handlers
 
 ---
 

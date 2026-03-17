@@ -9,6 +9,8 @@ name: Self-Hosted Contributor Agents
 #   No other setup needed.
 
 on:
+  schedule:
+    - cron: '0 * * * *'   # every hour
   workflow_dispatch:
     inputs:
       agent_count:
