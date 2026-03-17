@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,10 +42,34 @@ func handleGetMore(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 			"cursor id %d not found", cursorID)
 	}
 
-	docs, exhausted, err := cursor.NextBatch(int(batchSize))
-	if err != nil {
-		ctx.Engine.Cursors().Delete(cursorID)
-		return nil, err
+	var docs []bson.Raw
+	var exhausted bool
+
+	if tc, isTailable := cursor.(storage.TailableCursor); isTailable {
+		// Change stream: block until events arrive or maxAwaitTimeMS elapses.
+		maxWaitMS := lookupInt64Field(cmd, "maxAwaitTimeMS")
+		if maxWaitMS <= 0 {
+			maxWaitMS = 1000
+		}
+		var waitErr error
+		docs, exhausted, waitErr = tc.NextBatchWait(context.Background(), int(batchSize), maxWaitMS)
+		if waitErr != nil {
+			ctx.Engine.Cursors().Delete(cursorID)
+			if errors.Is(waitErr, storage.ErrBufOverflow) {
+				return nil, storage.Errorf(storage.ErrCodeChangeStreamHistoryLost,
+					"change stream history lost")
+			}
+			return nil, waitErr
+		}
+		// Tailable cursors are never exhausted by a normal getMore.
+		exhausted = false
+	} else {
+		var batchErr error
+		docs, exhausted, batchErr = cursor.NextBatch(int(batchSize))
+		if batchErr != nil {
+			ctx.Engine.Cursors().Delete(cursorID)
+			return nil, batchErr
+		}
 	}
 
 	ns := ctx.DB + "." + collName
@@ -61,12 +87,33 @@ func handleGetMore(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		nextBatch[i] = d
 	}
 
+	cursorDoc := bson.D{
+		{Key: "id", Value: returnedCursorID},
+		{Key: "ns", Value: ns},
+		{Key: "nextBatch", Value: nextBatch},
+	}
+
+	// For change stream cursors, attach a postBatchResumeToken so drivers can
+	// track stream position even on empty-batch (timeout) responses.
+	if _, isTailable := cursor.(storage.TailableCursor); isTailable {
+		var resumeToken bson.Raw
+		if len(docs) > 0 {
+			// Use the _id of the last event as the postBatchResumeToken.
+			lastDoc := docs[len(docs)-1]
+			if idVal, err := lastDoc.LookupErr("_id"); err == nil {
+				if raw, ok := idVal.DocumentOK(); ok {
+					resumeToken = raw
+				}
+			}
+		}
+		if resumeToken == nil {
+			resumeToken, _ = bson.Marshal(changeStreamEmptyResumeToken)
+		}
+		cursorDoc = append(cursorDoc, bson.E{Key: "postBatchResumeToken", Value: resumeToken})
+	}
+
 	return marshalResponse(bson.D{
-		{Key: "cursor", Value: bson.D{
-			{Key: "id", Value: returnedCursorID},
-			{Key: "ns", Value: ns},
-			{Key: "nextBatch", Value: nextBatch},
-		}},
+		{Key: "cursor", Value: cursorDoc},
 		{Key: "ok", Value: float64(1)},
 	}), nil
 }

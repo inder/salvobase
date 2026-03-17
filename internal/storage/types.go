@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -42,6 +43,9 @@ type Engine interface {
 
 	// Cursor store (shared across all collections/connections)
 	Cursors() CursorStore
+
+	// EventBus returns the engine-wide change-event bus used by change streams.
+	EventBus() *EventBus
 
 	// User management (backed by admin.$users bucket)
 	Users() UserStore
@@ -104,6 +108,17 @@ type Cursor interface {
 
 	// ID returns the cursor's unique integer ID (0 means exhausted/closed).
 	ID() int64
+}
+
+// TailableCursor extends Cursor for change streams.
+// GetMore calls NextBatchWait instead of NextBatch so the goroutine parks
+// until events arrive (or maxWaitMS elapses).
+type TailableCursor interface {
+	Cursor
+	// NextBatchWait blocks until at least one event is available or maxWaitMS
+	// elapses, then returns the batch.  exhausted is always false for a healthy
+	// change stream; errors include ErrBufOverflow (code 286).
+	NextBatchWait(ctx context.Context, batchSize int, maxWaitMS int64) (docs []bson.Raw, exhausted bool, err error)
 }
 
 // CursorStore manages long-lived server-side cursors for getMore requests.
@@ -371,7 +386,8 @@ const (
 	ErrCodeAuthenticationFailed    = int32(18)
 	ErrCodeUserNotFound            = int32(11)
 	ErrCodeUserAlreadyExists       = int32(51003)
-	ErrCodeCursorNotFound          = int32(43)
-	ErrCodeCommandFailed           = int32(125)
-	ErrCodeNotImplemented          = int32(238)
+	ErrCodeCursorNotFound              = int32(43)
+	ErrCodeCommandFailed               = int32(125)
+	ErrCodeNotImplemented              = int32(238)
+	ErrCodeChangeStreamHistoryLost     = int32(286)
 )

@@ -198,6 +198,33 @@ func (b *EventBus) Subscribe(ns string) *Subscription {
 	}
 }
 
+// SubscribeFrom creates a subscription that starts after the given sequence
+// number (events with seq > afterSeq are delivered first). Use this to
+// implement resumeAfter: the caller decodes a resume token to its sequence
+// number and passes it here.
+//
+// If afterSeq <= 0, this behaves like Subscribe (start from the current tail).
+func (b *EventBus) SubscribeFrom(ns string, afterSeq int64) *Subscription {
+	b.mu.Lock()
+	st, ok := b.streams[ns]
+	if !ok {
+		st = newNsStream(b.bufSize)
+		b.streams[ns] = st
+	}
+	b.mu.Unlock()
+
+	if afterSeq <= 0 {
+		st.mu.Lock()
+		afterSeq = st.seq
+		st.mu.Unlock()
+	}
+
+	return &Subscription{
+		stream:  st,
+		readSeq: afterSeq,
+	}
+}
+
 // Unsubscribe marks the subscription as closed and wakes any goroutine blocked
 // in Recv so it can return promptly.
 func (b *EventBus) Unsubscribe(sub *Subscription) {

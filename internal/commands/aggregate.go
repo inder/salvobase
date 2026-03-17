@@ -9,6 +9,11 @@ import (
 	"github.com/inder/salvobase/internal/storage"
 )
 
+// changeStreamEmptyResumeToken is the postBatchResumeToken returned when a
+// change stream opens with an empty firstBatch.
+// Drivers use this to determine the "start of stream" position.
+var changeStreamEmptyResumeToken = bson.D{{Key: "_data", Value: ""}}
+
 // handleAggregate handles the "aggregate" command.
 func handleAggregate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	// The "aggregate" field is either a collection name string or 1 (for db-level).
@@ -109,12 +114,22 @@ func handleAggregate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		firstBatch[i] = d
 	}
 
+	// For change stream cursors include postBatchResumeToken so drivers know
+	// the stream position even when firstBatch is empty.
+	cursorDoc := bson.D{
+		{Key: "id", Value: cursorID},
+		{Key: "ns", Value: ns},
+		{Key: "firstBatch", Value: firstBatch},
+	}
+	if _, isTailable := cursor.(storage.TailableCursor); isTailable {
+		cursorDoc = append(cursorDoc, bson.E{
+			Key:   "postBatchResumeToken",
+			Value: changeStreamEmptyResumeToken,
+		})
+	}
+
 	return marshalResponse(bson.D{
-		{Key: "cursor", Value: bson.D{
-			{Key: "id", Value: cursorID},
-			{Key: "ns", Value: ns},
-			{Key: "firstBatch", Value: firstBatch},
-		}},
+		{Key: "cursor", Value: cursorDoc},
 		{Key: "ok", Value: float64(1)},
 	}), nil
 }
