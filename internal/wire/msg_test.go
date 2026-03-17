@@ -8,36 +8,6 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
-// buildOpMsgBytes manually constructs an OP_MSG wire message for testing.
-// It produces a body-only (Section Type 0) OP_MSG with the given BSON document.
-func buildOpMsgBytes(requestID, responseTo int32, flagBits uint32, body bson.Raw) []byte {
-	msgLen := int32(HeaderSize + 4 + 1 + len(body))
-	buf := make([]byte, int(msgLen))
-	offset := 0
-
-	// Header
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(msgLen))
-	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(requestID))
-	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(responseTo))
-	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(OpMsg))
-	offset += 4
-
-	// flagBits
-	binary.LittleEndian.PutUint32(buf[offset:], flagBits)
-	offset += 4
-
-	// Section kind 0 (body)
-	buf[offset] = 0x00
-	offset++
-
-	// Body BSON document
-	copy(buf[offset:], body)
-	return buf
-}
-
 // parseOpMsgFromBytes parses a complete OP_MSG message (including header) from buf.
 func parseOpMsgFromBytes(t *testing.T, buf []byte) *OpMsgMessage {
 	t.Helper()
