@@ -5368,6 +5368,51 @@ func TestRolesInfoNonExistentRole(t *testing.T) {
 	}
 }
 
+// ─── dropRole ─────────────────────────────────────────────────────────────────
+
+// TestDropRoleCommandRegistered verifies that the dropRole command is
+// registered and not returning CommandNotFound (code 59).
+func TestDropRoleCommandRegistered(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// dropRole with a valid role name should return ok:1 (no-op since
+	// Salvobase has no custom role store).
+	var result bson.M
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "dropRole", Value: "testRole"},
+	}).Decode(&result)
+	if err != nil {
+		var cmdErr mongo.CommandError
+		if errors.As(err, &cmdErr) && cmdErr.Code == 59 {
+			t.Fatalf("dropRole command is not registered (CommandNotFound)")
+		}
+		t.Fatalf("dropRole: unexpected error: %v", err)
+	}
+	if ok, _ := result["ok"].(float64); ok != 1 {
+		t.Errorf("dropRole: expected ok:1, got %v", result["ok"])
+	}
+}
+
+// TestDropRoleMissingArg verifies that dropRole returns an error (not
+// CommandNotFound) when the role name argument is missing or invalid.
+func TestDropRoleMissingArg(t *testing.T) {
+	client := newClient(t)
+	ctx := context.Background()
+
+	// Pass an integer instead of a string — must be rejected before dropping.
+	err := client.Database("admin").RunCommand(ctx, bson.D{
+		{Key: "dropRole", Value: int32(0)},
+	}).Err()
+	if err == nil {
+		t.Fatal("dropRole with invalid arg: expected error, got nil")
+	}
+	var cmdErr mongo.CommandError
+	if errors.As(err, &cmdErr) && cmdErr.Code == 59 {
+		t.Errorf("dropRole command is not registered (CommandNotFound)")
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())

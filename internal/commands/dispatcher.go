@@ -140,6 +140,7 @@ func (d *Dispatcher) registerAll() {
 	d.register("revokerolesfromuser", handleRevokeRolesFromUser)
 	d.register("rolesinfo", handleRolesInfo)
 	d.register("rolesInfo", handleRolesInfo)
+	d.register("droprole", handleDropRole)
 
 	// Server lifecycle
 	d.register("shutdown", handleShutdown)
@@ -256,7 +257,7 @@ func cmdNameToAction(cmdName string) string {
 	case "dbstats", "dbStats", "collstats", "collStats":
 		return "find"
 	case "createuser", "dropuser", "updateuser", "usersinfo",
-		"grantrolestouser", "revokerolesfromuser", "rolesinfo":
+		"grantrolestouser", "revokerolesfromuser", "rolesinfo", "droprole":
 		return "createUser"
 	default:
 		return "find"

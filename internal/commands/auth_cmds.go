@@ -541,6 +541,22 @@ func handleRolesInfo(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}), nil
 }
 
+// handleDropRole handles the "dropRole" command.
+// Salvobase does not persist custom roles, so this command validates its
+// arguments and returns OK (a no-op drop of a role that was never stored).
+func handleDropRole(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	roleVal, err := cmd.LookupErr("dropRole")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "dropRole: missing 'dropRole' field")
+	}
+	roleName, ok := roleVal.StringValueOK()
+	if !ok || roleName == "" {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "dropRole: role name must be a non-empty string")
+	}
+
+	return BuildOKResponse(), nil
+}
+
 // parseRolesFromCmd parses the "roles" array from a command document.
 // Each role can be a string (shorthand for role in current db) or a document
 // {"role": "roleName", "db": "dbName"}.
