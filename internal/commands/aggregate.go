@@ -85,15 +85,43 @@ func handleAggregate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, fmt.Errorf("aggregate: %w", err)
 	}
 
+	ns := ctx.DB + "." + collName
+	if collName == "" {
+		ns = ctx.DB + ".$cmd.aggregate"
+	}
+
+	// For change streams the first batch is always empty (events arrive via getMore).
+	// Register the cursor immediately so the client can issue getMore.
+	if tc, ok := cursor.(storage.TailableCursor); ok {
+		cursorID := ctx.Engine.Cursors().Register(tc)
+		var postBatchToken bson.Raw
+		if t := tc.PostBatchResumeToken(); t != nil {
+			postBatchToken = t
+		}
+		cursorDoc := bson.D{
+			{Key: "id", Value: cursorID},
+			{Key: "ns", Value: ns},
+			{Key: "firstBatch", Value: bson.A{}},
+		}
+		resp := bson.D{
+			{Key: "cursor", Value: cursorDoc},
+			{Key: "ok", Value: float64(1)},
+		}
+		if postBatchToken != nil {
+			// Embed postBatchResumeToken inside the cursor sub-document.
+			var tokenD bson.D
+			if err := bson.Unmarshal(postBatchToken, &tokenD); err == nil {
+				cursorDoc = append(cursorDoc, bson.E{Key: "postBatchResumeToken", Value: tokenD})
+				resp[0].Value = cursorDoc
+			}
+		}
+		return marshalResponse(resp), nil
+	}
+
 	docs, exhausted, err := cursor.NextBatch(int(batchSize))
 	if err != nil {
 		cursor.Close()
 		return nil, fmt.Errorf("aggregate: cursor nextbatch: %w", err)
-	}
-
-	ns := ctx.DB + "." + collName
-	if collName == "" {
-		ns = ctx.DB + ".$cmd.aggregate"
 	}
 
 	var cursorID int64

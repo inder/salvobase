@@ -34,6 +34,10 @@ func (s *cursorStore) Register(c Cursor) int64 {
 		sc.mu.Lock()
 		sc.id = id
 		sc.mu.Unlock()
+	case *changeStreamCursor:
+		sc.mu.Lock()
+		sc.id = id
+		sc.mu.Unlock()
 	}
 
 	now := time.Now()

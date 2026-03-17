@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,13 +41,57 @@ func handleGetMore(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 			"cursor id %d not found", cursorID)
 	}
 
+	ns := ctx.DB + "." + collName
+
+	// Tailable cursors (change streams) block until events arrive.
+	if tc, isTailable := cursor.(storage.TailableCursor); isTailable {
+		maxAwaitTimeMS := lookupInt64Field(cmd, "maxAwaitTimeMS")
+		if maxAwaitTimeMS <= 0 {
+			maxAwaitTimeMS = 1000
+		}
+
+		docs, exhausted, err := tc.NextBatchWait(context.Background(), int(batchSize), maxAwaitTimeMS)
+		if err != nil {
+			ctx.Engine.Cursors().Delete(cursorID)
+			return nil, err
+		}
+
+		var returnedCursorID int64
+		if exhausted {
+			ctx.Engine.Cursors().Delete(cursorID)
+			returnedCursorID = 0
+		} else {
+			returnedCursorID = cursorID
+		}
+
+		nextBatch := make(bson.A, len(docs))
+		for i, d := range docs {
+			nextBatch[i] = d
+		}
+
+		cursorDoc := bson.D{
+			{Key: "id", Value: returnedCursorID},
+			{Key: "ns", Value: ns},
+			{Key: "nextBatch", Value: nextBatch},
+		}
+		if token := tc.PostBatchResumeToken(); token != nil {
+			var tokenD bson.D
+			if err := bson.Unmarshal(token, &tokenD); err == nil {
+				cursorDoc = append(cursorDoc, bson.E{Key: "postBatchResumeToken", Value: tokenD})
+			}
+		}
+		return marshalResponse(bson.D{
+			{Key: "cursor", Value: cursorDoc},
+			{Key: "ok", Value: float64(1)},
+		}), nil
+	}
+
 	docs, exhausted, err := cursor.NextBatch(int(batchSize))
 	if err != nil {
 		ctx.Engine.Cursors().Delete(cursorID)
 		return nil, err
 	}
 
-	ns := ctx.DB + "." + collName
 	var returnedCursorID int64
 
 	if exhausted {
