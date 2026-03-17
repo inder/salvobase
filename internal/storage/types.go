@@ -140,10 +140,13 @@ type DatabaseInfo struct {
 
 // CollectionInfo summarizes a collection for listCollections.
 type CollectionInfo struct {
-	Name    string   `json:"name"`
-	Type    string   `json:"type"` // "collection" or "view"
-	Options bson.Raw `json:"options,omitempty"`
-	IDIndex bson.Raw `json:"idIndex,omitempty"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"` // "collection" or "view"
+	Options    bson.Raw `json:"options,omitempty"`
+	IDIndex    bson.Raw `json:"idIndex,omitempty"`
+	Capped     bool     `json:"capped,omitempty"`
+	CappedSize int64    `json:"cappedSize,omitempty"`
+	CappedMax  int64    `json:"cappedMax,omitempty"`
 }
 
 // IndexSpec describes an index to be created.

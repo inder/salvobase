@@ -113,6 +113,8 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 				return fmt.Errorf("InsertMany: create bucket: %w", createErr)
 			}
 		}
+		// Read collection metadata once for capped enforcement.
+		collInfo, _ := getCollectionInfoTx(tx, c.coll)
 		for i, r := range results {
 			if r.err != nil {
 				if opts.Ordered {
@@ -133,6 +135,12 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 				insertErr = dupErr
 				ids = append(ids, bson.ObjectID{})
 				continue
+			}
+			// Evict oldest documents if this is a capped collection.
+			if collInfo.Capped {
+				if evictErr := c.cappedEvict(tx, b, r.prep.finalDoc, collInfo); evictErr != nil {
+					return evictErr
+				}
 			}
 			if putErr := b.Put(r.prep.key, r.prep.compressed); putErr != nil {
 				return putErr
@@ -243,6 +251,102 @@ func rawDocToD(doc bson.Raw) bson.D {
 		d = append(d, bson.E{Key: e.Key(), Value: rawValueToGo(e.Value())})
 	}
 	return d
+}
+
+// ─── Capped collection helpers ────────────────────────────────────────────────
+
+// getCollectionInfoTx reads CollectionInfo for coll within an existing transaction.
+// Returns (info, true) if found, (zero, false) otherwise.
+func getCollectionInfoTx(tx *bolt.Tx, coll string) (CollectionInfo, bool) {
+	meta := tx.Bucket([]byte(bucketMetaCollections))
+	if meta == nil {
+		return CollectionInfo{}, false
+	}
+	v := meta.Get(metaCollKey(coll))
+	if v == nil {
+		return CollectionInfo{}, false
+	}
+	var info CollectionInfo
+	if err := json.Unmarshal(v, &info); err != nil {
+		return CollectionInfo{}, false
+	}
+	return info, true
+}
+
+// evictOldest removes the document with the lowest (oldest) key from bucket b within tx.
+// It also removes the document from all secondary indexes.
+// Returns (evictedDocSize, evicted, error).
+func (c *bboltCollection) evictOldest(tx *bolt.Tx, b *bolt.Bucket) (int64, bool, error) {
+	cur := b.Cursor()
+	k, v := cur.First()
+	if k == nil {
+		return 0, false, nil
+	}
+	raw, err := c.engine.decompress(v)
+	if err != nil {
+		return 0, false, err
+	}
+	size := int64(len(raw))
+	doc := bson.Raw(raw)
+	idKey := encodeIDValue(doc.Lookup("_id"))
+	c.engine.removeFromIndexes(tx, c.db, c.coll, idKey, doc) //nolint:errcheck
+	if err := b.Delete(k); err != nil {
+		return 0, false, err
+	}
+	return size, true, nil
+}
+
+// cappedEvict evicts the oldest documents from a capped collection bucket to make
+// room for a new document of the given size. Must be called inside a write transaction
+// before inserting the new document.
+func (c *bboltCollection) cappedEvict(tx *bolt.Tx, b *bolt.Bucket, newDoc bson.Raw, info CollectionInfo) error {
+	if !info.Capped {
+		return nil
+	}
+	newDocSize := int64(len(newDoc))
+
+	// Compute current total byte size and document count in one pass.
+	var totalSize int64
+	var count int64
+	if err := b.ForEach(func(_, v []byte) error {
+		raw, err := c.engine.decompress(v)
+		if err != nil {
+			return err
+		}
+		totalSize += int64(len(raw))
+		count++
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// Enforce max document count: evict oldest until count < CappedMax.
+	for info.CappedMax > 0 && count >= info.CappedMax {
+		evictedSize, ok, err := c.evictOldest(tx, b)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			break
+		}
+		count--
+		totalSize -= evictedSize
+	}
+
+	// Enforce max byte size: evict oldest until totalSize+newDocSize <= CappedSize.
+	for info.CappedSize > 0 && count > 0 && totalSize+newDocSize > info.CappedSize {
+		evictedSize, ok, err := c.evictOldest(tx, b)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			break
+		}
+		count--
+		totalSize -= evictedSize
+	}
+
+	return nil
 }
 
 // ─── Find ─────────────────────────────────────────────────────────────────────
@@ -1289,6 +1393,9 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			}
 		}
 
+		// Read collection metadata for capped enforcement.
+		collInfo, _ := getCollectionInfoTx(tx, c.coll)
+
 		// Iterate and find matching documents
 		type docToUpdate struct {
 			key []byte
@@ -1353,6 +1460,11 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 					return fmt.Errorf("apply update: %w", applyErr)
 				}
 			}
+			// Reject updates that increase document size on a capped collection.
+			if collInfo.Capped && len(newDoc) > len(item.doc) {
+				return Errorf(ErrCodeIllegalOperation,
+					"cannot increase document size in a capped collection")
+			}
 			newKey := encodeIDValue(newDoc.Lookup("_id"))
 			compressed, err := c.engine.compress(newDoc)
 			if err != nil {
@@ -1402,6 +1514,9 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 				return createErr
 			}
 		}
+
+		// Read collection metadata for capped enforcement.
+		collInfo, _ := getCollectionInfoTx(tx, c.coll)
 
 		// Find the first matching document
 		var matchKey []byte
@@ -1469,6 +1584,11 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 			if prepErr != nil {
 				return prepErr
 			}
+		}
+		// Reject replacements that increase document size on a capped collection.
+		if collInfo.Capped && len(newDoc) > len(matchDoc) {
+			return Errorf(ErrCodeIllegalOperation,
+				"cannot increase document size in a capped collection")
 		}
 		newKey := encodeIDValue(newDoc.Lookup("_id"))
 		compressed, compErr := c.engine.compress(newDoc)
@@ -1585,6 +1705,11 @@ func (c *bboltCollection) DeleteMany(filter bson.Raw) (int64, error) {
 }
 
 func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error) {
+	// Capped collections do not allow document deletion.
+	if info, found := c.engine.getCollectionInfo(c.db, c.coll); found && info.Capped {
+		return 0, Errorf(ErrCodeIllegalOperation, "cannot delete from a capped collection")
+	}
+
 	boltDB, err := c.engine.getDB(c.db)
 	if err != nil {
 		return 0, err
@@ -1814,6 +1939,9 @@ func (c *bboltCollection) findAndModify(
 			}
 		}
 
+		// Read collection metadata for capped enforcement.
+		collInfo, _ := getCollectionInfoTx(tx, c.coll)
+
 		// Collect all matching documents (apply sort if specified)
 		type docInfo struct {
 			key []byte
@@ -1882,6 +2010,10 @@ func (c *bboltCollection) findAndModify(
 		target := candidates[0]
 
 		if remove {
+			// Capped collections do not allow document deletion.
+			if collInfo.Capped {
+				return Errorf(ErrCodeIllegalOperation, "cannot delete from a capped collection")
+			}
 			if delErr := b.Delete(target.key); delErr != nil {
 				return delErr
 			}
@@ -1905,6 +2037,12 @@ func (c *bboltCollection) findAndModify(
 		}
 		if applyErr != nil {
 			return applyErr
+		}
+
+		// Reject size-growing updates/replacements on capped collections.
+		if collInfo.Capped && len(newDoc) > len(target.doc) {
+			return Errorf(ErrCodeIllegalOperation,
+				"cannot increase document size in a capped collection")
 		}
 
 		newKey := encodeIDValue(newDoc.Lookup("_id"))

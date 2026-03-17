@@ -191,8 +191,11 @@ func (e *BBoltEngine) CreateCollection(db, coll string, opts CreateCollectionOpt
 		return err
 	}
 	info := CollectionInfo{
-		Name: coll,
-		Type: "collection",
+		Name:       coll,
+		Type:       "collection",
+		Capped:     opts.Capped,
+		CappedSize: opts.Size,
+		CappedMax:  opts.Max,
 	}
 	infoBytes, err := json.Marshal(info)
 	if err != nil {
@@ -780,6 +783,11 @@ func (e *BBoltEngine) CollectionStats(db, coll string) (CollectionStats, error) 
 	}
 
 	_ = boltDB.View(func(tx *bolt.Tx) error {
+		// Read collection metadata for capped flag.
+		if info, found := getCollectionInfoTx(tx, coll); found {
+			cs.Capped = info.Capped
+		}
+
 		b := tx.Bucket([]byte(collBucket(coll)))
 		if b != nil {
 			bStats := b.Stats()
@@ -845,6 +853,21 @@ func (e *BBoltEngine) ServerStats() (ServerStats, error) {
 			Bits: 64,
 		},
 	}, nil
+}
+
+// getCollectionInfo reads CollectionInfo for db+coll without holding an open transaction.
+func (e *BBoltEngine) getCollectionInfo(db, coll string) (CollectionInfo, bool) {
+	boltDB, err := e.getDB(db)
+	if err != nil {
+		return CollectionInfo{}, false
+	}
+	var info CollectionInfo
+	var found bool
+	_ = boltDB.View(func(tx *bolt.Tx) error {
+		info, found = getCollectionInfoTx(tx, coll)
+		return nil
+	})
+	return info, found
 }
 
 // ─── Cursors / Users ──────────────────────────────────────────────────────────
