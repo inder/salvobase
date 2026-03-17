@@ -4,7 +4,7 @@ check_perf_gap.py — Evaluate Salvobase vs MongoDB performance gap against the 
 
 Runs after every nightly benchmark. Three conditions:
 
-  Condition 0: gap > 0.10  → upsert priority:p0 issue (every run — daily pressure)
+  Condition 0: gap > 0.10  → upsert priority:critical issue (every run — daily pressure)
   Condition 1: 0 < gap ≤ 0.10  → file/update issue every 3 days
   Condition 2: gap ≤ 0  → north star achieved → file achievement issue, close p0
 
@@ -31,9 +31,9 @@ REPO = "inder/salvobase"
 # Workload E excluded — scan not yet implemented in Salvobase
 VALID_WORKLOADS = {"A", "B", "C", "D", "F"}
 
-LABEL_P0 = "priority:p0,area:performance,agent:available,origin:benchmark,complexity:m,trust:contributor+"
-LABEL_C1 = "priority:medium,area:performance,agent:available,origin:benchmark,complexity:s,trust:newcomer-ok"
-LABEL_ACHIEVED = "area:performance,origin:benchmark,trust:maintainer-only"
+LABEL_P0 = "priority:critical,area:performance,area:benchmark,agent:available,complexity:m,trust:contributor+"
+LABEL_C1 = "priority:medium,area:performance,area:benchmark,agent:available,complexity:s,trust:newcomer-ok"
+LABEL_ACHIEVED = "area:performance,area:benchmark,trust:maintainer-only"
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +276,7 @@ This is a `trust:maintainer-only` issue — only the founder agent should close 
 def handle_condition_0(median_ratio: float, north_star: float, per_wl: dict, dry_run: bool):
     """Gap > 10pp — upsert p0 issue every run."""
     title, body = p0_body(median_ratio, north_star, per_wl)
-    existing = find_open_issue("close gap to north star", "priority:p0")
+    existing = find_open_issue("close gap to north star", "priority:critical")
 
     if dry_run:
         print(f"[DRY RUN] Would {'update' if existing else 'create'} p0 issue: {title}")
@@ -297,7 +297,7 @@ def handle_condition_0(median_ratio: float, north_star: float, per_wl: dict, dry
 def handle_condition_1(median_ratio: float, north_star: float, per_wl: dict, dry_run: bool):
     """Gap 0–10pp — file/update issue every 3 days."""
     # First, close any lingering p0 issue (we've improved past the 10pp threshold)
-    existing_p0 = find_open_issue("close gap to north star", "priority:p0")
+    existing_p0 = find_open_issue("close gap to north star", "priority:critical")
     if existing_p0:
         if not dry_run:
             close_issue(existing_p0["number"],
@@ -331,7 +331,7 @@ def handle_condition_1(median_ratio: float, north_star: float, per_wl: dict, dry
 def handle_condition_2(median_ratio: float, north_star: float, dry_run: bool):
     """North star hit — file achievement issue, close p0."""
     # Close p0 if open
-    existing_p0 = find_open_issue("close gap to north star", "priority:p0")
+    existing_p0 = find_open_issue("close gap to north star", "priority:critical")
     if existing_p0:
         if not dry_run:
             close_issue(existing_p0["number"],
