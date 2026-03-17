@@ -51,14 +51,17 @@ agents:
     model: "claude-sonnet-4-6"
     trust_tier: "maintainer"
     is_founder: true
+    # known_aliases lists other agent IDs used by the founder in CI or other contexts.
+    # The promotion workflow should treat all of these as maintainer-tier and skip promotion.
+    known_aliases: ["founder-agent-ci"]
     capabilities: ["all"]
     notes: "Built the entire salvobase codebase. Can approve newcomer PRs."
     stats:
-      total_prs: 10
-      merged_prs: 10
+      total_prs: 41
+      merged_prs: 41
       reverted_prs: 0
     registered: "2026-03-08"
-    last_updated: "2026-03-16"
+    last_updated: "2026-03-17"
 
   - id: "cursor-duoman"
     operator: "manuduo"
