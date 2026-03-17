@@ -775,8 +775,37 @@ func textSearchDoc(doc bson.Raw, search string) bool {
 	return false
 }
 
-// evalExprFilter provides basic $expr support.
+// exprEvaluatorFn is the full aggregation expression evaluator registered at
+// startup by the aggregation package. When set, evalExprFilter delegates to it
+// for the full operator set (arithmetic, string, date, etc.). When nil, the
+// built-in limited evaluator handles only comparison and boolean operators.
+//
+// This indirection breaks the import cycle: aggregation→query is allowed;
+// query→aggregation is not. The aggregation package registers itself via
+// RegisterExprEvaluator in its init().
+var exprEvaluatorFn func(doc bson.Raw, expr bson.RawValue) (bool, error)
+
+// RegisterExprEvaluator sets the full-featured $expr evaluator. Called once by
+// the aggregation package during init.
+func RegisterExprEvaluator(fn func(doc bson.Raw, expr bson.RawValue) (bool, error)) {
+	exprEvaluatorFn = fn
+}
+
+// evalExprFilter evaluates a $expr operator against a document.
+// Delegates to the full aggregation expression evaluator when available,
+// otherwise falls back to the built-in limited evaluator that supports
+// comparison and boolean operators only.
 func evalExprFilter(doc bson.Raw, opVal bson.RawValue) (bool, error) {
+	// Delegate to the full aggregation evaluator when registered.
+	if exprEvaluatorFn != nil {
+		return exprEvaluatorFn(doc, opVal)
+	}
+	return evalExprFilterFallback(doc, opVal)
+}
+
+// evalExprFilterFallback is the built-in limited $expr evaluator used when the
+// aggregation package has not been imported (e.g. unit tests of query alone).
+func evalExprFilterFallback(doc bson.Raw, opVal bson.RawValue) (bool, error) {
 	if opVal.Type != bson.TypeEmbeddedDocument {
 		// Boolean literal
 		if opVal.Type == bson.TypeBoolean {
@@ -840,7 +869,7 @@ func evalExprFilter(doc bson.Raw, opVal bson.RawValue) (bool, error) {
 		}
 		args, _ := val.Array().Values()
 		for _, a := range args {
-			m, err := evalExprFilter(doc, a)
+			m, err := evalExprFilterFallback(doc, a)
 			if err != nil {
 				return false, err
 			}
@@ -855,7 +884,7 @@ func evalExprFilter(doc bson.Raw, opVal bson.RawValue) (bool, error) {
 		}
 		args, _ := val.Array().Values()
 		for _, a := range args {
-			m, err := evalExprFilter(doc, a)
+			m, err := evalExprFilterFallback(doc, a)
 			if err != nil {
 				return false, err
 			}
@@ -865,7 +894,7 @@ func evalExprFilter(doc bson.Raw, opVal bson.RawValue) (bool, error) {
 		}
 		return false, nil
 	case "$not":
-		m, err := evalExprFilter(doc, val)
+		m, err := evalExprFilterFallback(doc, val)
 		if err != nil {
 			return false, err
 		}

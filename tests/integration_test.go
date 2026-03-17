@@ -1768,6 +1768,100 @@ func TestAggregateFacetFieldOrder(t *testing.T) {
 
 // ─── Null/missing field filter edge cases ────────────────────────────────────
 
+// ─── $expr query operator ─────────────────────────────────────────────────────
+
+// TestQueryExpr verifies $expr in find, update, delete, and aggregate $match.
+func TestQueryExpr(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("budget")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		bson.D{{Key: "item", Value: "pen"}, {Key: "price", Value: 10}, {Key: "cost", Value: 5}},    // over budget
+		bson.D{{Key: "item", Value: "book"}, {Key: "price", Value: 3}, {Key: "cost", Value: 7}},   // under budget
+		bson.D{{Key: "item", Value: "ruler"}, {Key: "price", Value: 8}, {Key: "cost", Value: 8}},  // break-even
+	})
+
+	exprFilter := bson.D{{Key: "$expr", Value: bson.D{{Key: "$gt", Value: bson.A{"$price", "$cost"}}}}}
+
+	// find
+	cursor, err := coll.Find(ctx, exprFilter)
+	if err != nil {
+		t.Fatalf("$expr find: %v", err)
+	}
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("$expr cursor.All: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("$expr find: expected 1 result, got %d", len(results))
+	}
+	if results[0]["item"] != "pen" {
+		t.Errorf("$expr find: expected 'pen', got %v", results[0]["item"])
+	}
+
+	// aggregate $match
+	aggCursor, err := coll.Aggregate(ctx, mongo.Pipeline{
+		bson.D{{Key: "$match", Value: exprFilter}},
+	})
+	if err != nil {
+		t.Fatalf("$expr $match: %v", err)
+	}
+	var aggResults []bson.M
+	if err := aggCursor.All(ctx, &aggResults); err != nil {
+		t.Fatalf("$expr $match cursor: %v", err)
+	}
+	if len(aggResults) != 1 {
+		t.Fatalf("$expr $match: expected 1 result, got %d", len(aggResults))
+	}
+
+	// count via CountDocuments
+	count, err := coll.CountDocuments(ctx, exprFilter)
+	if err != nil {
+		t.Fatalf("$expr CountDocuments: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("$expr CountDocuments: expected 1, got %d", count)
+	}
+}
+
+// TestQueryExprArithmetic verifies that $expr supports nested arithmetic expressions.
+func TestQueryExprArithmetic(t *testing.T) {
+	client := newClient(t)
+	coll := client.Database(testDB(t)).Collection("orders")
+	ctx := context.Background()
+
+	_, _ = coll.InsertMany(ctx, []interface{}{
+		// total = qty * price; match where total > 100
+		bson.D{{Key: "item", Value: "a"}, {Key: "qty", Value: 5}, {Key: "price", Value: 25}},  // 125 > 100 ✓
+		bson.D{{Key: "item", Value: "b"}, {Key: "qty", Value: 2}, {Key: "price", Value: 40}},  // 80 not > 100
+		bson.D{{Key: "item", Value: "c"}, {Key: "qty", Value: 10}, {Key: "price", Value: 15}}, // 150 > 100 ✓
+	})
+
+	// {$expr: {$gt: [{$multiply: ["$qty", "$price"]}, 100]}}
+	exprFilter := bson.D{{Key: "$expr", Value: bson.D{
+		{Key: "$gt", Value: bson.A{
+			bson.D{{Key: "$multiply", Value: bson.A{"$qty", "$price"}}},
+			100,
+		}},
+	}}}
+
+	cursor, err := coll.Find(ctx, exprFilter, options.Find().SetSort(bson.D{{Key: "item", Value: 1}}))
+	if err != nil {
+		t.Fatalf("$expr arithmetic find: %v", err)
+	}
+	var results []bson.M
+	if err := cursor.All(ctx, &results); err != nil {
+		t.Fatalf("$expr arithmetic cursor.All: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("$expr arithmetic: expected 2 results, got %d", len(results))
+	}
+	if results[0]["item"] != "a" || results[1]["item"] != "c" {
+		t.Errorf("$expr arithmetic: expected [a, c], got [%v, %v]", results[0]["item"], results[1]["item"])
+	}
+}
+
 func TestNullAndMissingFilter(t *testing.T) {
 	client := newClient(t)
 	coll := client.Database(testDB(t)).Collection("docs")
