@@ -618,60 +618,248 @@ func main() {
 		bson.D{{Key: "dept", Value: "eng"}, {Key: "sal", Value: 90}, {Key: "tags", Value: bson.A{"db"}}},
 	})
 
-	aggStage := func(stageName string, pipeline bson.A) func(context.Context) CompatResult {
-		return func(c context.Context) CompatResult {
-			cur, err := acoll.Aggregate(c, pipeline)
-			if err != nil {
-				return CompatResult{Status: "fail", Note: err.Error()}
-			}
-			defer cur.Close(c)
-			var docs []bson.D
-			if err := cur.All(c, &docs); err != nil {
-				return CompatResult{Status: "fail", Note: err.Error()}
-			}
-			return CompatResult{Status: "pass"}
+	// acoll has 4 docs: 3 eng (sal: 100, 120, 90) + 1 sales (sal: 80)
+
+	run("$match", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$match", Value: bson.D{{Key: "dept", Value: "eng"}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
 		}
-	}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(docs) != 3 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$match dept=eng: expected 3 docs, got %d", len(docs))}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
-	run("$match", "Aggregation Stages", aggStage("$match", bson.A{
-		bson.D{{Key: "$match", Value: bson.D{{Key: "dept", Value: "eng"}}}},
-	}))
+	run("$project", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$limit", Value: 1}},
+			bson.D{{Key: "$project", Value: bson.D{{Key: "dept", Value: 1}, {Key: "sal", Value: 1}, {Key: "tags", Value: 0}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(docs) != 1 {
+			return CompatResult{Status: "fail", Note: fmt.Sprintf("$project: expected 1 doc, got %d", len(docs))}
+		}
+		if _, ok := getKey(docs[0], "dept"); !ok {
+			return CompatResult{Status: "partial", Note: "$project: 'dept' field missing (should be included)"}
+		}
+		if _, ok := getKey(docs[0], "tags"); ok {
+			return CompatResult{Status: "partial", Note: "$project: 'tags' field present (should be excluded)"}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
-	run("$project", "Aggregation Stages", aggStage("$project", bson.A{
-		bson.D{{Key: "$project", Value: bson.D{{Key: "dept", Value: 1}, {Key: "sal", Value: 1}}}},
-	}))
+	run("$group", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: "$dept"},
+				{Key: "total", Value: bson.D{{Key: "$sum", Value: "$sal"}}},
+			}}},
+			bson.D{{Key: "$sort", Value: bson.D{{Key: "_id", Value: 1}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		// Expect 2 groups: eng and sales
+		if len(docs) != 2 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$group: expected 2 groups, got %d", len(docs))}
+		}
+		// Find eng group (sorted first alphabetically)
+		var engTotal, salesTotal float64
+		for _, d := range docs {
+			idVal, _ := getKey(d, "_id")
+			totalVal, _ := getKey(d, "total")
+			var t float64
+			switch v := totalVal.(type) {
+			case int32:
+				t = float64(v)
+			case int64:
+				t = float64(v)
+			case float64:
+				t = v
+			}
+			switch idVal {
+			case "eng":
+				engTotal = t
+			case "sales":
+				salesTotal = t
+			}
+		}
+		if engTotal != 310 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$group eng total: expected 310, got %v", engTotal)}
+		}
+		if salesTotal != 80 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$group sales total: expected 80, got %v", salesTotal)}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
-	run("$group", "Aggregation Stages", aggStage("$group", bson.A{
-		bson.D{{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$dept"},
-			{Key: "total", Value: bson.D{{Key: "$sum", Value: "$sal"}}},
-		}}},
-	}))
+	run("$sort", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$sort", Value: bson.D{{Key: "sal", Value: 1}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(docs) != 4 {
+			return CompatResult{Status: "fail", Note: fmt.Sprintf("$sort: expected 4 docs, got %d", len(docs))}
+		}
+		// First doc should be the one with sal=80 (sales dept)
+		firstSal, ok := getKey(docs[0], "sal")
+		if !ok {
+			return CompatResult{Status: "partial", Note: "$sort: first doc missing 'sal' field"}
+		}
+		var firstSalNum float64
+		switch v := firstSal.(type) {
+		case int32:
+			firstSalNum = float64(v)
+		case int64:
+			firstSalNum = float64(v)
+		case float64:
+			firstSalNum = v
+		}
+		if firstSalNum != 80 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$sort asc: first doc sal expected 80, got %v — sort order wrong", firstSalNum)}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
-	run("$sort", "Aggregation Stages", aggStage("$sort", bson.A{
-		bson.D{{Key: "$sort", Value: bson.D{{Key: "sal", Value: -1}}}},
-	}))
+	run("$limit", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$limit", Value: 2}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(docs) != 2 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$limit 2: expected exactly 2 docs, got %d", len(docs))}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
-	run("$limit", "Aggregation Stages", aggStage("$limit", bson.A{
-		bson.D{{Key: "$limit", Value: 2}},
-	}))
+	run("$skip", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$skip", Value: 2}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		// 4 total - 2 skipped = 2 remaining
+		if len(docs) != 2 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$skip 2: expected 2 docs remaining, got %d", len(docs))}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
-	run("$skip", "Aggregation Stages", aggStage("$skip", bson.A{
-		bson.D{{Key: "$skip", Value: 1}},
-	}))
+	run("$unwind", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$unwind", Value: "$tags"}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		// tags arrays: [go,db], [go,api], [crm], [db] → 6 unwound docs
+		if len(docs) != 6 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$unwind tags: expected 6 docs, got %d", len(docs))}
+		}
+		// Each unwound doc should have a scalar 'tags' field
+		if _, ok := getKey(docs[0], "tags"); !ok {
+			return CompatResult{Status: "partial", Note: "$unwind: 'tags' field missing from unwound doc"}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
-	run("$unwind", "Aggregation Stages", aggStage("$unwind", bson.A{
-		bson.D{{Key: "$unwind", Value: "$tags"}},
-	}))
+	run("$addFields", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$limit", Value: 1}},
+			bson.D{{Key: "$addFields", Value: bson.D{{Key: "bonus", Value: bson.D{{Key: "$multiply", Value: bson.A{"$sal", 0.1}}}}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(docs) != 1 {
+			return CompatResult{Status: "fail", Note: fmt.Sprintf("$addFields: expected 1 doc, got %d", len(docs))}
+		}
+		// Verify original field preserved and new field added
+		if _, ok := getKey(docs[0], "dept"); !ok {
+			return CompatResult{Status: "partial", Note: "$addFields: 'dept' field missing (original field not preserved)"}
+		}
+		if _, ok := getKey(docs[0], "bonus"); !ok {
+			return CompatResult{Status: "partial", Note: "$addFields: 'bonus' field not added"}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
-	run("$addFields", "Aggregation Stages", aggStage("$addFields", bson.A{
-		bson.D{{Key: "$addFields", Value: bson.D{{Key: "bonus", Value: bson.D{{Key: "$multiply", Value: bson.A{"$sal", 0.1}}}}}}},
-	}))
-
-	run("$replaceRoot", "Aggregation Stages", aggStage("$replaceRoot", bson.A{
-		bson.D{{Key: "$addFields", Value: bson.D{{Key: "info", Value: bson.D{{Key: "dept", Value: "$dept"}}}}}},
-		bson.D{{Key: "$replaceRoot", Value: bson.D{{Key: "newRoot", Value: "$info"}}}},
-	}))
+	run("$replaceRoot", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$limit", Value: 1}},
+			bson.D{{Key: "$addFields", Value: bson.D{{Key: "info", Value: bson.D{{Key: "dept", Value: "$dept"}}}}}},
+			bson.D{{Key: "$replaceRoot", Value: bson.D{{Key: "newRoot", Value: "$info"}}}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		if len(docs) != 1 {
+			return CompatResult{Status: "fail", Note: fmt.Sprintf("$replaceRoot: expected 1 doc, got %d", len(docs))}
+		}
+		// New root should have 'dept' from the nested info doc, but NOT 'sal'
+		if _, ok := getKey(docs[0], "dept"); !ok {
+			return CompatResult{Status: "partial", Note: "$replaceRoot: 'dept' field missing from new root"}
+		}
+		if _, ok := getKey(docs[0], "sal"); ok {
+			return CompatResult{Status: "partial", Note: "$replaceRoot: 'sal' field still present (root not replaced correctly)"}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
 	run("$count", "Aggregation Stages", func(c context.Context) CompatResult {
 		cur, err := acoll.Aggregate(c, bson.A{
@@ -688,12 +876,62 @@ func main() {
 		if len(docs) == 0 {
 			return CompatResult{Status: "fail", Note: "no result from $count"}
 		}
+		totalVal, ok := getKey(docs[0], "total")
+		if !ok {
+			return CompatResult{Status: "partial", Note: "$count: result missing 'total' field"}
+		}
+		var totalNum float64
+		switch v := totalVal.(type) {
+		case int32:
+			totalNum = float64(v)
+		case int64:
+			totalNum = float64(v)
+		case float64:
+			totalNum = v
+		default:
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$count: unexpected type %T", totalVal)}
+		}
+		if totalNum != 4 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$count: expected 4, got %v", totalNum)}
+		}
 		return CompatResult{Status: "pass"}
 	})
 
-	run("$sortByCount", "Aggregation Stages", aggStage("$sortByCount", bson.A{
-		bson.D{{Key: "$sortByCount", Value: "$dept"}},
-	}))
+	run("$sortByCount", "Aggregation Stages", func(c context.Context) CompatResult {
+		cur, err := acoll.Aggregate(c, bson.A{
+			bson.D{{Key: "$sortByCount", Value: "$dept"}},
+		})
+		if err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		defer cur.Close(c)
+		var docs []bson.D
+		if err := cur.All(c, &docs); err != nil {
+			return CompatResult{Status: "fail", Note: err.Error()}
+		}
+		// Expect 2 groups: eng (count 3) and sales (count 1), sorted desc
+		if len(docs) != 2 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$sortByCount: expected 2 groups, got %d", len(docs))}
+		}
+		// First group should be eng with count 3 (most frequent)
+		firstCount, ok := getKey(docs[0], "count")
+		if !ok {
+			return CompatResult{Status: "partial", Note: "$sortByCount: first group missing 'count' field"}
+		}
+		var firstCountNum float64
+		switch v := firstCount.(type) {
+		case int32:
+			firstCountNum = float64(v)
+		case int64:
+			firstCountNum = float64(v)
+		case float64:
+			firstCountNum = v
+		}
+		if firstCountNum != 3 {
+			return CompatResult{Status: "partial", Note: fmt.Sprintf("$sortByCount: first group count expected 3, got %v (sort-by-count order wrong)", firstCountNum)}
+		}
+		return CompatResult{Status: "pass"}
+	})
 
 	run("$facet", "Aggregation Stages", func(c context.Context) CompatResult {
 		// Use a dedicated collection so we have a known, stable document set.
