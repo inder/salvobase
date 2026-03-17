@@ -119,6 +119,8 @@ func (d *Dispatcher) registerAll() {
 	d.register("explain", handleExplain)
 	d.register("currentop", handleCurrentOp)
 	d.register("currentOp", handleCurrentOp)
+	d.register("killop", handleKillOp)
+	d.register("killOp", handleKillOp)
 	d.register("hostinfo", handleHostInfo)
 	d.register("hostInfo", handleHostInfo)
 	d.register("getcmdlineopts", handleGetCmdLineOpts)
@@ -255,6 +257,8 @@ func cmdNameToAction(cmdName string) string {
 		return "renameCollection"
 	case "serverstatus":
 		return "serverStatus"
+	case "killop":
+		return "killop"
 	case "dbstats", "dbStats", "collstats", "collStats":
 		return "find"
 	case "createuser", "dropuser", "updateuser", "usersinfo",

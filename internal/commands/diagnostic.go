@@ -393,6 +393,33 @@ func handleCurrentOp(_ *Context, _ bson.Raw) (bson.Raw, error) {
 	}), nil
 }
 
+// handleKillOp handles the "killOp" command.
+// Terminates a running operation identified by its opid.
+// Salvobase does not track per-operation state, so this is a no-op that
+// returns success — matching MongoDB's behaviour when the op is not found.
+func handleKillOp(_ *Context, cmd bson.Raw) (bson.Raw, error) {
+	opVal, err := cmd.LookupErr("killOp")
+	if err != nil {
+		opVal, err = cmd.LookupErr("killop")
+	}
+	// The command value is the sentinel (always 1); the actual op to kill is in "op".
+	_ = opVal
+
+	// "op" field: the operation ID to terminate. Validate it is numeric if present.
+	opIDVal, err := cmd.LookupErr("op")
+	if err == nil {
+		switch opIDVal.Type {
+		case bson.TypeInt32, bson.TypeInt64, bson.TypeDouble:
+			// valid numeric op id — nothing to do since we have no op registry
+		default:
+			return nil, storage.Errorf(storage.ErrCodeBadValue,
+				"killOp: 'op' field must be a number")
+		}
+	}
+
+	return BuildOKResponse(), nil
+}
+
 // handleExplain handles the "explain" command.
 // It re-runs the wrapped command and adds explain output.
 func handleExplain(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
