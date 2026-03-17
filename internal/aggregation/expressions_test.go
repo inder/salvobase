@@ -16,7 +16,6 @@ func makeDoc(t *testing.T, d bson.D) bson.Raw {
 	return bson.Raw(raw)
 }
 
-
 // evalExprHelper calls EvalExpr with a bson.D expression against a document.
 func evalExprHelper(t *testing.T, expr interface{}, doc bson.Raw) interface{} {
 	t.Helper()
