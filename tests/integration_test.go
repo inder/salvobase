@@ -1869,9 +1869,9 @@ func TestQueryExpr(t *testing.T) {
 	ctx := context.Background()
 
 	_, _ = coll.InsertMany(ctx, []interface{}{
-		bson.D{{Key: "item", Value: "pen"}, {Key: "price", Value: 10}, {Key: "cost", Value: 5}},    // over budget
-		bson.D{{Key: "item", Value: "book"}, {Key: "price", Value: 3}, {Key: "cost", Value: 7}},   // under budget
-		bson.D{{Key: "item", Value: "ruler"}, {Key: "price", Value: 8}, {Key: "cost", Value: 8}},  // break-even
+		bson.D{{Key: "item", Value: "pen"}, {Key: "price", Value: 10}, {Key: "cost", Value: 5}},  // over budget
+		bson.D{{Key: "item", Value: "book"}, {Key: "price", Value: 3}, {Key: "cost", Value: 7}},  // under budget
+		bson.D{{Key: "item", Value: "ruler"}, {Key: "price", Value: 8}, {Key: "cost", Value: 8}}, // break-even
 	})
 
 	exprFilter := bson.D{{Key: "$expr", Value: bson.D{{Key: "$gt", Value: bson.A{"$price", "$cost"}}}}}

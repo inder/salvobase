@@ -865,8 +865,8 @@ func TestCompatNestedArrayDotNotation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name     string
-		filter   bson.D
+		name      string
+		filter    bson.D
 		wantCount int
 		wantNames []string
 	}{

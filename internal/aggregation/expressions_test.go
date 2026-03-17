@@ -291,9 +291,9 @@ func TestExprCondArray(t *testing.T) {
 
 func TestExprIfNull(t *testing.T) {
 	tests := []struct {
-		name  string
-		doc   bson.D
-		want  interface{}
+		name string
+		doc  bson.D
+		want interface{}
 	}{
 		{
 			"field present non-null",
