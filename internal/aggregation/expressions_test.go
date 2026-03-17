@@ -16,16 +16,6 @@ func makeDoc(t *testing.T, d bson.D) bson.Raw {
 	return bson.Raw(raw)
 }
 
-// makeExprRaw marshals a bson.D expression into a bson.RawValue (EmbeddedDocument type).
-func makeExprRaw(t *testing.T, expr bson.D) bson.RawValue {
-	t.Helper()
-	raw, err := bson.Marshal(expr)
-	if err != nil {
-		t.Fatalf("bson.Marshal expr: %v", err)
-	}
-	return bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: bson.Raw(raw)}
-}
-
 // evalExprHelper calls EvalExpr with a bson.D expression against a document.
 func evalExprHelper(t *testing.T, expr interface{}, doc bson.Raw) interface{} {
 	t.Helper()
@@ -42,9 +32,9 @@ func TestExprAdd(t *testing.T) {
 	doc := makeDoc(t, bson.D{{Key: "a", Value: int32(10)}, {Key: "b", Value: int32(5)}})
 
 	tests := []struct {
-		name   string
-		expr   interface{}
-		want   interface{}
+		name	string
+		expr	interface{}
+		want	interface{}
 	}{
 		{
 			"int32+int32",
@@ -257,9 +247,9 @@ func TestExprToUpperToLower(t *testing.T) {
 
 func TestExprCond(t *testing.T) {
 	tests := []struct {
-		name  string
+		name	string
 		score int32
-		want  string
+		want	string
 	}{
 		{"pass", int32(75), "pass"},
 		{"fail", int32(45), "fail"},
@@ -301,9 +291,9 @@ func TestExprCondArray(t *testing.T) {
 
 func TestExprIfNull(t *testing.T) {
 	tests := []struct {
-		name  string
-		doc   bson.D
-		want  interface{}
+		name	string
+		doc	bson.D
+		want	interface{}
 	}{
 		{
 			"field present non-null",
@@ -335,7 +325,7 @@ func TestExprIfNull(t *testing.T) {
 func TestExprSize(t *testing.T) {
 	tests := []struct {
 		name string
-		arr  bson.A
+		arr	bson.A
 		want int32
 	}{
 		{"empty array", bson.A{}, int32(0)},
@@ -367,9 +357,9 @@ func TestExprArrayElemAt(t *testing.T) {
 	doc := makeDoc(t, bson.D{{Key: "arr", Value: bson.A{"a", "b", "c"}}})
 
 	tests := []struct {
-		name  string
+		name	string
 		index interface{}
-		want  interface{}
+		want	interface{}
 	}{
 		{"first element", int32(0), "a"},
 		{"second element", int32(1), "b"},
