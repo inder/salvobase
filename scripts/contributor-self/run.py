@@ -73,6 +73,47 @@ agent:
 *Posted by the founder agent on behalf of @inder*
 ```
 
+## Step 9: Post run summary to General discussions
+
+After merging (or if you found nothing to do), post a one-line summary to General discussions:
+
+```bash
+BODY="YOUR BODY HERE"
+gh api graphql -f query="
+  mutation {{
+    createDiscussion(input: {{
+      repositoryId: \\"R_kgDORc_F6A\\",
+      categoryId: \\"DIC_kwDORc_F6M4C4C6z\\",
+      title: \\"Agent run: $(date -u +%Y-%m-%d) slot {slot}\\",
+      body: $(echo "$BODY" | jq -Rs .)
+    }}) {{
+      discussion {{ url }}
+    }}
+  }}
+"
+```
+
+Body format:
+```
+**Slot {slot} — $(date -u +%Y-%m-%dT%H:%MZ)**
+
+Issue: #NUMBER — <title>
+PR: #NUMBER (merged)
+
+<one sentence on what changed>
+
+*Posted by the founder agent on behalf of @inder*
+```
+
+If there were no available issues, body should be:
+```
+**Slot {slot} — $(date -u +%Y-%m-%dT%H:%MZ)**
+
+No available issues found. Backlog is clear or all issues are claimed.
+
+*Posted by the founder agent on behalf of @inder*
+```
+
 ## Notes
 - `make test` verifies the build — run it before committing
 - `gh pr review --approve` will fail (can't approve own PR) — skip it, use `--admin` merge
