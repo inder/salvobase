@@ -141,6 +141,7 @@ func (d *Dispatcher) registerAll() {
 	d.register("rolesinfo", handleRolesInfo)
 	d.register("rolesInfo", handleRolesInfo)
 	d.register("droprole", handleDropRole)
+	d.register("createrole", handleCreateRole)
 
 	// Server lifecycle
 	d.register("shutdown", handleShutdown)
@@ -257,7 +258,7 @@ func cmdNameToAction(cmdName string) string {
 	case "dbstats", "dbStats", "collstats", "collStats":
 		return "find"
 	case "createuser", "dropuser", "updateuser", "usersinfo",
-		"grantrolestouser", "revokerolesfromuser", "rolesinfo", "droprole":
+		"grantrolestouser", "revokerolesfromuser", "rolesinfo", "droprole", "createrole":
 		return "createUser"
 	default:
 		return "find"
@@ -339,6 +340,10 @@ func mongoErrorCodeName(code int32) string {
 		return "DuplicateKey"
 	case 51003:
 		return "UserAlreadyExists"
+	case 51002:
+		return "RoleAlreadyExists"
+	case 31:
+		return "RoleNotFound"
 	case 43:
 		return "CursorNotFound"
 	case 125:

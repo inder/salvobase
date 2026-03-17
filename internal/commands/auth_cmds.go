@@ -557,6 +557,74 @@ func handleDropRole(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
+// handleCreateRole handles the "createRole" command.
+// Custom roles are stored in admin.system.roles using the standard collection API.
+func handleCreateRole(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	roleNameVal, err := cmd.LookupErr("createRole")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "createRole: missing 'createRole' field")
+	}
+	roleName, ok := roleNameVal.StringValueOK()
+	if !ok || roleName == "" {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "createRole: role name must be a non-empty string")
+	}
+
+	// Privileges are required (may be empty array).
+	privilegesVal, err := cmd.LookupErr("privileges")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "createRole: missing 'privileges' field")
+	}
+	if _, ok := privilegesVal.ArrayOK(); !ok {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "createRole: 'privileges' must be an array")
+	}
+
+	// Inherited roles (may be empty array).
+	inheritedRoles := parseRolesFromCmd(cmd, ctx.DB)
+
+	// Roles in admin.system.roles are keyed by "<db>.<roleName>".
+	roleID := ctx.DB + "." + roleName
+
+	coll, err := ctx.Engine.Collection("admin", "system.roles")
+	if err != nil {
+		return nil, fmt.Errorf("createRole: %w", err)
+	}
+
+	// Check for duplicates.
+	idFilter, _ := bson.Marshal(bson.D{{Key: "_id", Value: roleID}})
+	existing, err := coll.FindOne(idFilter, storage.FindOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("createRole: %w", err)
+	}
+	if existing != nil {
+		return nil, storage.Errorf(storage.ErrCodeRoleAlreadyExists,
+			"Role \"%s@%s\" already exists", roleName, ctx.DB)
+	}
+
+	// Build inherited-roles subdocuments.
+	inheritedArr := make(bson.A, 0, len(inheritedRoles))
+	for _, r := range inheritedRoles {
+		inheritedArr = append(inheritedArr, bson.D{
+			{Key: "role", Value: r.Role},
+			{Key: "db", Value: r.DB},
+		})
+	}
+
+	// Store the raw privileges array as-is.
+	doc, _ := bson.Marshal(bson.D{
+		{Key: "_id", Value: roleID},
+		{Key: "role", Value: roleName},
+		{Key: "db", Value: ctx.DB},
+		{Key: "privileges", Value: privilegesVal},
+		{Key: "roles", Value: inheritedArr},
+	})
+
+	if _, err := coll.InsertOne(doc); err != nil {
+		return nil, fmt.Errorf("createRole: %w", err)
+	}
+
+	return BuildOKResponse(), nil
+}
+
 // parseRolesFromCmd parses the "roles" array from a command document.
 // Each role can be a string (shorthand for role in current db) or a document
 // {"role": "roleName", "db": "dbName"}.
