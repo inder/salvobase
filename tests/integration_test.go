@@ -5022,6 +5022,170 @@ func TestFindAndModifyEdgeCases(t *testing.T) {
 	})
 }
 
+// ─── Capped Collections ───────────────────────────────────────────────────────
+
+// TestCappedCollectionEviction inserts documents until the byte-size cap is
+// exceeded and verifies that the oldest documents are automatically evicted.
+func TestCappedCollectionEviction(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	// Small cap (~512 bytes) so that inserting 20 ~50-byte docs forces eviction.
+	err := db.CreateCollection(ctx, "caplogs",
+		options.CreateCollection().SetCapped(true).SetSizeInBytes(512))
+	if err != nil {
+		t.Fatalf("CreateCollection: %v", err)
+	}
+	coll := db.Collection("caplogs")
+
+	for i := 0; i < 20; i++ {
+		_, err := coll.InsertOne(ctx, bson.D{{Key: "seq", Value: int32(i)}, {Key: "data", Value: "payload"}})
+		if err != nil {
+			t.Fatalf("InsertOne %d: %v", i, err)
+		}
+	}
+
+	count, err := coll.CountDocuments(ctx, bson.D{})
+	if err != nil {
+		t.Fatalf("CountDocuments: %v", err)
+	}
+	if count >= 20 {
+		t.Errorf("expected eviction to keep count < 20, got %d", count)
+	}
+
+	// The most-recently-inserted document must survive eviction.
+	var last bson.M
+	if err := coll.FindOne(ctx, bson.D{{Key: "seq", Value: int32(19)}}).Decode(&last); err != nil {
+		t.Errorf("latest document (seq=19) should survive eviction: %v", err)
+	}
+
+	// The very first document must have been evicted.
+	var first bson.M
+	if err := coll.FindOne(ctx, bson.D{{Key: "seq", Value: int32(0)}}).Decode(&first); err == nil {
+		t.Error("oldest document (seq=0) should have been evicted but was found")
+	}
+}
+
+// TestCappedCollectionDeleteRejected verifies that DeleteOne and DeleteMany on
+// a capped collection are rejected with an error.
+func TestCappedCollectionDeleteRejected(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	err := db.CreateCollection(ctx, "capnodel",
+		options.CreateCollection().SetCapped(true).SetSizeInBytes(1<<20))
+	if err != nil {
+		t.Fatalf("CreateCollection: %v", err)
+	}
+	coll := db.Collection("capnodel")
+
+	_, err = coll.InsertOne(ctx, bson.D{{Key: "x", Value: int32(1)}})
+	if err != nil {
+		t.Fatalf("InsertOne: %v", err)
+	}
+
+	_, err = coll.DeleteOne(ctx, bson.D{{Key: "x", Value: int32(1)}})
+	if err == nil {
+		t.Error("DeleteOne on capped collection: expected error, got nil")
+	}
+
+	_, err = coll.DeleteMany(ctx, bson.D{{Key: "x", Value: int32(1)}})
+	if err == nil {
+		t.Error("DeleteMany on capped collection: expected error, got nil")
+	}
+}
+
+// TestCappedCollectionUpdateSizeRejected verifies that updates which grow a
+// document's byte size are rejected on capped collections, while same-size (or
+// smaller) updates succeed.
+func TestCappedCollectionUpdateSizeRejected(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	err := db.CreateCollection(ctx, "capnoupsize",
+		options.CreateCollection().SetCapped(true).SetSizeInBytes(1<<20))
+	if err != nil {
+		t.Fatalf("CreateCollection: %v", err)
+	}
+	coll := db.Collection("capnoupsize")
+
+	_, err = coll.InsertOne(ctx, bson.D{{Key: "x", Value: "short"}})
+	if err != nil {
+		t.Fatalf("InsertOne: %v", err)
+	}
+
+	// Adding a new large field must be rejected (document grows).
+	_, err = coll.UpdateOne(ctx,
+		bson.D{{Key: "x", Value: "short"}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "y", Value: "a_very_long_string_that_will_definitely_increase_the_document_size_significantly"}}}},
+	)
+	if err == nil {
+		t.Error("UpdateOne growing document size on capped collection: expected error, got nil")
+	}
+
+	// Replacing x with a value of the same length must succeed.
+	_, err = coll.UpdateOne(ctx,
+		bson.D{{Key: "x", Value: "short"}},
+		bson.D{{Key: "$set", Value: bson.D{{Key: "x", Value: "longr"}}}},
+	)
+	if err != nil {
+		t.Errorf("UpdateOne same-size update on capped collection: unexpected error: %v", err)
+	}
+}
+
+// TestCappedCollectionMaxDocs verifies that the max document-count limit is
+// enforced: inserting beyond max evicts the oldest documents.
+func TestCappedCollectionMaxDocs(t *testing.T) {
+	client := newClient(t)
+	db := client.Database(testDB(t))
+	ctx := context.Background()
+
+	const maxDocs = 3
+	err := db.CreateCollection(ctx, "capmaxdocs",
+		options.CreateCollection().
+			SetCapped(true).
+			SetSizeInBytes(1<<20). // generous byte cap so only max enforces eviction
+			SetMaxDocuments(maxDocs))
+	if err != nil {
+		t.Fatalf("CreateCollection: %v", err)
+	}
+	coll := db.Collection("capmaxdocs")
+
+	for i := 1; i <= 5; i++ {
+		_, err := coll.InsertOne(ctx, bson.D{{Key: "seq", Value: int32(i)}})
+		if err != nil {
+			t.Fatalf("InsertOne %d: %v", i, err)
+		}
+	}
+
+	count, err := coll.CountDocuments(ctx, bson.D{})
+	if err != nil {
+		t.Fatalf("CountDocuments: %v", err)
+	}
+	if count != maxDocs {
+		t.Errorf("expected exactly %d documents (max=%d), got %d", maxDocs, maxDocs, count)
+	}
+
+	// The three most-recently-inserted docs (3, 4, 5) must be present.
+	for _, seq := range []int32{3, 4, 5} {
+		var doc bson.M
+		if err := coll.FindOne(ctx, bson.D{{Key: "seq", Value: seq}}).Decode(&doc); err != nil {
+			t.Errorf("doc seq=%d should be present after capped eviction: %v", seq, err)
+		}
+	}
+
+	// The first two docs (1, 2) must have been evicted.
+	for _, seq := range []int32{1, 2} {
+		var doc bson.M
+		if err := coll.FindOne(ctx, bson.D{{Key: "seq", Value: seq}}).Decode(&doc); err == nil {
+			t.Errorf("doc seq=%d should have been evicted but was found", seq)
+		}
+	}
+}
+
 func TestMain(m *testing.M) {
 	flag.Parse()
 	os.Exit(m.Run())
