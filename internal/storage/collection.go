@@ -93,8 +93,9 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 
 	// Step 1: Prepare all documents outside the transaction (CPU work, no lock needed).
 	type docResult struct {
-		prep preparedInsert
-		err  error
+		prep      preparedInsert
+		err       error
+		succeeded bool // true if the document was committed successfully
 	}
 	results := make([]docResult, len(docs))
 	for i, rawDoc := range docs {
@@ -154,6 +155,7 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 			if idxErr := c.engine.insertIntoIndexes(tx, c.db, c.coll, r.prep.key, r.prep.finalDoc); idxErr != nil {
 				return idxErr
 			}
+			results[i].succeeded = true
 			ids = append(ids, r.prep.id)
 			successCount++
 		}
@@ -167,8 +169,8 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 
 	// Publish ChangeInsert events for each successfully inserted document.
 	if c.engine.eventBus.HasStream(c.db, c.coll) {
-		for i, id := range ids {
-			if id == (bson.ObjectID{}) {
+		for i := range results {
+			if !results[i].succeeded {
 				continue // insert failed (dup key or prep error)
 			}
 			doc := results[i].prep.finalDoc
