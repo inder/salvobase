@@ -184,7 +184,43 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 }
 
 // prependID creates a new BSON document with _id as the first field.
+// Fast path: when the document has no existing _id, the ObjectID field bytes
+// are prepended directly without a full BSON decode/encode roundtrip.
 func prependID(doc bson.Raw, id bson.ObjectID) (bson.Raw, error) {
+	if len(doc) < 5 {
+		return nil, fmt.Errorf("prependID: document too short (%d bytes)", len(doc))
+	}
+	existing := doc.Lookup("_id")
+	if existing.Type != 0 && existing.Type != bson.TypeNull {
+		// _id already exists and is not null — caller should not reach here, but handle safely.
+		return prependIDSlow(doc, id)
+	}
+	if existing.Type == bson.TypeNull {
+		// _id: null — strip it and prepend the new ObjectID.
+		return prependIDSlow(doc, id)
+	}
+	// No _id field: fast binary prepend.
+	// BSON format: [4-byte size LE][elements...][0x00]
+	// ObjectID element: [0x07 type]['_''i''d''\0'][12-byte OID] = 17 bytes
+	const oidFieldSize = 1 + 4 + 12 // type + key("_id\0") + value = 17
+	newSize := len(doc) + oidFieldSize
+	out := make([]byte, newSize)
+	out[0] = byte(newSize)
+	out[1] = byte(newSize >> 8)
+	out[2] = byte(newSize >> 16)
+	out[3] = byte(newSize >> 24)
+	out[4] = 0x07 // bson.TypeObjectID
+	out[5] = '_'
+	out[6] = 'i'
+	out[7] = 'd'
+	out[8] = 0x00
+	copy(out[9:21], id[:])
+	copy(out[21:], doc[4:]) // existing elements + null terminator
+	return bson.Raw(out), nil
+}
+
+// prependIDSlow is the fallback for prependID when the document has an existing _id.
+func prependIDSlow(doc bson.Raw, id bson.ObjectID) (bson.Raw, error) {
 	d := bson.D{{Key: "_id", Value: id}}
 	elems, err := doc.Elements()
 	if err != nil {
@@ -1450,7 +1486,22 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 		}
 		var toUpdate []docToUpdate
 
-		if err := b.ForEach(func(k, v []byte) error {
+		// Fast path: {_id: <scalar>} filter → O(log N) direct key lookup.
+		if idVal, ok := extractIDEquality(filter); ok {
+			idKey := encodeIDValue(idVal)
+			v := b.Get(idKey)
+			if v != nil {
+				raw, err := c.engine.decompress(v)
+				if err != nil {
+					return err
+				}
+				kc := make([]byte, len(idKey))
+				copy(kc, idKey)
+				dc := make([]byte, len(raw))
+				copy(dc, raw)
+				toUpdate = append(toUpdate, docToUpdate{key: kc, doc: bson.Raw(dc)})
+			}
+		} else if err := b.ForEach(func(k, v []byte) error {
 			raw, err := c.engine.decompress(v)
 			if err != nil {
 				return err
@@ -1584,11 +1635,25 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 		// Read collection metadata for capped enforcement.
 		collInfo, _ := getCollectionInfoTx(tx, c.coll)
 
-		// Find the first matching document
+		// Find the first matching document.
+		// Fast path: {_id: <scalar>} filter → O(log N) direct key lookup.
 		var matchKey []byte
 		var matchDoc bson.Raw
 
-		if scanErr := b.ForEach(func(k, v []byte) error {
+		if idVal, ok := extractIDEquality(filter); ok {
+			idKey := encodeIDValue(idVal)
+			v := b.Get(idKey)
+			if v != nil {
+				raw, err := c.engine.decompress(v)
+				if err != nil {
+					return err
+				}
+				matchKey = make([]byte, len(idKey))
+				copy(matchKey, idKey)
+				matchDoc = make(bson.Raw, len(raw))
+				copy(matchDoc, raw)
+			}
+		} else if scanErr := b.ForEach(func(k, v []byte) error {
 			raw, err := c.engine.decompress(v)
 			if err != nil {
 				return err
@@ -1702,7 +1767,38 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 }
 
 // prependIDRaw prepends a raw _id value (any type) to a document.
+// Fast path: when the document has no existing _id, the field bytes are
+// prepended directly without a full BSON decode/encode roundtrip.
 func prependIDRaw(doc bson.Raw, idVal bson.RawValue) (bson.Raw, error) {
+	if len(doc) < 5 {
+		return nil, fmt.Errorf("prependIDRaw: document too short (%d bytes)", len(doc))
+	}
+	existing := doc.Lookup("_id")
+	if existing.Type != 0 {
+		// _id already exists — strip it and prepend the provided value.
+		return prependIDRawSlow(doc, idVal)
+	}
+	// No _id: fast binary prepend.
+	// Element: [type byte]['_id'\0][value bytes]
+	fieldSize := 1 + 4 + len(idVal.Value) // type + "_id\0" + value
+	newSize := len(doc) + fieldSize
+	out := make([]byte, newSize)
+	out[0] = byte(newSize)
+	out[1] = byte(newSize >> 8)
+	out[2] = byte(newSize >> 16)
+	out[3] = byte(newSize >> 24)
+	out[4] = byte(idVal.Type)
+	out[5] = '_'
+	out[6] = 'i'
+	out[7] = 'd'
+	out[8] = 0x00
+	copy(out[9:], idVal.Value)
+	copy(out[9+len(idVal.Value):], doc[4:])
+	return bson.Raw(out), nil
+}
+
+// prependIDRawSlow is the fallback for prependIDRaw when the document has an existing _id.
+func prependIDRawSlow(doc bson.Raw, idVal bson.RawValue) (bson.Raw, error) {
 	elems, err := doc.Elements()
 	if err != nil {
 		return nil, err
@@ -1820,7 +1916,22 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 		}
 		var toDelete []docInfo
 
-		if err := b.ForEach(func(k, v []byte) error {
+		// Fast path: {_id: <scalar>} filter → O(log N) direct key lookup.
+		if idVal, ok := extractIDEquality(filter); ok {
+			idKey := encodeIDValue(idVal)
+			v := b.Get(idKey)
+			if v != nil {
+				raw, err := c.engine.decompress(v)
+				if err != nil {
+					return err
+				}
+				kc := make([]byte, len(idKey))
+				copy(kc, idKey)
+				dc := make([]byte, len(raw))
+				copy(dc, raw)
+				toDelete = append(toDelete, docInfo{key: kc, doc: bson.Raw(dc)})
+			}
+		} else if err := b.ForEach(func(k, v []byte) error {
 			raw, err := c.engine.decompress(v)
 			if err != nil {
 				return err
