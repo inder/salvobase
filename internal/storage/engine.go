@@ -873,7 +873,7 @@ func (e *BBoltEngine) CollectionStats(db, coll string) (CollectionStats, error) 
 // ServerStats returns a snapshot of server-wide counters and system information
 // including uptime, operation counters (insert/query/update/delete/getMore/command),
 // and basic memory statistics. The returned struct is safe to read without
-// further synchronisation — all counters are read from atomic integers.
+// further synchronization — all counters are read from atomic integers.
 func (e *BBoltEngine) ServerStats() (ServerStats, error) {
 	hostname, _ := os.Hostname()
 	uptime := int64(time.Since(e.startTime).Seconds())
