@@ -17,15 +17,15 @@ func TestUpdateByIDFastPath(t *testing.T) {
 
 	// Insert documents with explicit _id values.
 	for i := int32(1); i <= 20; i++ {
-		doc := mustMarshal(bson.D{{"_id", i}, {"val", i * 10}})
+		doc := mustMarshal(bson.D{{Key: "_id", Value: i}, {Key: "val", Value: i * 10}})
 		if _, err := coll.InsertOne(doc); err != nil {
 			t.Fatalf("InsertOne(%d): %v", i, err)
 		}
 	}
 
 	// Update a document by _id — exercises the fast path.
-	filter := mustMarshal(bson.D{{"_id", int32(7)}})
-	update := mustMarshal(bson.D{{"$set", bson.D{{"val", int32(999)}}}})
+	filter := mustMarshal(bson.D{{Key: "_id", Value: int32(7)}})
+	update := mustMarshal(bson.D{{Key: "$set", Value: bson.D{{Key: "val", Value: int32(999)}}}})
 	res, err := coll.UpdateOne(filter, update, UpdateOptions{})
 	if err != nil {
 		t.Fatalf("UpdateOne: %v", err)
@@ -66,13 +66,13 @@ func TestDeleteByIDFastPath(t *testing.T) {
 	}
 
 	for i := int32(1); i <= 10; i++ {
-		doc := mustMarshal(bson.D{{"_id", i}, {"v", i}})
+		doc := mustMarshal(bson.D{{Key: "_id", Value: i}, {Key: "v", Value: i}})
 		if _, err := coll.InsertOne(doc); err != nil {
 			t.Fatalf("InsertOne: %v", err)
 		}
 	}
 
-	n, err := coll.DeleteOne(mustMarshal(bson.D{{"_id", int32(5)}}))
+	n, err := coll.DeleteOne(mustMarshal(bson.D{{Key: "_id", Value: int32(5)}}))
 	if err != nil {
 		t.Fatalf("DeleteOne: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestDeleteByIDFastPath(t *testing.T) {
 	}
 
 	// Confirm it's gone.
-	count, err := coll.CountDocuments(mustMarshal(bson.D{{"_id", int32(5)}}))
+	count, err := coll.CountDocuments(mustMarshal(bson.D{{Key: "_id", Value: int32(5)}}))
 	if err != nil {
 		t.Fatalf("CountDocuments: %v", err)
 	}
@@ -99,8 +99,8 @@ func TestUpdateByIDMissing(t *testing.T) {
 		t.Fatalf("Collection: %v", err)
 	}
 
-	filter := mustMarshal(bson.D{{"_id", int32(99)}})
-	update := mustMarshal(bson.D{{"$set", bson.D{{"val", int32(1)}}}})
+	filter := mustMarshal(bson.D{{Key: "_id", Value: int32(99)}})
+	update := mustMarshal(bson.D{{Key: "$set", Value: bson.D{{Key: "val", Value: int32(1)}}}})
 	res, err := coll.UpdateOne(filter, update, UpdateOptions{})
 	if err != nil {
 		t.Fatalf("UpdateOne: %v", err)
@@ -113,7 +113,7 @@ func TestUpdateByIDMissing(t *testing.T) {
 // TestPrependIDFast verifies that prependID produces valid BSON.
 func TestPrependIDFast(t *testing.T) {
 	// Document without _id.
-	original := mustMarshal(bson.D{{"name", "Alice"}, {"age", int32(30)}})
+	original := mustMarshal(bson.D{{Key: "name", Value: "Alice"}, {Key: "age", Value: int32(30)}})
 	oid := bson.NewObjectID()
 	got, err := prependID(original, oid)
 	if err != nil {
@@ -146,8 +146,8 @@ func TestPrependIDFast(t *testing.T) {
 // TestPrependIDRawFast verifies that prependIDRaw produces valid BSON
 // for the fast (no existing _id) path.
 func TestPrependIDRawFast(t *testing.T) {
-	doc := mustMarshal(bson.D{{"x", int32(1)}})
-	rawID := mustMarshal(bson.D{{"_id", "custom-id"}})
+	doc := mustMarshal(bson.D{{Key: "x", Value: int32(1)}})
+	rawID := mustMarshal(bson.D{{Key: "_id", Value: "custom-id"}})
 	idElems, err := rawID.Elements()
 	if err != nil || len(idElems) == 0 {
 		t.Fatalf("bad test setup: %v", err)
@@ -193,17 +193,17 @@ func benchmarkUpdateByIDN(b *testing.B, n int) {
 		b.Fatalf("Collection: %v", err)
 	}
 	for i := int32(0); i < int32(n); i++ {
-		doc := mustMarshal(bson.D{{"_id", i}, {"v", i}})
+		doc := mustMarshal(bson.D{{Key: "_id", Value: i}, {Key: "v", Value: i}})
 		if _, err := coll.InsertOne(doc); err != nil {
 			b.Fatalf("InsertOne: %v", err)
 		}
 	}
 
-	update := mustMarshal(bson.D{{"$set", bson.D{{"v", int32(0)}}}})
+	update := mustMarshal(bson.D{{Key: "$set", Value: bson.D{{Key: "v", Value: int32(0)}}}})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		id := int32(i % n)
-		filter := mustMarshal(bson.D{{"_id", id}})
+		filter := mustMarshal(bson.D{{Key: "_id", Value: id}})
 		if _, err := coll.UpdateOne(filter, update, UpdateOptions{}); err != nil {
 			b.Fatalf("UpdateOne: %v", err)
 		}

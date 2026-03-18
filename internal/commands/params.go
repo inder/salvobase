@@ -21,7 +21,7 @@ type RuntimeConfig struct {
 	compression    string
 }
 
-// NewRuntimeConfig creates a RuntimeConfig initialised from server startup settings.
+// NewRuntimeConfig creates a RuntimeConfig initialized from server startup settings.
 func NewRuntimeConfig(logLevel, compression string, maxConnections, requestsPerSec int, syncOnWrite bool) *RuntimeConfig {
 	if logLevel == "" {
 		logLevel = "info"
