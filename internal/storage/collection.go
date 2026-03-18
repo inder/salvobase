@@ -93,8 +93,9 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 
 	// Step 1: Prepare all documents outside the transaction (CPU work, no lock needed).
 	type docResult struct {
-		prep preparedInsert
-		err  error
+		prep     preparedInsert
+		err      error
+		inserted bool // set to true inside the transaction when the insert commits
 	}
 	results := make([]docResult, len(docs))
 	for i, rawDoc := range docs {
@@ -154,6 +155,7 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 			if idxErr := c.engine.insertIntoIndexes(tx, c.db, c.coll, r.prep.key, r.prep.finalDoc); idxErr != nil {
 				return idxErr
 			}
+			results[i].inserted = true
 			ids = append(ids, r.prep.id)
 			successCount++
 		}
@@ -166,10 +168,12 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 	c.engine.opInsert.Add(successCount)
 
 	// Publish ChangeInsert events for each successfully inserted document.
+	// results[i].inserted is used (not the ObjectID) so that documents with
+	// non-ObjectID _id values (e.g. int32, string) are correctly published.
 	if c.engine.eventBus.HasStream(c.db, c.coll) {
-		for i, id := range ids {
-			if id == (bson.ObjectID{}) {
-				continue // insert failed (dup key or prep error)
+		for i := range results {
+			if !results[i].inserted {
+				continue
 			}
 			doc := results[i].prep.finalDoc
 			c.engine.eventBus.Publish(c.db, c.coll, ChangeEvent{
