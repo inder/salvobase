@@ -29,7 +29,7 @@ func newTestServer(t *testing.T) *Server {
 
 	logger := zap.NewNop()
 	authMgr := auth.NewManager(engine.Users(), true /* noAuth */)
-	dispatcher := commands.NewDispatcher(engine, authMgr, logger)
+	dispatcher := commands.NewDispatcher(engine, authMgr, logger, nil)
 
 	return &Server{
 		cfg:         Config{NoAuth: true},
