@@ -101,9 +101,11 @@ func (e *BBoltEngine) openDBLocked(name string) (*bolt.DB, error) {
 	}
 	path := filepath.Join(e.dataDir, name+".db")
 	opts := &bolt.Options{
-		Timeout:      1 * time.Second,
-		NoSync:       !e.syncOnWrite,
-		FreelistType: bolt.FreelistArrayType,
+		Timeout:         1 * time.Second,
+		NoSync:          !e.syncOnWrite,
+		NoGrowSync:      true,
+		InitialMmapSize: 64 * 1024 * 1024, // 64 MB initial mmap — reduces remapping overhead
+		FreelistType:    bolt.FreelistArrayType,
 	}
 	db, err := bolt.Open(path, 0600, opts)
 	if err != nil {
