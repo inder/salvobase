@@ -1503,6 +1503,24 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 				copy(dc, raw)
 				toUpdate = append(toUpdate, docToUpdate{key: kc, doc: bson.Raw(dc)})
 			}
+		} else if plan, planOK := c.chooseIndex(tx, filter); planOK {
+			// Secondary index scan within the write transaction.
+			so := scanOpts{}
+			if !multi {
+				so.limit = 1
+			}
+			idxDocs, scanErr := c.indexScanTx(tx, plan, filter, nil, so)
+			if scanErr != nil {
+				return scanErr
+			}
+			for _, doc := range idxDocs {
+				idKey := encodeIDValue(doc.Lookup("_id"))
+				kc := make([]byte, len(idKey))
+				copy(kc, idKey)
+				dc := make([]byte, len(doc))
+				copy(dc, doc)
+				toUpdate = append(toUpdate, docToUpdate{kc, dc})
+			}
 		} else if err := b.ForEach(func(k, v []byte) error {
 			raw, err := c.engine.decompress(v)
 			if err != nil {
@@ -1654,6 +1672,20 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 				copy(matchKey, idKey)
 				matchDoc = make(bson.Raw, len(raw))
 				copy(matchDoc, raw)
+			}
+		} else if plan, planOK := c.chooseIndex(tx, filter); planOK {
+			// Secondary index scan within the write transaction.
+			idxDocs, scanErr := c.indexScanTx(tx, plan, filter, nil, scanOpts{limit: 1})
+			if scanErr != nil {
+				return scanErr
+			}
+			if len(idxDocs) > 0 {
+				doc := idxDocs[0]
+				idKey := encodeIDValue(doc.Lookup("_id"))
+				matchKey = make([]byte, len(idKey))
+				copy(matchKey, idKey)
+				matchDoc = make(bson.Raw, len(doc))
+				copy(matchDoc, doc)
 			}
 		} else if scanErr := b.ForEach(func(k, v []byte) error {
 			raw, err := c.engine.decompress(v)
@@ -1933,6 +1965,24 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 				copy(dc, raw)
 				toDelete = append(toDelete, docInfo{key: kc, doc: bson.Raw(dc)})
 			}
+		} else if plan, planOK := c.chooseIndex(tx, filter); planOK {
+			// Secondary index scan within the write transaction.
+			so := scanOpts{}
+			if !multi {
+				so.limit = 1
+			}
+			idxDocs, scanErr := c.indexScanTx(tx, plan, filter, nil, so)
+			if scanErr != nil {
+				return scanErr
+			}
+			for _, doc := range idxDocs {
+				idKey := encodeIDValue(doc.Lookup("_id"))
+				kc := make([]byte, len(idKey))
+				copy(kc, idKey)
+				dc := make([]byte, len(doc))
+				copy(dc, doc)
+				toDelete = append(toDelete, docInfo{kc, dc})
+			}
 		} else if err := b.ForEach(func(k, v []byte) error {
 			raw, err := c.engine.decompress(v)
 			if err != nil {
@@ -2000,7 +2050,7 @@ func (c *bboltCollection) CountDocuments(filter bson.Raw) (int64, error) {
 		return 0, nil
 	}
 
-	// Optimize for empty filter
+	// Fast path 1: empty filter — derive count from bucket statistics (O(1)).
 	if len(filter) == 0 {
 		var n int64
 		_ = boltDB.View(func(tx *bolt.Tx) error {
@@ -2013,30 +2063,29 @@ func (c *bboltCollection) CountDocuments(filter bson.Raw) (int64, error) {
 		return n, nil
 	}
 
-	var count int64
-	if err := boltDB.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(collBucket(c.coll)))
-		if b == nil {
-			return nil
-		}
-		return b.ForEach(func(k, v []byte) error {
-			raw, err := c.engine.decompress(v)
-			if err != nil {
-				return err
-			}
-			match, err := query.Filter(bson.Raw(raw), filter)
-			if err != nil {
-				return err
-			}
-			if match {
-				count++
+	// Fast path 2: {_id: <scalar>} equality — O(log N) direct key lookup.
+	if idVal, ok := extractIDEquality(filter); ok {
+		key := encodeIDValue(idVal)
+		var found bool
+		_ = boltDB.View(func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte(collBucket(c.coll)))
+			if b != nil && b.Get(key) != nil {
+				found = true
 			}
 			return nil
 		})
-	}); err != nil {
+		if found {
+			return 1, nil
+		}
+		return 0, nil
+	}
+
+	// General case: use scanFilter which leverages secondary indexes when available.
+	docs, err := c.scanFilter(filter, nil, scanOpts{})
+	if err != nil {
 		return 0, err
 	}
-	return count, nil
+	return int64(len(docs)), nil
 }
 
 // Distinct returns the unique values of field across all documents matching
@@ -2172,28 +2221,65 @@ func (c *bboltCollection) findAndModify(
 		}
 		var candidates []docInfo
 
-		scanErr := b.ForEach(func(k, v []byte) error {
-			raw, decompErr := c.engine.decompress(v)
-			if decompErr != nil {
-				return decompErr
+		if idVal, ok := extractIDEquality(filter); ok {
+			// Fast path 1: O(log N) direct _id key lookup.
+			idKey := encodeIDValue(idVal)
+			v := b.Get(idKey)
+			if v != nil {
+				raw, decompErr := c.engine.decompress(v)
+				if decompErr != nil {
+					return decompErr
+				}
+				kc := make([]byte, len(idKey))
+				copy(kc, idKey)
+				dc := make([]byte, len(raw))
+				copy(dc, raw)
+				candidates = append(candidates, docInfo{kc, bson.Raw(dc)})
 			}
-			doc := bson.Raw(raw)
-			match, filterErr := query.Filter(doc, filter)
-			if filterErr != nil {
-				return filterErr
+		} else if plan, planOK := c.chooseIndex(tx, filter); planOK {
+			// Fast path 2: secondary index scan within the write transaction.
+			so := scanOpts{}
+			if len(opts.Sort) == 0 {
+				// Without sort, only the first match is needed.
+				so.limit = 1
 			}
-			if !match {
+			idxDocs, idxErr := c.indexScanTx(tx, plan, filter, nil, so)
+			if idxErr != nil {
+				return idxErr
+			}
+			for _, doc := range idxDocs {
+				idKey := encodeIDValue(doc.Lookup("_id"))
+				kc := make([]byte, len(idKey))
+				copy(kc, idKey)
+				dc := make([]byte, len(doc))
+				copy(dc, doc)
+				candidates = append(candidates, docInfo{kc, dc})
+			}
+		} else {
+			// Fallback: full collection scan.
+			scanErr := b.ForEach(func(k, v []byte) error {
+				raw, decompErr := c.engine.decompress(v)
+				if decompErr != nil {
+					return decompErr
+				}
+				doc := bson.Raw(raw)
+				match, filterErr := query.Filter(doc, filter)
+				if filterErr != nil {
+					return filterErr
+				}
+				if !match {
+					return nil
+				}
+				kc := make([]byte, len(k))
+				copy(kc, k)
+				dc := make([]byte, len(doc))
+				copy(dc, doc)
+				candidates = append(candidates, docInfo{kc, bson.Raw(dc)})
 				return nil
+			})
+			if scanErr != nil {
+				return scanErr
 			}
-			kc := make([]byte, len(k))
-			copy(kc, k)
-			dc := make([]byte, len(doc))
-			copy(dc, doc)
-			candidates = append(candidates, docInfo{kc, bson.Raw(dc)})
-			return nil
-		})
-		if scanErr != nil {
-			return scanErr
 		}
 
 		// Apply sort if specified
