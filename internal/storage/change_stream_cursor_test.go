@@ -247,11 +247,7 @@ func TestChangeStreamCursorNextBatchWait(t *testing.T) {
 		})
 	}()
 
-	tc, ok := cur.(TailableCursor)
-	if !ok {
-		t.Fatal("cursor does not implement TailableCursor")
-	}
-	docs, exhausted, err := tc.NextBatchWait(context.Background(), 100, 500)
+	docs, exhausted, err := cur.NextBatchWait(context.Background(), 100, 500)
 	if err != nil {
 		t.Fatalf("NextBatchWait error: %v", err)
 	}
@@ -267,12 +263,8 @@ func TestChangeStreamCursorNextBatchWaitTimeout(t *testing.T) {
 	bus := NewEventBus(10)
 	cur := bus.NewChangeStreamCursor("db", "timecoll", 0)
 
-	tc, ok := cur.(TailableCursor)
-	if !ok {
-		t.Fatal("cursor does not implement TailableCursor")
-	}
 	start := time.Now()
-	docs, exhausted, err := tc.NextBatchWait(context.Background(), 100, 50) // 50ms
+	docs, exhausted, err := cur.NextBatchWait(context.Background(), 100, 50) // 50ms
 	elapsed := time.Since(start)
 
 	if err != nil {

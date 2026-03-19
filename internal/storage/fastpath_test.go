@@ -23,7 +23,10 @@ func TestFindAndModifyByIDFastPath(t *testing.T) {
 		}
 	}
 
-	bc := coll.(*bboltCollection)
+	bc, ok := coll.(*bboltCollection)
+	if !ok {
+		t.Fatal("collection is not a *bboltCollection")
+	}
 
 	filter := mustMarshal(bson.D{{Key: "_id", Value: int32(7)}})
 	update := mustMarshal(bson.D{{Key: "$set", Value: bson.D{{Key: "val", Value: int32(777)}}}})
@@ -66,7 +69,10 @@ func TestFindAndModifyByIDMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collection: %v", err)
 	}
-	bc := coll.(*bboltCollection)
+	bc, ok := coll.(*bboltCollection)
+	if !ok {
+		t.Fatal("collection is not a *bboltCollection")
+	}
 
 	filter := mustMarshal(bson.D{{Key: "_id", Value: int32(999)}})
 	update := mustMarshal(bson.D{{Key: "$set", Value: bson.D{{Key: "x", Value: int32(1)}}}})
@@ -104,7 +110,10 @@ func TestFindAndModifyIndexScan(t *testing.T) {
 		}
 	}
 
-	bc := coll.(*bboltCollection)
+	bc, ok := coll.(*bboltCollection)
+	if !ok {
+		t.Fatal("collection is not a *bboltCollection")
+	}
 
 	// Query by indexed field (not _id).
 	filter := mustMarshal(bson.D{{Key: "score", Value: int32(25)}}) // _id == 5
