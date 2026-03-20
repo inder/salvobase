@@ -27,9 +27,9 @@ from datetime import datetime, timezone, timedelta
 
 REPO = "inder/salvobase"
 
-LABEL_P0 = "priority:critical,area:compatibility,agent:available,complexity:m,trust:contributor+"
-LABEL_C1 = "priority:medium,area:compatibility,agent:available,complexity:s,trust:newcomer-ok"
-LABEL_ACHIEVED = "area:compatibility,trust:maintainer-only"
+LABEL_P0 = "priority:critical,area:compat,agent:available,complexity:m,trust:contributor+"
+LABEL_C1 = "priority:medium,area:compat,agent:available,complexity:s,trust:newcomer-ok"
+LABEL_ACHIEVED = "area:compat,trust:maintainer-only"
 
 
 # ---------------------------------------------------------------------------

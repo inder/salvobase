@@ -156,7 +156,7 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
      - Gap ≤0 → files a north-star-achieved issue, closes p0
    - Deploys updated benchmark dashboard to GitHub Pages
 
-**Scripts:** `scripts/bench/should_run_benchmark.py` (gate), `scripts/bench/check_perf_gap.py` (issue filing)
+**Scripts:** `scripts/bench/should_run_benchmark.py` (gate), `scripts/bench/fetch_bench_data.py` (pull bench-data branch into gate job), `scripts/bench/check_perf_gap.py` (issue filing)
 **Secrets:** `GITHUB_TOKEN`
 
 ---

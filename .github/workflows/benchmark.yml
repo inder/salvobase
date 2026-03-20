@@ -40,32 +40,19 @@ jobs:
           git fetch origin bench-data:bench-data || true
           mkdir -p benchmarks/results
           git show bench-data:benchmarks/index.json > benchmarks/index.json 2>/dev/null || true
-          python3 - <<'EOF'
-import json, subprocess, os
-from pathlib import Path
-try:
-    idx = json.loads(open("benchmarks/index.json").read())
-    dates = sorted(idx.get("dates", []), reverse=True)[:5]
-except Exception:
-    dates = []
-os.makedirs("benchmarks/results", exist_ok=True)
-for date in dates:
-    fname = f"benchmarks/results/{date}.jsonl"
-    result = subprocess.run(
-        ["git", "show", f"bench-data:{fname}"],
-        capture_output=True, text=True
-    )
-    if result.returncode == 0:
-        Path(fname).write_text(result.stdout)
-EOF
+          python3 scripts/bench/fetch_bench_data.py
 
       - name: Check gate
         id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
+          FORCE_FLAG=""
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then FORCE_FLAG="--force"; fi
           python3 scripts/bench/should_run_benchmark.py \
             --results-dir benchmarks/results \
             --north-star-file configs/perf_north_star \
-            ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
+            $FORCE_FLAG
 
   benchmark:
     name: Run benchmark
