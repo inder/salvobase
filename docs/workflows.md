@@ -132,18 +132,31 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 
 ---
 
-### `benchmark.yml` — Nightly Benchmark
-**Trigger:** Nightly (`0 2 * * *`) + manual
-**What it does:**
-1. Runs go-ycsb workloads A–F against both Salvobase and MongoDB Community
-2. Computes ops/sec ratios (Salvobase/MongoDB)
-3. Commits JSONL results to the `bench-data` branch
-4. Runs `scripts/bench/check_perf_gap.py` to compare against the north star (`configs/perf_north_star`, currently 0.90):
-   - Gap >10pp → files/updates a `priority:critical` issue daily
-   - Gap 1–10pp → files/updates a `priority:medium` issue every 3 days
-   - Gap ≤0 → files a north-star-achieved issue, closes p0
-5. Deploys updated benchmark dashboard to GitHub Pages
+### `benchmark.yml` — Adaptive Benchmark
+**Trigger:** Every 3 hours (`0 */3 * * *`) + manual — but a gate job skips the expensive YCSB run based on current gap:
 
+| Gap | Effective cadence |
+|-----|------------------|
+| >50pp (ratio <40%) | 3h — crisis mode |
+| 25–50pp (ratio <65%) | 6h — active sprint |
+| 10–25pp (ratio <80%) | 12h — tuning phase |
+| ≤10pp (ratio ≥80%) | 24h — original cadence |
+
+`workflow_dispatch` always bypasses the gate.
+
+**What it does:**
+1. **Gate job:** Fetches latest bench-data results, computes current gap, decides whether to run. Cheap (~10s).
+2. **Benchmark job** (only if gate passes):
+   - Runs go-ycsb workloads A–F against both Salvobase and MongoDB Community
+   - Computes ops/sec ratios (Salvobase/MongoDB)
+   - Commits JSONL results to the `bench-data` branch
+   - Runs `scripts/bench/check_perf_gap.py` against north star (`configs/perf_north_star`, currently 0.90):
+     - Gap >10pp → files/updates a `priority:critical` issue every run
+     - Gap 1–10pp → files/updates a `priority:medium` issue every 3 days
+     - Gap ≤0 → files a north-star-achieved issue, closes p0
+   - Deploys updated benchmark dashboard to GitHub Pages
+
+**Scripts:** `scripts/bench/should_run_benchmark.py` (gate), `scripts/bench/check_perf_gap.py` (issue filing)
 **Secrets:** `GITHUB_TOKEN`
 
 ---
@@ -225,7 +238,7 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 | `promotion-celebration.yml` | Promotion PR merged | Celebration post |
 | `ci.yml` | Push/PR | Build + test + lint |
 | `compat.yml` | Push/PR/manual | Compat score + regression + gap issues |
-| `benchmark.yml` | Nightly | Perf vs MongoDB + north star |
+| `benchmark.yml` | Every 3h (adaptive gate) | Perf vs MongoDB + north star |
 | `orchestrator.yml` | Every 15min | Claim expiry + stale PR warnings |
 | `stale-pr-cleanup.yml` | Daily | Close 7d+ stale PRs |
 | `spec-gap-analyzer-v2.yml` | *(retired)* | Superseded by compat.yml |
