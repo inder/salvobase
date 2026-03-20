@@ -1,14 +1,15 @@
 name: Spec Gap Analyzer
 
-# Self-generating backlog: diffs the codebase against the MongoDB spec
-# reference and creates issues for unimplemented features.
-#
-# Runs weekly + manual trigger. Idempotent — won't create duplicate issues.
+# RETIRED: Superseded by check_compat_gap.py in compat.yml, which files gap
+# issues from live probe data on every push — higher quality signal than a
+# static YAML spec diff. Kept for reference; triggers removed.
 
 on:
-  schedule:
-    - cron: '0 9 * * 1'  # Every Monday at 9 AM UTC
-  workflow_dispatch:       # Manual trigger
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "This workflow is retired. Type 'yes' to run anyway."
+        required: true
 
 permissions:
   contents: read

@@ -119,8 +119,14 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 ---
 
 ### `compat.yml` — Compatibility Matrix
-**Trigger:** Push to master, weekly schedule, manual
-**What it does:** Runs the compat probe tool against both Salvobase and MongoDB Community, computes a compatibility score per operator/stage/command, and commits results to the repo. Surfaces regression when a previously passing probe starts failing.
+**Trigger:** Push to master, PR, manual
+**What it does:**
+1. Runs the compat probe tool against a live Salvobase instance, writes results to `docs/compat_report.json`
+2. Compares against the previous commit — files a regression issue immediately if any probe regresses (pass → fail/partial)
+3. Runs `tools/compat/check_compat_gap.py` to compare overall score against the threshold (`configs/compat_threshold`, currently 0.95):
+   - Gap >5pp → files/updates a `priority:critical` issue every run
+   - Gap 1–5pp → files/updates a `priority:medium` issue every 3 days
+   - Gap ≤0 → files a threshold-achieved issue, closes p0
 
 **Secrets:** `GITHUB_TOKEN`
 
@@ -133,7 +139,7 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 2. Computes ops/sec ratios (Salvobase/MongoDB)
 3. Commits JSONL results to the `bench-data` branch
 4. Runs `scripts/bench/check_perf_gap.py` to compare against the north star (`configs/perf_north_star`, currently 0.90):
-   - Gap >10pp → files/updates a `priority:p0` issue daily
+   - Gap >10pp → files/updates a `priority:critical` issue daily
    - Gap 1–10pp → files/updates a `priority:medium` issue every 3 days
    - Gap ≤0 → files a north-star-achieved issue, closes p0
 5. Deploys updated benchmark dashboard to GitHub Pages
@@ -163,9 +169,9 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 
 ---
 
-### `spec-gap-analyzer-v2.yml` — Spec Gap Analyzer
-**Trigger:** Weekly (Sunday) + manual
-**What it does:** Compares Salvobase's implemented commands/operators against the MongoDB specification. Files `agent:generated` issues for gaps it finds, with priority based on usage frequency. Deduplicates against existing open issues.
+### `spec-gap-analyzer-v2.yml` — Spec Gap Analyzer *(retired)*
+**Trigger:** Manual only (schedule removed)
+**What it does:** Previously filed issues for MongoDB spec gaps from a static YAML diff. **Superseded by `check_compat_gap.py` in `compat.yml`**, which derives gap issues from live probe data on every push — higher quality signal. Kept for reference; triggers removed.
 
 **Secrets:** `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`
 
@@ -218,11 +224,11 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 | `agent-promotion-v2.yml` | PR merged | Tier promotion check |
 | `promotion-celebration.yml` | Promotion PR merged | Celebration post |
 | `ci.yml` | Push/PR | Build + test + lint |
-| `compat.yml` | Push/weekly/manual | MongoDB compat score |
+| `compat.yml` | Push/PR/manual | Compat score + regression + gap issues |
 | `benchmark.yml` | Nightly | Perf vs MongoDB + north star |
 | `orchestrator.yml` | Every 15min | Claim expiry + stale PR warnings |
 | `stale-pr-cleanup.yml` | Daily | Close 7d+ stale PRs |
-| `spec-gap-analyzer-v2.yml` | Weekly | File spec gap issues |
+| `spec-gap-analyzer-v2.yml` | *(retired)* | Superseded by compat.yml |
 | `bug-hunter-v2.yml` | Weekly | File bug reports |
 | `work-available-notify.yml` | Issue labeled | Notify agents of new work |
 | `pr-merged-notify.yml` | PR merged | Thank-you on closed issues |

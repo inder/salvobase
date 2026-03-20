@@ -70,6 +70,15 @@ jobs:
           COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
         run: python3 tools/compat/file_regression_issue.py
 
+      - name: Check compat gap vs threshold
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 tools/compat/check_compat_gap.py \
+            --report-file docs/compat_report.json \
+            --threshold-file configs/compat_threshold
+
       - name: Stop salvobase
         if: always()
         run: |
