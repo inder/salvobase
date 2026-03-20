@@ -300,7 +300,7 @@ def handle_condition_2(score: float, threshold: float, dry_run: bool):
         else:
             print(f"[DRY RUN] Would close p0 #{existing_p0['number']}")
 
-    existing_ach = find_open_issue("threshold achieved", "area:compatibility")
+    existing_ach = find_open_issue("threshold achieved", "area:compat")
     if existing_ach:
         print(f"  Achievement issue #{existing_ach['number']} already open — skipping")
         return

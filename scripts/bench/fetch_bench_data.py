@@ -12,7 +12,8 @@ import os
 from pathlib import Path
 
 try:
-    idx = json.loads(open("benchmarks/index.json").read())
+    with open("benchmarks/index.json") as f:
+        idx = json.load(f)
     dates = sorted(idx.get("dates", []), reverse=True)[:5]
 except Exception:
     dates = []
