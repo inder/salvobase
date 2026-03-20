@@ -291,14 +291,22 @@ def handle_condition_1(score: float, threshold: float, per_cat: dict, dry_run: b
         create_issue(title, LABEL_C1, body)
 
 
+_THRESHOLD_CEILING = 1.0  # Compatibility cannot exceed 100%; stop advancing here.
+
+
 def handle_condition_2(score: float, threshold: float, dry_run: bool):
-    """Threshold hit — file achievement issue, close p0."""
+    """Threshold hit — file achievement issue (or note ceiling), close p0."""
     existing_p0 = find_open_issue("close gap to threshold", "priority:critical")
     if existing_p0:
         if not dry_run:
             close_issue(existing_p0["number"], "Compatibility threshold achieved. Closing.")
         else:
             print(f"[DRY RUN] Would close p0 #{existing_p0['number']}")
+
+    if threshold >= _THRESHOLD_CEILING:
+        print(f"  Threshold is already at the ceiling ({_THRESHOLD_CEILING*100:.0f}%) — "
+              "no achievement issue filed and no further bumps needed.")
+        return
 
     existing_ach = find_open_issue("threshold achieved", "area:compat")
     if existing_ach:
