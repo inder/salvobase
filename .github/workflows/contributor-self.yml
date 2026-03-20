@@ -48,6 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.build.outputs.matrix }}
+      has_work: ${{ steps.build.outputs.has_work }}
     steps:
       - name: Build agent matrix
         id: build
@@ -107,10 +108,19 @@ jobs:
           echo "matrix={\"include\":$MATRIX}" >> "$GITHUB_OUTPUT"
           echo "Matrix: {\"include\":$MATRIX}"
 
+          # has_work=true only if at least one slot has a real issue
+          if echo "$MATRIX" | grep -qv '"target_issue":"none"'; then
+            echo "has_work=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_work=false" >> "$GITHUB_OUTPUT"
+            echo "No available issues — contribute jobs will be skipped."
+          fi
+
   contribute:
     name: "Agent ${{ matrix.slot }}"
     runs-on: ubuntu-latest
     needs: plan
+    if: needs.plan.outputs.has_work == 'true'
     strategy:
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
       fail-fast: false   # one agent failing shouldn't kill the others

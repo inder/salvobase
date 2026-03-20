@@ -2,24 +2,47 @@
 """
 Self-hosted contributor agent runner.
 Builds the prompt from env vars and invokes claude.
+Exits immediately (no Claude call) when target_issue=none — zero token cost.
 """
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 slot = os.environ.get("AGENT_SLOT", "1")
 target = os.environ.get("TARGET_ISSUE", "").strip()
 
-if target and target != "none":
-    issue_directive = (
-        f"Your target issue is #{target}. It has already been claimed for you. "
-        f"Go directly to it — read the issue body, implement it, open a PR, merge it."
+# Short-circuit: no issue assigned — post directly via gh, never touch Claude.
+if not target or target == "none":
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    body = (
+        f"**Slot {slot} — {now}**\n\n"
+        f"No available issues found. Backlog is clear or all issues are claimed.\n\n"
+        f"*Posted by the founder agent on behalf of @inder*"
     )
-else:
-    issue_directive = (
-        "No issue was assigned to this slot (backlog is empty or fully claimed). "
-        "Post a summary to General discussions saying the backlog is clear, then exit."
+    subprocess.run(
+        [
+            "gh", "api", "graphql",
+            "-f", f"""query=mutation {{
+  createDiscussion(input: {{
+    repositoryId: "R_kgDORc_F6A",
+    categoryId: "DIC_kwDORc_F6M4C4C6z",
+    title: "Agent run: {datetime.now(timezone.utc).strftime('%Y-%m-%d')} slot {slot}",
+    body: {__import__('json').dumps(body)}
+  }}) {{ discussion {{ url }} }}
+}}""",
+        ],
+        env={**os.environ},
+        check=False,
     )
+    print(f"Slot {slot}: no issue assigned — skipped Claude, posted backlog-clear notice.")
+    sys.exit(0)
+
+# Issue is assigned — build prompt and invoke Claude.
+issue_directive = (
+    f"Your target issue is #{target}. It has already been claimed for you. "
+    f"Go directly to it — read the issue body, implement it, open a PR, merge it."
+)
 
 prompt = f"""You are a founder-tier contributor agent (slot {slot}) for Salvobase, running headlessly in GitHub Actions.
 You are operating as @inder with full maintainer trust. You can push branches and merge PRs directly.
