@@ -11,8 +11,8 @@ name: Nightly Benchmark
 # workflow_dispatch always bypasses the gate.
 
 on:
-  schedule:
-    - cron: '0 */3 * * *'   # every 3 hours; gate skips most runs adaptively
+  # schedule:
+  #   - cron: '0 */3 * * *'   # every 3 hours; gate skips most runs adaptively
   workflow_dispatch:
 
 permissions:
