@@ -1,0 +1,238 @@
+{
+  "_schema": "perf-plan-state/v1",
+  "_description": "Autonomous performance agent working memory. Read and written by perf-agent on every cycle. Do not edit manually — the agent owns this file.",
+  "_instructions": "See .github/perf-agent-prompt.md for the algorithm that operates on this file.",
+
+  "north_star": {
+    "target": 0.90,
+    "description": "90% of MongoDB Community throughput across all YCSB workloads",
+    "source": "configs/perf_north_star"
+  },
+
+  "benchmark_history": [],
+
+  "stuck_detection": {
+    "min_improvement_pp": 2.0,
+    "lookback_cycles": 3,
+    "replan_cooldown_days": 7,
+    "comment": "If average ratio improves by less than 2pp over the last 3 benchmark cycles, the plan is stuck."
+  },
+
+  "current_plan": {
+    "version": 3,
+    "name": "Plan V3: Profile-First Performance Recovery",
+    "rationale": "A week of static-analysis-driven optimization produced no measurable throughput improvement. The benchmarks measured CI noise, not real performance. The highest-leverage missing pieces are: (1) runtime profiling to identify actual bottlenecks, (2) per-message bufio allocation fix, (3) bbolt.Batch() for write coalescing. All prior optimization was guesswork without a flame graph.",
+    "architectural_ceiling": "bbolt is a single-writer B-tree. Realistic ceiling with all fixes applied: 50-70% of MongoDB on reads, 30-50% on writes with syncOnWrite=true. If benchmark ratio plateaus below 60% after Phase 2 completes, the strategic question is whether to accept the bbolt ceiling or migrate to Pebble (LSM, Apache 2.0, concurrent writers).",
+    "created_date": "2026-03-20",
+    "stuck_cycles": 0,
+    "last_significant_improvement_date": null,
+    "total_cycles": 0,
+
+    "phases": [
+      {
+        "id": "phase-0",
+        "name": "Instrumentation — Profile Before Touching Anything",
+        "status": "pending",
+        "gate": null,
+        "rationale": "Cannot sequence Phase 1 fixes correctly without flame graph data. P0-B (bufio) is the single highest-ROI change in the codebase and has zero risk.",
+        "items": [
+          {
+            "id": "p0-a",
+            "name": "Add pprof endpoint to admin HTTP server",
+            "status": "pending",
+            "priority": "critical",
+            "effort_hours": 0.5,
+            "files_to_modify": ["internal/server/http.go", "internal/server/metrics.go"],
+            "description": "Register net/http/pprof routes on the admin mux at :27080. Import _ 'net/http/pprof' and add HandleFunc registrations for /debug/pprof/, /debug/pprof/profile, /debug/pprof/trace, /debug/pprof/symbol. This enables CPU profiling, heap profiling, goroutine traces, and allocation profiling without code changes to collect.",
+            "success_criteria": "curl http://localhost:27080/debug/pprof/ returns the pprof index page listing available profiles.",
+            "pr": null,
+            "merged_date": null
+          },
+          {
+            "id": "p0-b",
+            "name": "Fix per-message bufio.Reader allocation",
+            "status": "pending",
+            "priority": "critical",
+            "effort_hours": 2,
+            "files_to_modify": ["internal/wire/protocol.go", "internal/server/connection.go"],
+            "description": "ReadMessage() at internal/wire/protocol.go calls bufio.NewReaderSize(lr, 4096) on every single message — one 4KiB allocation per request on the hottest path. Fix: move *bufio.Reader to the Connection struct, initialize once in newConnection with bufio.NewReaderSize(conn, 16*1024), pass c.br to ReadMessage instead of c.conn. Change ReadMessage signature to accept io.Reader instead of net.Conn. Remove the internal bufio.NewReaderSize call from ReadMessage. Add a matching *bufio.Writer to Connection for response buffering, initialized as bufio.NewWriterSize(conn, 32*1024), flush at end of each handleMessage call.",
+            "success_criteria": "go test ./internal/wire/... passes. BenchmarkReadMessage shows zero bufio.NewReader allocations per operation.",
+            "pr": null,
+            "merged_date": null
+          },
+          {
+            "id": "p0-c",
+            "name": "Set TCP_NODELAY on accepted connections",
+            "status": "pending",
+            "priority": "high",
+            "effort_hours": 0.25,
+            "files_to_modify": ["internal/server/server.go"],
+            "description": "After listener.Accept(), cast conn to *net.TCPConn and call SetNoDelay(true) and SetKeepAlive(true). Without TCP_NODELAY, Nagle's algorithm buffers small responses until 40ms timeout fires, adding systematic tail latency.",
+            "success_criteria": "All existing tests pass. ss -tnp | grep 27017 shows NODELAY on connections.",
+            "pr": null,
+            "merged_date": null
+          },
+          {
+            "id": "p0-d",
+            "name": "Set GOMEMLIMIT in bench docker-compose",
+            "status": "pending",
+            "priority": "medium",
+            "effort_hours": 0.25,
+            "files_to_modify": ["deployments/bench/docker-compose.yml"],
+            "description": "Add GOMEMLIMIT=512MiB to the Salvobase container environment in the bench docker-compose. Do NOT set GOGC above 100 — higher GOGC is wrong for write-heavy servers (larger heap = longer GC pauses when GC fires). GOMEMLIMIT alone bounds heap growth while keeping GC responsive.",
+            "success_criteria": "docker-compose.yml shows GOMEMLIMIT env var. No change to GOGC default.",
+            "pr": null,
+            "merged_date": null
+          },
+          {
+            "id": "p0-e",
+            "name": "Add per-layer latency histograms",
+            "status": "pending",
+            "priority": "medium",
+            "effort_hours": 4,
+            "files_to_modify": ["internal/server/connection.go", "internal/server/metrics.go", "internal/storage/engine.go"],
+            "description": "Add Prometheus histograms breaking down request latency into 4 layers: (1) salvo_wire_parse_seconds — OP_MSG parse time, (2) salvo_bson_process_seconds — extractAndStripMeta + injectField time, (3) salvo_storage_seconds — bbolt transaction time, (4) salvo_response_write_seconds — write response to conn. Use ExponentialBuckets(0.00001, 2, 15) for wire/bson/response and ExponentialBuckets(0.0001, 2, 12) for storage. These histograms let you see where time goes without running a profiler.",
+            "success_criteria": "curl /metrics after a 60-second YCSB run shows all 4 histogram families with non-zero bucket counts.",
+            "pr": null,
+            "merged_date": null
+          }
+        ]
+      },
+      {
+        "id": "phase-1",
+        "name": "Fix the Top Bottlenecks",
+        "status": "pending",
+        "gate": "phase-0-complete",
+        "gate_description": "All Phase 0 items must be merged before Phase 1 begins. The flame graph should be captured manually or via a CI step to confirm bottleneck ordering, but P1-A and P1-B are high-confidence regardless.",
+        "rationale": "These three fixes address the most likely bottlenecks based on code analysis and architectural constraints. The fsync-per-write issue is the proven killer for write workloads. The BSON allocation pooling addresses GC pressure on all workloads. Both are low-risk changes.",
+        "items": [
+          {
+            "id": "p1-a",
+            "name": "Pool BSON scratch buffers with sync.Pool",
+            "status": "pending",
+            "priority": "high",
+            "effort_hours": 3,
+            "files_to_modify": ["internal/server/connection.go", "internal/wire/protocol.go"],
+            "description": "extractAndStripMeta() and injectField() do full BSON unmarshal→rebuild→remarshal on every request. Add sync.Pool for: (1) bson.D slices (pool with capacity 16), (2) marshal output byte buffers (pool *bytes.Buffer, reset between uses), (3) index key construction buffers in internal/storage/index.go. This does not eliminate copies but eliminates GC churn. Replace make([]byte, ...) in these hot paths with pool get/put pairs.",
+            "success_criteria": "BenchmarkInsertMany -benchmem shows 2-4 fewer allocations per operation. go test ./... passes.",
+            "pr": null,
+            "merged_date": null
+          },
+          {
+            "id": "p1-b",
+            "name": "Use bbolt.Batch() for concurrent unordered writes",
+            "status": "pending",
+            "priority": "critical",
+            "effort_hours": 4,
+            "files_to_modify": ["internal/storage/collection.go"],
+            "description": "bbolt allows one writer at a time. Under 16 YCSB threads, all write goroutines serialize behind boltDB.Update(). bbolt has a built-in batch API (db.Batch()) that coalesces concurrent calls automatically. CRITICAL: bbolt.Batch() retries individual transactions on conflict — closures MUST reset all mutable state at the top (ids = ids[:0], successCount = 0, insertErr = nil) or retries use stale values. Only use Batch() for opts.Ordered == false inserts; keep Update() for ordered inserts where error semantics matter. After bolt.Open, set: db.MaxBatchSize = 500, db.MaxBatchDelay = 5 * time.Millisecond. This turns N serial fsyncs into 1 fsync per batch window under concurrent load.",
+            "success_criteria": "BenchmarkInsertMany with 16 goroutines shows throughput increase. All ordered-insert duplicate-key tests still pass. go test ./... passes.",
+            "pr": null,
+            "merged_date": null
+          },
+          {
+            "id": "p1-c",
+            "name": "Pass --syncOnWrite=false in bench docker-compose",
+            "status": "pending",
+            "priority": "high",
+            "effort_hours": 0.25,
+            "files_to_modify": ["deployments/bench/docker-compose.yml"],
+            "description": "The bench docker-compose does not pass --syncOnWrite=false to Salvobase. The default syncOnWrite=true means every boltDB.Update() fsyncs — killing write throughput. MongoDB Community with --noauth does group commits every 100ms. This is the primary reason Workload A (50% writes) is at 23.4%. Add --syncOnWrite=false to the Salvobase command args in docker-compose with a prominent comment: '# BENCH ONLY: disables per-write fsync. Do not use in production without understanding data-loss risk on crash.' This makes the durability comparison fair: both systems batch writes before fsyncing.",
+            "success_criteria": "docker-compose shows the flag with the warning comment. The next benchmark run shows Workload A ratio improves by >10pp.",
+            "pr": null,
+            "merged_date": null
+          }
+        ]
+      },
+      {
+        "id": "phase-2",
+        "name": "Structural Improvements",
+        "status": "pending",
+        "gate": "phase-1-complete",
+        "gate_description": "Phase 1 must be complete and verified by at least 2 benchmark cycles before Phase 2 begins.",
+        "rationale": "These fixes address architectural issues that are correct regardless of flame graph results but are lower priority than Phase 1.",
+        "items": [
+          {
+            "id": "p2-a",
+            "name": "Fix global cursor store lock",
+            "status": "pending",
+            "priority": "medium",
+            "effort_hours": 3,
+            "files_to_modify": ["internal/storage/cursor.go"],
+            "description": "cursorStore uses a single sync.RWMutex. Get() takes a WRITE lock to update lastUsed — serializing all concurrent cursor accesses. Fix: change lastUsed from time.Time to int64 (UnixNano) and update it with atomic.StoreInt64. Get() then takes only a RLock to retrieve the entry, then atomically updates lastUsed without a write lock.",
+            "success_criteria": "go test ./... passes. Under concurrent scan workload, cursor store lock contention disappears from pprof mutex profile.",
+            "pr": null,
+            "merged_date": null
+          },
+          {
+            "id": "p2-b",
+            "name": "Add open read transaction metric for bboltScanCursor",
+            "status": "pending",
+            "priority": "medium",
+            "effort_hours": 1,
+            "files_to_modify": ["internal/storage/cursor.go", "internal/server/metrics.go"],
+            "description": "bboltScanCursor holds an open bolt.Tx (read-only) across multiple getMore calls. bbolt's freelist cannot reclaim pages while any read tx is open. With 16 concurrent scans, the bbolt file can grow unboundedly. Add a gauge: salvo_open_read_transactions — increment when bboltScanCursor opens its tx, decrement on Close(). This makes the problem observable without changing the behavior.",
+            "success_criteria": "curl /metrics during a YCSB scan workload shows salvo_open_read_transactions gauge rising and falling correctly.",
+            "pr": null,
+            "merged_date": null
+          },
+          {
+            "id": "p2-c",
+            "name": "Improve YCSB benchmark parameters",
+            "status": "pending",
+            "priority": "medium",
+            "effort_hours": 2,
+            "files_to_modify": ["deployments/bench/docker-compose.yml", ".github/workflows/benchmark.yml"],
+            "description": "Current benchmark: RECORD_COUNT=10000, OPERATION_COUNT=10000. This is too small — 10K records fits in OS buffer cache, and 10K ops produces noisy measurements. Increase to RECORD_COUNT=50000, OPERATION_COUNT=50000. This is a 5x increase — verify CI runtime stays under 30 minutes by timing a test run first. Also add a warmup pass: run 5000 ops before the measured run using YCSB's -p warmupoperations flag to eliminate cold-start bias.",
+            "success_criteria": "Benchmark workflow completes in under 30 minutes. Result files show 50K operations per workload/thread combination.",
+            "pr": null,
+            "merged_date": null
+          }
+        ]
+      },
+      {
+        "id": "phase-3",
+        "name": "Strategic Assessment Gate",
+        "status": "pending",
+        "gate": "phase-2-complete",
+        "gate_description": "After Phase 2 completes and 3 benchmark cycles have run, evaluate whether to continue optimizing or reassess the strategy.",
+        "rationale": "This is the decision point. If after all Phase 1+2 fixes the ratio is still below 50%, bbolt's architectural limits are the bottleneck, not code quality. The options are: (A) accept and position, (B) migrate to Pebble storage engine, (C) add write-ahead log layer for group commit semantics.",
+        "items": [
+          {
+            "id": "p3-a",
+            "name": "Architectural ceiling assessment",
+            "status": "pending",
+            "priority": "high",
+            "effort_hours": 8,
+            "files_to_modify": [],
+            "description": "After Phase 2 completes: (1) Run BenchmarkFsync and BenchmarkInsertSingle on CI hardware to measure the actual bbolt throughput ceiling. (2) Compare current benchmark ratios against the theoretical ceiling. (3) If gap to ceiling is <5pp, we have hit the bbolt wall — further micro-optimization is waste. (4) Post strategic options analysis to GitHub Discussions with recommendation: accept ceiling OR begin Pebble migration planning OR implement WAL-based group commit. The agent should NOT begin a Pebble migration unilaterally — post the assessment and wait for the founder to decide.",
+            "success_criteria": "Discussion post with ceiling analysis and recommendation is posted. Plan state updated with the assessment.",
+            "pr": null,
+            "merged_date": null
+          }
+        ]
+      }
+    ]
+  },
+
+  "plan_history": [
+    {
+      "version": 3,
+      "created_date": "2026-03-20",
+      "reason": "Initial plan seeded by founder agent using 3-pass multi-agent critique loop. Plan V1 was generated by Agent-1 from code analysis. Plan V2 was a critique improving V1 (found: GOGC=200 error, bbolt.Batch() idempotency requirements, cursor store lock, missing ceiling analysis). Plan V3 was a final pass adding concrete code examples, decision gates, and architectural ceiling analysis.",
+      "discussion_url": null
+    }
+  ],
+
+  "reporting": {
+    "discussion_number": null,
+    "discussion_url": null,
+    "report_every_n_cycles": 1,
+    "comment": "Agent posts a progress update to GitHub Discussions on every cycle. Creates the thread on first run."
+  },
+
+  "cycle_count": 0,
+  "last_run_date": null,
+  "last_replan_date": null,
+  "status": "active"
+}

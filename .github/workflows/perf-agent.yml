@@ -1,0 +1,116 @@
+name: Performance Agent (Autonomous)
+
+# Autonomous performance improvement agent.
+# Runs daily, executes the performance plan from docs/perf-plan-state.json,
+# measures benchmark progress, and replans when stuck.
+#
+# The agent's ALGORITHM is in .github/perf-agent-prompt.md (immutable).
+# The PLAN is data in docs/perf-plan-state.json (evolves via replanning).
+#
+# When stuck (no improvement in 3 cycles), the agent generates a new plan
+# using a 3-agent critique loop: Agent-1 drafts, Agent-2 critiques, Agent-3
+# finalizes — the same process used to create the initial Plan V3.
+
+on:
+  schedule:
+    - cron: '0 13 * * *'   # 1pm UTC daily — after nightly benchmark results are in
+  workflow_dispatch:          # manual trigger for testing or forcing a cycle
+
+# One perf-agent run at a time. Queue, don't cancel.
+concurrency:
+  group: perf-agent
+  cancel-in-progress: false
+
+permissions:
+  contents: write       # push state updates to master
+  issues: write         # create/update performance issues
+  pull-requests: write  # create and merge implementation PRs
+  discussions: write    # post progress reports to Discussions
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  perf-agent:
+    name: Performance Agent Cycle
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.FOUNDER_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --global user.name "perf-agent"
+          git config --global user.email "perf-agent@users.noreply.github.com"
+
+      - name: Install Claude Code
+        # Pinned. Update intentionally — do not let dependabot auto-bump this.
+        run: npm install -g @anthropic-ai/claude-code@2.1.76
+
+      - name: Run perf agent cycle
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.FOUNDER_TOKEN }}
+        run: |
+          claude -p "$(cat .github/perf-agent-prompt.md)" \
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep,Agent" \
+            --output-format text \
+            --model claude-sonnet-4-6
+
+      - name: File failure issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+        run: |
+          python3 - << 'EOF'
+          import os, subprocess, datetime
+
+          repo = os.environ.get('GITHUB_REPOSITORY', 'inder/salvobase')
+          run_url = os.environ.get('RUN_URL', '')
+          commit_sha = os.environ.get('COMMIT_SHA', '')[:7]
+          date_str = datetime.date.today().isoformat()
+
+          body = f"""## Performance Agent Cycle Failed
+
+The scheduled perf-agent cycle failed on **{date_str}**.
+
+**Run:** {run_url}
+**Commit:** `{commit_sha}`
+
+### How to investigate
+
+1. Open the run URL above and check which step failed.
+2. Common failure modes:
+   - Claude Code exited non-zero: check the 'Run perf agent cycle' step logs
+   - ANTHROPIC_API_KEY quota exceeded or expired
+   - FOUNDER_TOKEN expired (rotate at GitHub Settings > Developer settings > PATs)
+   - Plan state JSON corrupted: restore from git history with `git show HEAD~1:docs/perf-plan-state.json`
+   - Benchmark data not available on bench-data branch yet
+
+3. Manual trigger after fixing:
+   ```
+   gh workflow run perf-agent.yml --repo inder/salvobase
+   ```
+
+4. The plan state is safe in git — even if this cycle failed, previous state is recoverable.
+
+*Filed automatically by the perf-agent workflow.*"""
+
+          result = subprocess.run([
+              'gh', 'issue', 'create',
+              '--repo', repo,
+              '--title', f'bug: perf-agent cycle failed ({date_str})',
+              '--label', 'bug,priority:high,area:performance',
+              '--body', body,
+          ], capture_output=True, text=True)
+
+          print(result.stdout)
+          if result.returncode != 0:
+              print(result.stderr)
+          EOF
