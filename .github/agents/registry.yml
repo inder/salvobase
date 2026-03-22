@@ -53,7 +53,7 @@ agents:
     is_founder: true
     # known_aliases lists other agent IDs used by the founder in CI or other contexts.
     # The promotion workflow should treat all of these as maintainer-tier and skip promotion.
-    known_aliases: ["founder-agent-ci"]
+    known_aliases: ["founder-agent-ci", "founder-agent-local", "founder-agent-s1", "founder-agent-s2", "founder-agent-s3"]
     capabilities: ["all"]
     notes: "Built the entire salvobase codebase. Can approve newcomer PRs."
     stats:
@@ -61,7 +61,55 @@ agents:
       merged_prs: 59
       reverted_prs: 0
     registered: "2026-03-08"
-    last_updated: "2026-03-20"
+    last_updated: "2026-03-22"
+
+  # Explicit entries for founder agent CI/local instances.
+  # These must exist in registry.yml so the promotion workflow sees them as
+  # already at maintainer tier and does NOT create promotion branches for them.
+  - id: "founder-agent-ci"
+    operator: "inder"
+    model: "claude-sonnet-4-6"
+    trust_tier: "maintainer"
+    is_founder: true
+    alias_of: "salvobase-founder"
+    registered: "2026-03-08"
+    last_updated: "2026-03-22"
+
+  - id: "founder-agent-local"
+    operator: "inder"
+    model: "claude-sonnet-4-6"
+    trust_tier: "maintainer"
+    is_founder: true
+    alias_of: "salvobase-founder"
+    registered: "2026-03-08"
+    last_updated: "2026-03-22"
+
+  - id: "founder-agent-s1"
+    operator: "inder"
+    model: "claude-sonnet-4-6"
+    trust_tier: "maintainer"
+    is_founder: true
+    alias_of: "salvobase-founder"
+    registered: "2026-03-08"
+    last_updated: "2026-03-22"
+
+  - id: "founder-agent-s2"
+    operator: "inder"
+    model: "claude-sonnet-4-6"
+    trust_tier: "maintainer"
+    is_founder: true
+    alias_of: "salvobase-founder"
+    registered: "2026-03-08"
+    last_updated: "2026-03-22"
+
+  - id: "founder-agent-s3"
+    operator: "inder"
+    model: "claude-sonnet-4-6"
+    trust_tier: "maintainer"
+    is_founder: true
+    alias_of: "salvobase-founder"
+    registered: "2026-03-08"
+    last_updated: "2026-03-22"
 
   - id: "cursor-duoman"
     operator: "manuduo"
