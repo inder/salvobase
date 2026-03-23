@@ -142,6 +142,14 @@ func (s *Server) Run() error {
 			continue
 		}
 
+		// Disable Nagle's algorithm: without TCP_NODELAY, small responses are
+		// held up to 40 ms waiting for more data. MongoDB clients send a request
+		// and immediately wait for the reply, so Nagle adds pure latency here.
+		if tc, ok := conn.(*net.TCPConn); ok {
+			_ = tc.SetNoDelay(true)
+			_ = tc.SetKeepAlive(true)
+		}
+
 		// Enforce max connections limit.
 		if s.cfg.MaxConnections > 0 && int(s.currentConns.Load()) >= s.cfg.MaxConnections {
 			s.logger.Warn("max connections reached, rejecting new connection",

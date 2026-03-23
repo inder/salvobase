@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
@@ -28,6 +29,7 @@ func newRequestID() int32 {
 type Connection struct {
 	id     int64
 	conn   net.Conn
+	br     *bufio.Reader // persistent read buffer — eliminates per-message allocation
 	server *Server
 	logger *zap.Logger
 
@@ -40,11 +42,16 @@ type Connection struct {
 	session *commands.Session
 }
 
+// connReadBufSize is the size of the per-connection read buffer.
+// 16 KiB covers the common case (OP_MSG + BSON doc) without a second syscall.
+const connReadBufSize = 16 * 1024
+
 // newConnection creates a new Connection wrapping the given net.Conn.
 func newConnection(id int64, conn net.Conn, srv *Server) *Connection {
 	return &Connection{
 		id:     id,
 		conn:   conn,
+		br:     bufio.NewReaderSize(conn, connReadBufSize),
 		server: srv,
 		logger: srv.logger.With(
 			zap.Int64("connID", id),
@@ -61,8 +68,9 @@ func (c *Connection) serve() {
 	c.logger.Debug("new connection")
 
 	for {
-		// Read the next message from the client.
-		msg, err := wire.ReadMessage(c.conn)
+		// Read the next message from the client using the persistent
+		// connection-level bufio.Reader (no per-message allocation).
+		msg, err := wire.ReadMessage(c.br)
 		if err != nil {
 			if err == io.EOF || isConnectionReset(err) {
 				c.logger.Debug("client disconnected")
