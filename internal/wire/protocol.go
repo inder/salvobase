@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"net"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
@@ -168,9 +167,13 @@ func ReadHeader(r io.Reader) (Header, error) {
 	return hdr, nil
 }
 
-// ReadMessage reads one complete MongoDB wire protocol message from conn.
-// It reads the 16-byte header, then dispatches to the appropriate parser
-// based on the opcode. Returns one of:
+// ReadMessage reads one complete MongoDB wire protocol message from br.
+// br must be a persistent *bufio.Reader owned by the connection — it is NOT
+// created inside this function. Using a connection-level bufio.Reader eliminates
+// the per-message bufio.NewReader allocation (one 4 KiB alloc per request on the
+// hottest path) that the previous net.Conn-based signature incurred.
+//
+// Returns one of:
 //   - *OpMsgMessage
 //   - *OpQueryMessage
 //   - *OpGetMoreMessage
@@ -179,8 +182,8 @@ func ReadHeader(r io.Reader) (Header, error) {
 //
 // For unknown/unsupported opcodes, the remaining bytes are discarded and
 // nil is returned with no error.
-func ReadMessage(conn net.Conn) (interface{}, error) {
-	hdr, err := ReadHeader(conn)
+func ReadMessage(br *bufio.Reader) (interface{}, error) {
+	hdr, err := ReadHeader(br)
 	if err != nil {
 		return nil, fmt.Errorf("ReadMessage: read header: %w", err)
 	}
@@ -191,46 +194,42 @@ func ReadMessage(conn net.Conn) (interface{}, error) {
 		return nil, fmt.Errorf("ReadMessage: negative body length %d (messageLength=%d)", bodyLen, hdr.MessageLength)
 	}
 
-	// Use an io.LimitedReader so individual parsers cannot read past the
-	// declared message boundary, then wrap it in a bufio.Reader so that
-	// readCString and the fixed-width int readers pull from a 4 KiB in-memory
-	// buffer instead of making one syscall per byte / per field.
-	// The bufio.Reader also satisfies io.ByteReader, enabling the fast path in
-	// readCString that avoids the per-byte allocation.
-	lr := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	br := bufio.NewReaderSize(lr, 4096)
+	// Bound message body reads using the connection's existing bufio.Reader.
+	// boundedBufReader preserves io.ByteReader so readCString stays on its
+	// fast path (no per-byte allocation). No new bufio allocation per message.
+	bounded := &boundedBufReader{r: br, n: int64(bodyLen)}
 
 	switch hdr.OpCode {
 	case OpMsg:
-		msg, err := readOpMsg(br, hdr, bodyLen)
+		msg, err := readOpMsg(bounded, hdr, bodyLen)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_MSG: %w", err)
 		}
 		return msg, nil
 
 	case OpQuery:
-		msg, err := readOpQuery(br, hdr)
+		msg, err := readOpQuery(bounded, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_QUERY: %w", err)
 		}
 		return msg, nil
 
 	case OpGetMore:
-		msg, err := readOpGetMore(br, hdr)
+		msg, err := readOpGetMore(bounded, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_GETMORE: %w", err)
 		}
 		return msg, nil
 
 	case OpKillCursors:
-		msg, err := readOpKillCursors(br, hdr)
+		msg, err := readOpKillCursors(bounded, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_KILL_CURSORS: %w", err)
 		}
 		return msg, nil
 
 	case OpDelete:
-		msg, err := readOpDelete(br, hdr)
+		msg, err := readOpDelete(bounded, hdr)
 		if err != nil {
 			return nil, fmt.Errorf("ReadMessage OP_DELETE: %w", err)
 		}
@@ -239,8 +238,7 @@ func ReadMessage(conn net.Conn) (interface{}, error) {
 	default:
 		// Discard unknown message body so the connection stays in sync.
 		if bodyLen > 0 {
-			discard := make([]byte, bodyLen)
-			if _, err := io.ReadFull(conn, discard); err != nil {
+			if _, err := br.Discard(bodyLen); err != nil {
 				return nil, fmt.Errorf("ReadMessage: discard unknown opcode %d body: %w", hdr.OpCode, err)
 			}
 		}

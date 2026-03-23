@@ -73,11 +73,20 @@ func readOpMsg(r io.Reader, hdr Header, bodyLen int) (*OpMsgMessage, error) {
 	// underlying *bufio.Reader's io.ByteReader interface is preserved,
 	// keeping readCString on the fast path (no per-byte allocation) inside
 	// OP_MSG section parsing.
+	//
+	// Three cases, in order of likelihood:
+	//   1. *boundedBufReader — ReadMessage passes this after the bufio PR.
+	//      Extract the underlying *bufio.Reader and re-bound to sectionBytes.
+	//   2. *bufio.Reader — direct bufio.Reader (legacy / unit-test paths).
+	//   3. anything else — fall back to io.LimitedReader (loses ByteReader fast path).
 	var sectionReader io.Reader
 	if sectionBytes > 0 {
-		if br, ok := r.(*bufio.Reader); ok {
-			sectionReader = &boundedBufReader{r: br, n: sectionBytes}
-		} else {
+		switch v := r.(type) {
+		case *boundedBufReader:
+			sectionReader = &boundedBufReader{r: v.r, n: sectionBytes}
+		case *bufio.Reader:
+			sectionReader = &boundedBufReader{r: v, n: sectionBytes}
+		default:
 			sectionReader = &io.LimitedReader{R: r, N: sectionBytes}
 		}
 	} else {
