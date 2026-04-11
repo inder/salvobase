@@ -119,7 +119,7 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 ---
 
 ### `compat.yml` — Compatibility Matrix
-**Trigger:** Push to master, PR, manual
+**Trigger:** Push to master + manual
 **What it does:**
 1. Runs the compat probe tool against a live Salvobase instance, writes results to `docs/compat_report.json`
 2. Compares against the previous commit — files a regression issue immediately if any probe regresses (pass → fail/partial)
@@ -133,7 +133,7 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 ---
 
 ### `benchmark.yml` — Adaptive Benchmark
-**Trigger:** Every 3 hours (`0 */3 * * *`) + manual — but a gate job skips the expensive YCSB run based on current gap:
+**Trigger:** Daily at 04:00 UTC (`0 4 * * *`) + manual — a gate job skips the expensive YCSB run based on current gap:
 
 | Gap | Effective cadence |
 |-----|------------------|
@@ -237,8 +237,8 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 | `agent-promotion-v2.yml` | PR merged | Tier promotion check |
 | `promotion-celebration.yml` | Promotion PR merged | Celebration post |
 | `ci.yml` | Push/PR | Build + test + lint |
-| `compat.yml` | Push/PR/manual | Compat score + regression + gap issues |
-| `benchmark.yml` | Every 3h (adaptive gate) | Perf vs MongoDB + north star |
+| `compat.yml` | Push/manual | Compat score + regression + gap issues |
+| `benchmark.yml` | Daily 04:00 UTC (adaptive gate) | Perf vs MongoDB + north star |
 | `orchestrator.yml` | Every 15min | Claim expiry + stale PR warnings |
 | `stale-pr-cleanup.yml` | Daily | Close 7d+ stale PRs |
 | `spec-gap-analyzer-v2.yml` | *(retired)* | Superseded by compat.yml |
