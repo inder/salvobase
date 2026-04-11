@@ -19,6 +19,27 @@ import sys
 from datetime import datetime, timezone
 
 
+def has_open_failure_issue(repo: str, search_term: str) -> bool:
+    """Check if there's already an open failure issue matching search_term."""
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "list",
+                "--repo", repo,
+                "--state", "open",
+                "--label", "bug",
+                "--search", search_term,
+                "--json", "number",
+                "--jq", "length",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return int(result.stdout.strip()) > 0
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def main() -> None:
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     run_url = os.environ.get("RUN_URL", "")
@@ -28,6 +49,10 @@ def main() -> None:
     operator = os.environ.get("OPERATOR_HANDLE", "unknown-operator")
 
     date_str = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+
+    if has_open_failure_issue(repo, "contributor agent cycle failed"):
+        print(f"Open failure issue already exists for {repo} — skipping duplicate.")
+        return
 
     body = f"""\
 ## Contributor Agent Cycle Failed

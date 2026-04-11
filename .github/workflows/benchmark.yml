@@ -1,18 +1,12 @@
 name: Nightly Benchmark
 
-# Adaptive cadence — runs every 3 hours but a gate job skips the expensive
-# YCSB run based on current performance gap:
-#
-#   gap > 50pp  (ratio <40%)  →  throttle 3h   (crisis mode)
-#   gap > 25pp  (ratio <65%)  →  throttle 6h   (active sprint)
-#   gap > 10pp  (ratio <80%)  →  throttle 12h  (tuning phase)
-#   gap ≤ 10pp  (ratio ≥80%)  →  throttle 24h  (original cadence)
-#
+# Daily benchmark — perf gap is closed, so once per day is sufficient.
+# The gate job still skips the expensive YCSB run if the gap is small enough.
 # workflow_dispatch always bypasses the gate.
 
 on:
-  # schedule:
-  #   - cron: '0 */3 * * *'   # every 3 hours; gate skips most runs adaptively
+  schedule:
+    - cron: '0 4 * * *'   # once daily at 04:00 UTC; perf gap closed, reduced cadence
   workflow_dispatch:
 
 permissions:

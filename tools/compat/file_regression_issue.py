@@ -22,11 +22,36 @@ import sys
 from datetime import datetime, timezone
 
 
+def has_open_failure_issue(repo: str, search_term: str) -> bool:
+    """Check if there's already an open failure issue matching search_term."""
+    try:
+        result = subprocess.run(
+            [
+                "gh", "issue", "list",
+                "--repo", repo,
+                "--state", "open",
+                "--label", "bug",
+                "--search", search_term,
+                "--json", "number",
+                "--jq", "length",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return int(result.stdout.strip()) > 0
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def main() -> None:
     repo = os.environ.get("GITHUB_REPOSITORY", "inder/salvobase")
     regression_output = os.environ.get("REGRESSION_OUTPUT", "(no output captured)")
     commit_sha = os.environ.get("COMMIT_SHA", "")[:7]
     commit_url = os.environ.get("COMMIT_URL", "")
+
+    if has_open_failure_issue(repo, "compatibility regression detected"):
+        print(f"Open regression issue already exists for {repo} — skipping duplicate.")
+        return
     pr_number = os.environ.get("PR_NUMBER", "")
     pr_url = os.environ.get("PR_URL", "")
 
