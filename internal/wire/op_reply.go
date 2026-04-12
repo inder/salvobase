@@ -4,9 +4,24 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
+
+// opReplyHdrSize is the fixed byte count for the non-document portion of an
+// OP_REPLY message: header(16) + responseFlags(4) + cursorID(8) +
+// startingFrom(4) + numberReturned(4) = 36.
+const opReplyHdrSize = HeaderSize + 4 + 8 + 4 + 4
+
+// opReplyHdrPool pools the fixed-size header buffer used by WriteOpReply so
+// that high-throughput query paths avoid a 36-byte allocation per response.
+var opReplyHdrPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, opReplyHdrSize)
+		return &b
+	},
+}
 
 // OpReplyMessage represents an OP_REPLY wire protocol message (opcode 1).
 // OP_REPLY is the server-to-client response format used with legacy OP_QUERY.
@@ -45,12 +60,17 @@ func WriteOpReply(
 
 	// messageLength = header(16) + responseFlags(4) + cursorID(8) +
 	//                 startingFrom(4) + numberReturned(4) + docs
-	msgLen := int32(HeaderSize + 4 + 8 + 4 + 4 + docBytes)
+	msgLen := int32(opReplyHdrSize + docBytes)
 
-	// Allocate a buffer for everything except the document bodies (which we
-	// write separately to avoid a large intermediate allocation for big result
-	// sets — though we still write them in one Write call per document).
-	hdrBuf := make([]byte, HeaderSize+4+8+4+4)
+	// Borrow a pooled buffer for the fixed-size header portion.
+	bp, ok := opReplyHdrPool.Get().(*[]byte)
+	if !ok {
+		b := make([]byte, opReplyHdrSize)
+		bp = &b
+	}
+	hdrBuf := *bp // aliases the pooled array; do not retain beyond this function
+	defer opReplyHdrPool.Put(bp)
+
 	offset := 0
 
 	// Header
@@ -71,7 +91,6 @@ func WriteOpReply(
 	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(startingFrom))
 	offset += 4
 	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(len(docs)))
-	// offset += 4  (last field, not needed)
 
 	if _, err := w.Write(hdrBuf); err != nil {
 		return fmt.Errorf("WriteOpReply header: %w", err)
