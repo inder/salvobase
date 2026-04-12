@@ -852,11 +852,38 @@ func (c *bboltCollection) chooseIndex(tx *bolt.Tx, filter bson.Raw) (indexScanPl
 	return bestPlan, true
 }
 
+// docArena is a bump allocator that batches per-document copy allocations
+// during collection and index scans. Instead of one allocation per document,
+// documents are packed contiguously into 64 KB slabs, reducing GC pressure
+// to ~1 allocation per 64 KB of result data.
+type docArena struct {
+	buf []byte
+}
+
+const docArenaSize = 64 * 1024 // 64 KB
+
+// copyBytes copies src into the arena and returns a slice backed by the arena.
+// When the current slab cannot fit src, a new slab is allocated. Previous
+// slices remain valid because they reference the old backing array.
+func (a *docArena) copyBytes(src []byte) []byte {
+	n := len(src)
+	if cap(a.buf)-len(a.buf) < n {
+		newCap := docArenaSize
+		if n > newCap {
+			newCap = n
+		}
+		a.buf = make([]byte, 0, newCap)
+	}
+	start := len(a.buf)
+	a.buf = append(a.buf, src...)
+	return a.buf[start : start+n]
+}
+
 // fetchDoc retrieves and optionally filters/projects one document from a collection bucket
 // using its raw _id key (as stored in non-unique index entries).
 // Returns nil if the document is missing (stale index entry), doesn't match the filter,
 // or projection produces an empty result.
-func (c *bboltCollection) fetchDoc(collB *bolt.Bucket, idBytes []byte, filter bson.Raw, projection bson.Raw) (bson.Raw, error) {
+func (c *bboltCollection) fetchDoc(collB *bolt.Bucket, idBytes []byte, filter bson.Raw, projection bson.Raw, arena *docArena) (bson.Raw, error) {
 	v := collB.Get(idBytes)
 	if v == nil {
 		return nil, nil // stale index entry; skip
@@ -882,9 +909,7 @@ func (c *bboltCollection) fetchDoc(collB *bolt.Bucket, idBytes []byte, filter bs
 			return nil, err
 		}
 	}
-	cp := make([]byte, len(doc))
-	copy(cp, doc)
-	return bson.Raw(cp), nil
+	return bson.Raw(arena.copyBytes(doc)), nil
 }
 
 // indexScanTx performs an index-backed scan within an existing read transaction.
@@ -922,13 +947,15 @@ func (c *bboltCollection) indexScanTx(
 	var docs []bson.Raw
 	prefixKey := plan.prefix
 
+	var arena docArena
+
 	if plan.spec.Unique {
 		// Unique index: exact key → value is the doc's _id bytes.
 		idBytes := idxB.Get(prefixKey)
 		if idBytes == nil {
 			return nil, nil
 		}
-		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
+		doc, err := c.fetchDoc(collB, idBytes, filter, projection, &arena)
 		if err != nil {
 			return nil, err
 		}
@@ -949,7 +976,7 @@ func (c *bboltCollection) indexScanTx(
 			continue
 		}
 		idBytes := k[len(prefixKey)+1:]
-		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
+		doc, err := c.fetchDoc(collB, idBytes, filter, projection, &arena)
 		if err != nil {
 			return nil, err
 		}
@@ -1022,6 +1049,7 @@ func (c *bboltCollection) rangeIndexScanTx(
 	}
 
 	var docs []bson.Raw
+	var arena docArena
 
 	for k := startK; k != nil; k, _ = cur.Next() {
 		// Stop if key no longer begins with the equality prefix.
@@ -1084,7 +1112,7 @@ func (c *bboltCollection) rangeIndexScanTx(
 		}
 
 		idBytes := k[sepIdx+1:]
-		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
+		doc, err := c.fetchDoc(collB, idBytes, filter, projection, &arena)
 		if err != nil {
 			return nil, err
 		}
@@ -1136,6 +1164,7 @@ func (c *bboltCollection) rangeIndexScanUniqueTx(
 	}
 
 	var docs []bson.Raw
+	var arena docArena
 	for k, v := startK, startV; k != nil; k, v = cur.Next() {
 		if len(outerPrefix) > 0 && !bytes.HasPrefix(k, outerPrefix) {
 			break
@@ -1163,7 +1192,7 @@ func (c *bboltCollection) rangeIndexScanUniqueTx(
 		}
 
 		idBytes := v
-		doc, err := c.fetchDoc(collB, idBytes, filter, projection)
+		doc, err := c.fetchDoc(collB, idBytes, filter, projection, &arena)
 		if err != nil {
 			return nil, err
 		}
@@ -1185,6 +1214,7 @@ func (c *bboltCollection) collectionScanTx(tx *bolt.Tx, filter bson.Raw, project
 		return nil, nil
 	}
 	var docs []bson.Raw
+	var arena docArena
 	err := b.ForEach(func(k, v []byte) error {
 		raw, err := c.engine.decompress(v)
 		if err != nil {
@@ -1204,9 +1234,7 @@ func (c *bboltCollection) collectionScanTx(tx *bolt.Tx, filter bson.Raw, project
 				return err
 			}
 		}
-		cp := make([]byte, len(doc))
-		copy(cp, doc)
-		docs = append(docs, bson.Raw(cp))
+		docs = append(docs, bson.Raw(arena.copyBytes(doc)))
 		if !so.hasSort && so.limit > 0 && int64(len(docs)) >= so.limit {
 			return errStopIteration
 		}
@@ -1265,7 +1293,7 @@ func (c *bboltCollection) scanFilter(filter bson.Raw, projection bson.Raw, so sc
 			}
 			cp := make([]byte, len(doc))
 			copy(cp, doc)
-			docs = append(docs, bson.Raw(cp))
+			docs = append(docs, cp)
 			return nil
 		}); err != nil {
 			return nil, err
