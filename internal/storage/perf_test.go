@@ -8,6 +8,17 @@ import (
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
+// bsonStringBytes returns BSON-encoded string bytes (int32 length + data + \x00)
+// suitable for use in bson.RawValue{Type: bson.TypeString, Value: ...}.
+func bsonStringBytes(s string) []byte {
+	l := len(s) + 1
+	b := make([]byte, 4+l)
+	binary.LittleEndian.PutUint32(b, uint32(l))
+	copy(b[4:], s)
+	// trailing null already zero
+	return b
+}
+
 // TestUpdateByIDFastPath verifies that UpdateOne with an {_id: value} filter
 // uses the direct key lookup (O(log N)) rather than a full collection scan.
 func TestUpdateByIDFastPath(t *testing.T) {
@@ -258,7 +269,7 @@ func TestAppendIDKeyIdentity(t *testing.T) {
 		},
 		{
 			name: "String",
-			val:  bson.RawValue{Type: bson.TypeString, Value: func() []byte { b, _ := bson.AppendString(nil, "hello"); return b }()},
+			val:  bson.RawValue{Type: bson.TypeString, Value: bsonStringBytes("hello")},
 			want: append([]byte{0x02}, "hello"...),
 		},
 	}
@@ -293,7 +304,7 @@ func TestAppendIndexKeyRawIdentity(t *testing.T) {
 		{"BoolTrue", bson.RawValue{Type: bson.TypeBoolean, Value: []byte{1}}, 0x10},
 		{"BoolFalse", bson.RawValue{Type: bson.TypeBoolean, Value: []byte{0}}, 0x10},
 		{"ObjectID", bson.RawValue{Type: bson.TypeObjectID, Value: oid[:]}, 0x50},
-		{"String", bson.RawValue{Type: bson.TypeString, Value: func() []byte { b, _ := bson.AppendString(nil, "abc"); return b }()}, 0x30},
+		{"String", bson.RawValue{Type: bson.TypeString, Value: bsonStringBytes("abc")}, 0x30},
 	}
 
 	for _, tc := range tests {
@@ -321,7 +332,7 @@ func TestAppendIndexKeyRawIdentity(t *testing.T) {
 		}()}
 		dirDesc := bson.RawValue{Type: bson.TypeInt32, Value: func() []byte {
 			b := make([]byte, 4)
-			binary.LittleEndian.PutUint32(b, uint32(int32(-1)))
+			binary.LittleEndian.PutUint32(b, 0xFFFFFFFF)
 			return b
 		}()}
 		fieldVal := bson.RawValue{Type: bson.TypeObjectID, Value: oid[:]}
@@ -401,7 +412,7 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 	}
 
 	// Create a secondary index on "name"
-	if err := coll.CreateIndex(IndexSpec{
+	if _, err := e.CreateIndex("bench", "indexed", IndexSpec{
 		Name: "name_1",
 		Keys: mustMarshal(bson.D{{Key: "name", Value: int32(1)}}),
 	}); err != nil {
