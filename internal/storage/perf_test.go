@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"bytes"
+	"encoding/binary"
 	"testing"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -212,3 +214,208 @@ func benchmarkUpdateByIDN(b *testing.B, n int) {
 
 func BenchmarkUpdateByID_100(b *testing.B)  { benchmarkUpdateByIDN(b, 100) }
 func BenchmarkUpdateByID_1000(b *testing.B) { benchmarkUpdateByIDN(b, 1000) }
+
+// TestAppendIDKeyIdentity verifies that appendIDKey produces the same bytes as
+// the expected encoding for each _id type.
+func TestAppendIDKeyIdentity(t *testing.T) {
+	oid := bson.NewObjectID()
+
+	tests := []struct {
+		name string
+		val  bson.RawValue
+		want []byte
+	}{
+		{
+			name: "ObjectID",
+			val:  bson.RawValue{Type: bson.TypeObjectID, Value: oid[:]},
+			want: oid[:],
+		},
+		{
+			name: "Int32",
+			val: func() bson.RawValue {
+				b := make([]byte, 4)
+				binary.LittleEndian.PutUint32(b, 42)
+				return bson.RawValue{Type: bson.TypeInt32, Value: b}
+			}(),
+			want: func() []byte {
+				b := []byte{0x10, 0, 0, 0, 0}
+				binary.LittleEndian.PutUint32(b[1:], 42)
+				return b
+			}(),
+		},
+		{
+			name: "Int64",
+			val: func() bson.RawValue {
+				b := make([]byte, 8)
+				binary.LittleEndian.PutUint64(b, 99)
+				return bson.RawValue{Type: bson.TypeInt64, Value: b}
+			}(),
+			want: func() []byte {
+				b := []byte{0x12, 0, 0, 0, 0, 0, 0, 0, 0}
+				binary.LittleEndian.PutUint64(b[1:], 99)
+				return b
+			}(),
+		},
+		{
+			name: "String",
+			val:  bson.RawValue{Type: bson.TypeString, Value: func() []byte { b, _ := bson.AppendString(nil, "hello"); return b }()},
+			want: append([]byte{0x02}, "hello"...),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := encodeIDValue(tc.val)
+			if !bytes.Equal(got, tc.want) {
+				t.Errorf("encodeIDValue: got %x, want %x", got, tc.want)
+			}
+
+			var buf [64]byte
+			gotAppend := appendIDKey(buf[:0], tc.val)
+			if !bytes.Equal(gotAppend, tc.want) {
+				t.Errorf("appendIDKey: got %x, want %x", gotAppend, tc.want)
+			}
+		})
+	}
+}
+
+// TestAppendIndexKeyRawIdentity verifies that appendIndexKeyRaw produces correct
+// output for each BSON type, including the descending bit-flip path.
+func TestAppendIndexKeyRawIdentity(t *testing.T) {
+	oid := bson.NewObjectID()
+
+	tests := []struct {
+		name string
+		val  bson.RawValue
+		tag  byte // expected first byte
+	}{
+		{"Null", bson.RawValue{Type: bson.TypeNull}, 0x00},
+		{"BoolTrue", bson.RawValue{Type: bson.TypeBoolean, Value: []byte{1}}, 0x10},
+		{"BoolFalse", bson.RawValue{Type: bson.TypeBoolean, Value: []byte{0}}, 0x10},
+		{"ObjectID", bson.RawValue{Type: bson.TypeObjectID, Value: oid[:]}, 0x50},
+		{"String", bson.RawValue{Type: bson.TypeString, Value: func() []byte { b, _ := bson.AppendString(nil, "abc"); return b }()}, 0x30},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := encodeIndexKeyFromRaw(tc.val)
+			if got[0] != tc.tag {
+				t.Errorf("tag byte: got 0x%02x, want 0x%02x", got[0], tc.tag)
+			}
+
+			// Verify append variant produces identical bytes
+			var buf [64]byte
+			gotAppend := appendIndexKeyRaw(buf[:0], tc.val)
+			if !bytes.Equal(got, gotAppend) {
+				t.Errorf("appendIndexKeyRaw mismatch: wrapper=%x, append=%x", got, gotAppend)
+			}
+		})
+	}
+
+	// Test descending index bit-flip
+	t.Run("DescendingFlip", func(t *testing.T) {
+		dirAsc := bson.RawValue{Type: bson.TypeInt32, Value: func() []byte {
+			b := make([]byte, 4)
+			binary.LittleEndian.PutUint32(b, 1)
+			return b
+		}()}
+		dirDesc := bson.RawValue{Type: bson.TypeInt32, Value: func() []byte {
+			b := make([]byte, 4)
+			binary.LittleEndian.PutUint32(b, uint32(int32(-1)))
+			return b
+		}()}
+		fieldVal := bson.RawValue{Type: bson.TypeObjectID, Value: oid[:]}
+
+		asc := encodeIndexField(dirAsc, fieldVal)
+		desc := encodeIndexField(dirDesc, fieldVal)
+
+		if len(asc) != len(desc) {
+			t.Fatalf("length mismatch: asc=%d, desc=%d", len(asc), len(desc))
+		}
+		for i := range asc {
+			if desc[i] != 0xFF^asc[i] {
+				t.Errorf("byte %d: desc=0x%02x, want 0x%02x (0xFF ^ asc)", i, desc[i], 0xFF^asc[i])
+			}
+		}
+	})
+}
+
+// BenchmarkEncodeIDValue benchmarks _id key encoding for the most common types.
+func BenchmarkEncodeIDValue(b *testing.B) {
+	oid := bson.NewObjectID()
+	oidRaw := bson.RawValue{Type: bson.TypeObjectID, Value: oid[:]}
+	intRaw := bson.RawValue{Type: bson.TypeInt32}
+	intRaw.Value = make([]byte, 4)
+
+	b.Run("ObjectID", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = encodeIDValue(oidRaw)
+		}
+	})
+	b.Run("Int32", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = encodeIDValue(intRaw)
+		}
+	})
+}
+
+// BenchmarkBuildIndexKey benchmarks composite index key construction.
+func BenchmarkBuildIndexKey(b *testing.B) {
+	doc := mustMarshal(bson.D{
+		{Key: "_id", Value: bson.NewObjectID()},
+		{Key: "name", Value: "alice"},
+		{Key: "age", Value: int32(30)},
+	})
+	keys := mustMarshal(bson.D{{Key: "name", Value: int32(1)}})
+	idBytes := encodeIDValue(doc.Lookup("_id"))
+
+	b.Run("Single", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = buildIndexKey(keys, doc, idBytes)
+		}
+	})
+
+	compoundKeys := mustMarshal(bson.D{
+		{Key: "name", Value: int32(1)},
+		{Key: "age", Value: int32(-1)},
+	})
+	b.Run("Compound", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = buildIndexKey(compoundKeys, doc, idBytes)
+		}
+	})
+}
+
+// BenchmarkInsertWithIndex benchmarks insert into a collection with a secondary index.
+func BenchmarkInsertWithIndex(b *testing.B) {
+	dir := b.TempDir()
+	e, err := NewBBoltEngine(dir, "none", false)
+	if err != nil {
+		b.Fatalf("NewBBoltEngine: %v", err)
+	}
+	defer e.Close()
+
+	coll, err := e.Collection("bench", "indexed")
+	if err != nil {
+		b.Fatalf("Collection: %v", err)
+	}
+
+	// Create a secondary index on "name"
+	if err := coll.CreateIndex(IndexSpec{
+		Name: "name_1",
+		Keys: mustMarshal(bson.D{{Key: "name", Value: int32(1)}}),
+	}); err != nil {
+		b.Fatalf("CreateIndex: %v", err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		doc := mustMarshal(bson.D{
+			{Key: "name", Value: "user"},
+			{Key: "age", Value: int32(i)},
+		})
+		if _, err := coll.InsertOne(doc); err != nil {
+			b.Fatalf("InsertOne: %v", err)
+		}
+	}
+}

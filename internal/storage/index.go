@@ -13,149 +13,132 @@ import (
 
 // ─── _id key encoding ─────────────────────────────────────────────────────────
 
-// encodeIDValue encodes a BSON _id value into a sortable byte key.
-// ObjectID _id: 12 raw bytes (natural time-ordering).
-// String _id:   0x02 + UTF-8 bytes
-// Int32 _id:    0x10 + 4 LE bytes
-// Int64 _id:    0x12 + 8 LE bytes
-// Other:        BSON encoding of the value
-func encodeIDValue(v bson.RawValue) []byte {
+// appendIDKey appends the encoded _id key for v to dst and returns the extended slice.
+// Callers on hot paths should pass a stack-allocated buffer (e.g. buf[:0] where buf is [64]byte).
+func appendIDKey(dst []byte, v bson.RawValue) []byte {
 	switch v.Type {
 	case bson.TypeObjectID:
 		oid, ok := v.ObjectIDOK()
 		if !ok {
 			break
 		}
-		return oid[:]
+		return append(dst, oid[:]...)
 	case bson.TypeString:
 		s, ok := v.StringValueOK()
 		if !ok {
 			break
 		}
-		b := make([]byte, 1+len(s))
-		b[0] = 0x02
-		copy(b[1:], s)
-		return b
+		dst = append(dst, 0x02)
+		return append(dst, s...)
 	case bson.TypeInt32:
 		n, ok := v.Int32OK()
 		if !ok {
 			break
 		}
-		b := make([]byte, 5)
-		b[0] = 0x10
-		binary.LittleEndian.PutUint32(b[1:], uint32(n))
-		return b
+		dst = append(dst, 0x10, 0, 0, 0, 0)
+		binary.LittleEndian.PutUint32(dst[len(dst)-4:], uint32(n))
+		return dst
 	case bson.TypeInt64:
 		n, ok := v.Int64OK()
 		if !ok {
 			break
 		}
-		b := make([]byte, 9)
-		b[0] = 0x12
-		binary.LittleEndian.PutUint64(b[1:], uint64(n))
-		return b
+		dst = append(dst, 0x12, 0, 0, 0, 0, 0, 0, 0, 0)
+		binary.LittleEndian.PutUint64(dst[len(dst)-8:], uint64(n))
+		return dst
 	}
-	// Fallback: use BSON type byte + value bytes
-	result := make([]byte, 1+len(v.Value))
-	result[0] = byte(v.Type)
-	copy(result[1:], v.Value)
-	return result
+	dst = append(dst, byte(v.Type))
+	return append(dst, v.Value...)
+}
+
+// encodeIDValue encodes a BSON _id value into a sortable byte key.
+func encodeIDValue(v bson.RawValue) []byte {
+	return appendIDKey(nil, v)
 }
 
 // ─── Index key encoding ───────────────────────────────────────────────────────
 
-// encodeFloat64Index encodes a float64 in a way that preserves sort order.
-// Uses IEEE 754 bit manipulation to make negative numbers sort before positive.
-func encodeFloat64Index(f float64) []byte {
+// appendFloat64Index appends a sort-order-preserving float64 encoding to dst.
+func appendFloat64Index(dst []byte, f float64) []byte {
 	bits := math.Float64bits(f)
-	// Flip sign bit; if negative, flip all bits
 	if bits>>63 == 0 {
 		bits ^= 0x8000000000000000
 	} else {
 		bits ^= 0xFFFFFFFFFFFFFFFF
 	}
-	b := make([]byte, 9)
-	b[0] = 0x20
-	binary.BigEndian.PutUint64(b[1:], bits)
-	return b
+	dst = append(dst, 0x20, 0, 0, 0, 0, 0, 0, 0, 0)
+	binary.BigEndian.PutUint64(dst[len(dst)-8:], bits)
+	return dst
+}
+
+// appendIndexKeyRaw appends the index key encoding of v to dst.
+func appendIndexKeyRaw(dst []byte, v bson.RawValue) []byte {
+	switch v.Type {
+	case 0, bson.TypeNull:
+		return append(dst, 0x00)
+	case bson.TypeBoolean:
+		if v.Boolean() {
+			return append(dst, 0x10, 0x01)
+		}
+		return append(dst, 0x10, 0x00)
+	case bson.TypeDouble:
+		f, _ := v.DoubleOK()
+		return appendFloat64Index(dst, f)
+	case bson.TypeInt32:
+		n, _ := v.Int32OK()
+		return appendFloat64Index(dst, float64(n))
+	case bson.TypeInt64:
+		n, _ := v.Int64OK()
+		return appendFloat64Index(dst, float64(n))
+	case bson.TypeString:
+		s, _ := v.StringValueOK()
+		dst = append(dst, 0x30)
+		return append(dst, s...)
+	case bson.TypeBinary:
+		_, binData, ok := v.BinaryOK()
+		if !ok {
+			return append(dst, 0x40)
+		}
+		dst = append(dst, 0x40)
+		return append(dst, binData...)
+	case bson.TypeObjectID:
+		oid, ok := v.ObjectIDOK()
+		if !ok {
+			return append(dst, 0x50)
+		}
+		dst = append(dst, 0x50)
+		return append(dst, oid[:]...)
+	case bson.TypeDateTime:
+		t, _ := v.DateTimeOK()
+		dst = append(dst, 0x60, 0, 0, 0, 0, 0, 0, 0, 0)
+		binary.BigEndian.PutUint64(dst[len(dst)-8:], uint64(t))
+		return dst
+	case bson.TypeTimestamp:
+		t, i, _ := v.TimestampOK()
+		dst = append(dst, 0x65, 0, 0, 0, 0, 0, 0, 0, 0)
+		binary.BigEndian.PutUint32(dst[len(dst)-8:], t)
+		binary.BigEndian.PutUint32(dst[len(dst)-4:], i)
+		return dst
+	case bson.TypeEmbeddedDocument:
+		dst = append(dst, 0x70)
+		return append(dst, v.Value...)
+	case bson.TypeArray:
+		dst = append(dst, 0x75)
+		return append(dst, v.Value...)
+	}
+	// Unknown type: 0xFE tag (0xFF reserved as separator in buildIndexKey)
+	dst = append(dst, 0xFE)
+	return append(dst, v.Value...)
+}
+
+// encodeFloat64Index encodes a float64 in a way that preserves sort order.
+func encodeFloat64Index(f float64) []byte {
+	return appendFloat64Index(nil, f)
 }
 
 // encodeIndexKeyFromRaw converts a bson.RawValue to an index key.
 func encodeIndexKeyFromRaw(v bson.RawValue) []byte {
-	switch v.Type {
-	case 0, bson.TypeNull:
-		return []byte{0x00}
-	case bson.TypeBoolean:
-		if v.Boolean() {
-			return []byte{0x10, 0x01}
-		}
-		return []byte{0x10, 0x00}
-	case bson.TypeDouble:
-		f, _ := v.DoubleOK()
-		return encodeFloat64Index(f)
-	case bson.TypeInt32:
-		n, _ := v.Int32OK()
-		return encodeFloat64Index(float64(n))
-	case bson.TypeInt64:
-		n, _ := v.Int64OK()
-		return encodeFloat64Index(float64(n))
-	case bson.TypeString:
-		s, _ := v.StringValueOK()
-		b := make([]byte, 1+len(s))
-		b[0] = 0x30
-		copy(b[1:], s)
-		return b
-	case bson.TypeBinary:
-		_, binData, ok := v.BinaryOK()
-		if !ok {
-			return []byte{0x40}
-		}
-		b := make([]byte, 1+len(binData))
-		b[0] = 0x40
-		copy(b[1:], binData)
-		return b
-	case bson.TypeObjectID:
-		oid, ok := v.ObjectIDOK()
-		if !ok {
-			return []byte{0x50}
-		}
-		b := make([]byte, 1+12)
-		b[0] = 0x50
-		copy(b[1:], oid[:])
-		return b
-	case bson.TypeDateTime:
-		t, _ := v.DateTimeOK()
-		b := make([]byte, 9)
-		b[0] = 0x60
-		binary.BigEndian.PutUint64(b[1:], uint64(t))
-		return b
-	case bson.TypeTimestamp:
-		t, i, _ := v.TimestampOK()
-		b := make([]byte, 9)
-		b[0] = 0x65
-		binary.BigEndian.PutUint32(b[1:], t)
-		binary.BigEndian.PutUint32(b[5:], i)
-		return b
-	case bson.TypeEmbeddedDocument:
-		// Use raw BSON bytes for doc comparison
-		b := make([]byte, 1+len(v.Value))
-		b[0] = 0x70
-		copy(b[1:], v.Value)
-		return b
-	case bson.TypeArray:
-		b := make([]byte, 1+len(v.Value))
-		b[0] = 0x75
-		copy(b[1:], v.Value)
-		return b
-	}
-	// Unknown type: use 0xFE as the type tag.
-	// 0xFF is reserved as the separator between encoded field keys and the _id suffix
-	// in non-unique index entries (buildIndexKey). Using 0xFF here would make the
-	// separator indistinguishable from a leading byte of an unknown-type field value.
-	b := make([]byte, 1+len(v.Value))
-	b[0] = 0xFE
-	copy(b[1:], v.Value)
-	return b
+	return appendIndexKeyRaw(nil, v)
 }
 
 // ─── Index insert/remove ──────────────────────────────────────────────────────
@@ -211,12 +194,10 @@ func (e *BBoltEngine) removeFromIndexes(tx *bolt.Tx, db, coll string, idBytes []
 
 // insertDocIntoIndex inserts a single document into one index bucket.
 func insertDocIntoIndex(idxB *bolt.Bucket, spec IndexSpec, doc bson.Raw, idBytes []byte) error {
-	indexKey := buildIndexKey(spec.Keys, doc, idBytes)
+	var buf [128]byte
 
 	if spec.Unique {
-		// For unique indexes, key = index fields only (no _id suffix)
-		// Value = _id bytes
-		uniqueKey := buildUniqueIndexKey(spec.Keys, doc)
+		uniqueKey := appendFieldKeys(buf[:0], spec.Keys, doc)
 		if existing := idxB.Get(uniqueKey); existing != nil {
 			if !bytes.Equal(existing, idBytes) {
 				return Errorf(ErrCodeDuplicateKey, "E11000 duplicate key error: index %s dup key", spec.Name)
@@ -225,73 +206,71 @@ func insertDocIntoIndex(idxB *bolt.Bucket, spec IndexSpec, doc bson.Raw, idBytes
 		return idxB.Put(uniqueKey, idBytes)
 	}
 
-	// Non-unique: key = index fields + _id suffix (ensures uniqueness within bucket)
-	// Value = empty
+	indexKey := appendFieldKeys(buf[:0], spec.Keys, doc)
+	indexKey = append(indexKey, 0xFF)
+	indexKey = append(indexKey, idBytes...)
 	return idxB.Put(indexKey, []byte{})
 }
 
 // removeDocFromIndex removes a document from one index bucket.
 func removeDocFromIndex(idxB *bolt.Bucket, spec IndexSpec, doc bson.Raw, idBytes []byte) {
+	var buf [128]byte
 	if spec.Unique {
-		uniqueKey := buildUniqueIndexKey(spec.Keys, doc)
+		uniqueKey := appendFieldKeys(buf[:0], spec.Keys, doc)
 		_ = idxB.Delete(uniqueKey)
 		return
 	}
-	indexKey := buildIndexKey(spec.Keys, doc, idBytes)
+	indexKey := appendFieldKeys(buf[:0], spec.Keys, doc)
+	indexKey = append(indexKey, 0xFF)
+	indexKey = append(indexKey, idBytes...)
 	_ = idxB.Delete(indexKey)
 }
 
 // buildIndexKey builds the composite index key: encoded field values + id bytes.
-// This ensures uniqueness even for non-unique indexes.
 func buildIndexKey(keys bson.Raw, doc bson.Raw, idBytes []byte) []byte {
-	fieldKeys := buildFieldKeys(keys, doc)
-	result := make([]byte, len(fieldKeys)+1+len(idBytes))
-	copy(result, fieldKeys)
-	result[len(fieldKeys)] = 0xFF // separator
-	copy(result[len(fieldKeys)+1:], idBytes)
+	result := appendFieldKeys(nil, keys, doc)
+	result = append(result, 0xFF)
+	result = append(result, idBytes...)
 	return result
 }
 
 // buildUniqueIndexKey builds the key for a unique index: encoded field values only.
 func buildUniqueIndexKey(keys bson.Raw, doc bson.Raw) []byte {
-	return buildFieldKeys(keys, doc)
+	return appendFieldKeys(nil, keys, doc)
 }
 
-// buildFieldKeys builds the encoded key for a compound index from a document.
-// Uses encodeIndexField for each field so that the encoding is identical to
+// appendFieldKeys appends the encoded compound index key for doc to dst.
+// Uses appendIndexField for each field so that the encoding is identical to
 // encodeEqualityPrefix — the two functions MUST produce the same bytes for the
 // same field value or index scans will silently miss documents.
-func buildFieldKeys(keys bson.Raw, doc bson.Raw) []byte {
+func appendFieldKeys(dst []byte, keys bson.Raw, doc bson.Raw) []byte {
 	if len(keys) == 0 {
-		return nil
+		return dst
 	}
 	elems, err := keys.Elements()
 	if err != nil {
-		return nil
+		return dst
 	}
 
-	var result []byte
 	for i, elem := range elems {
-		fieldVal := lookupIndexField(doc, elem.Key())
-		encoded := encodeIndexField(elem.Value(), fieldVal)
 		if i > 0 {
-			result = append(result, 0x01) // field separator
+			dst = append(dst, 0x01) // field separator
 		}
-		result = append(result, encoded...)
+		fieldVal := lookupIndexField(doc, elem.Key())
+		dst = appendIndexField(dst, elem.Value(), fieldVal)
 	}
-	return result
+	return dst
 }
 
-// encodeIndexField encodes a single index field value and applies the direction
-// flip for descending index specifications (dir < 0). This is the shared encoding
-// kernel used by both buildFieldKeys and encodeEqualityPrefix to guarantee that
-// the two functions produce identical byte sequences for the same input.
-//
-// dirVal is the direction element from the index key spec (e.g. Int32(1) or Int32(-1)).
-// fieldVal is the document field value to encode.
-func encodeIndexField(dirVal, fieldVal bson.RawValue) []byte {
-	encoded := encodeIndexKeyFromRaw(fieldVal)
+// buildFieldKeys builds the encoded key for a compound index from a document.
+func buildFieldKeys(keys bson.Raw, doc bson.Raw) []byte {
+	return appendFieldKeys(nil, keys, doc)
+}
 
+// appendIndexField appends a single encoded index field value to dst, applying
+// the direction flip for descending index specifications (dir < 0). This is the
+// shared encoding kernel used by both appendFieldKeys and encodeEqualityPrefix.
+func appendIndexField(dst []byte, dirVal, fieldVal bson.RawValue) []byte {
 	dir := float64(1)
 	switch dirVal.Type {
 	case bson.TypeDouble:
@@ -304,20 +283,28 @@ func encodeIndexField(dirVal, fieldVal bson.RawValue) []byte {
 		n, _ := dirVal.Int64OK()
 		dir = float64(n)
 	}
-	if dir < 0 {
-		flipped := make([]byte, len(encoded))
-		for i, b := range encoded {
-			flipped[i] = 0xFF ^ b
-		}
-		return flipped
+
+	if dir >= 0 {
+		return appendIndexKeyRaw(dst, fieldVal)
 	}
-	return encoded
+
+	// Descending: encode then flip all bits in-place
+	start := len(dst)
+	dst = appendIndexKeyRaw(dst, fieldVal)
+	for i := start; i < len(dst); i++ {
+		dst[i] = 0xFF ^ dst[i]
+	}
+	return dst
+}
+
+// encodeIndexField encodes a single index field value and applies the direction flip.
+func encodeIndexField(dirVal, fieldVal bson.RawValue) []byte {
+	return appendIndexField(nil, dirVal, fieldVal)
 }
 
 // encodeEqualityPrefix builds the index key prefix for a set of equality predicates.
-// It uses encodeIndexField (the same kernel as buildFieldKeys) to guarantee that
+// Uses appendIndexField (the same kernel as appendFieldKeys) to guarantee that
 // the generated prefix exactly matches the keys stored in the index bucket.
-// Encoding stops at the first index field not present in equalities.
 func encodeEqualityPrefix(keys bson.Raw, equalities map[string]bson.RawValue) []byte {
 	if len(keys) == 0 {
 		return nil
@@ -326,19 +313,25 @@ func encodeEqualityPrefix(keys bson.Raw, equalities map[string]bson.RawValue) []
 	if err != nil {
 		return nil
 	}
-	var result []byte
+	var buf [128]byte
+	result := buf[:0]
 	for i, elem := range elems {
 		val, ok := equalities[elem.Key()]
 		if !ok {
 			break
 		}
-		encoded := encodeIndexField(elem.Value(), val)
 		if i > 0 {
-			result = append(result, 0x01) // field separator (same as buildFieldKeys)
+			result = append(result, 0x01)
 		}
-		result = append(result, encoded...)
+		result = appendIndexField(result, elem.Value(), val)
 	}
-	return result
+	if len(result) == 0 {
+		return nil
+	}
+	// Return a copy so the stack buffer doesn't escape beyond this call
+	out := make([]byte, len(result))
+	copy(out, result)
+	return out
 }
 
 // lookupIndexField retrieves a field value from a document, supporting dot notation.
