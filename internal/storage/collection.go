@@ -811,7 +811,7 @@ func (c *bboltCollection) chooseIndex(tx *bolt.Tx, filter bson.Raw) (indexScanPl
 			}
 		}
 
-		// Encode range bounds using encodeIndexField (same kernel as buildFieldKeys).
+		// Encode range bounds using encodeIndexField (same kernel as appendFieldKeys).
 		var loBound, hiBound []byte
 		if rp.hasLo {
 			loBound = encodeIndexField(nextElem.Value(), rp.lo)
