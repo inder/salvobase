@@ -108,8 +108,8 @@ jobs:
           echo "matrix={\"include\":$MATRIX}" >> "$GITHUB_OUTPUT"
           echo "Matrix: {\"include\":$MATRIX}"
 
-          # has_work=true only if at least one slot has a real issue
-          if echo "$MATRIX" | grep -qv '"target_issue":"none"'; then
+          # has_work=true only if at least one slot has a real issue number
+          if echo "$MATRIX" | grep -q '"target_issue":"[0-9]'; then
             echo "has_work=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_work=false" >> "$GITHUB_OUTPUT"
