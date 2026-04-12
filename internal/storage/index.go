@@ -131,11 +131,6 @@ func appendIndexKeyRaw(dst []byte, v bson.RawValue) []byte {
 	return append(dst, v.Value...)
 }
 
-// encodeFloat64Index encodes a float64 in a way that preserves sort order.
-func encodeFloat64Index(f float64) []byte {
-	return appendFloat64Index(nil, f)
-}
-
 // encodeIndexKeyFromRaw converts a bson.RawValue to an index key.
 func encodeIndexKeyFromRaw(v bson.RawValue) []byte {
 	return appendIndexKeyRaw(nil, v)
@@ -234,11 +229,6 @@ func buildIndexKey(keys bson.Raw, doc bson.Raw, idBytes []byte) []byte {
 	return result
 }
 
-// buildUniqueIndexKey builds the key for a unique index: encoded field values only.
-func buildUniqueIndexKey(keys bson.Raw, doc bson.Raw) []byte {
-	return appendFieldKeys(nil, keys, doc)
-}
-
 // appendFieldKeys appends the encoded compound index key for doc to dst.
 // Uses appendIndexField for each field so that the encoding is identical to
 // encodeEqualityPrefix — the two functions MUST produce the same bytes for the
@@ -260,11 +250,6 @@ func appendFieldKeys(dst []byte, keys bson.Raw, doc bson.Raw) []byte {
 		dst = appendIndexField(dst, elem.Value(), fieldVal)
 	}
 	return dst
-}
-
-// buildFieldKeys builds the encoded key for a compound index from a document.
-func buildFieldKeys(keys bson.Raw, doc bson.Raw) []byte {
-	return appendFieldKeys(nil, keys, doc)
 }
 
 // appendIndexField appends a single encoded index field value to dst, applying
