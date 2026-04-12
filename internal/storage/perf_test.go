@@ -419,3 +419,54 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 		}
 	}
 }
+
+// benchmarkCollScanN benchmarks a full collection scan (Find with empty filter)
+// on a collection of n documents. This exercises the docArena path in
+// collectionScanTx where per-document allocations are batched.
+func benchmarkCollScanN(b *testing.B, n int) {
+	b.Helper()
+	dir := b.TempDir()
+	e, err := NewBBoltEngine(dir, "none", false)
+	if err != nil {
+		b.Fatalf("NewBBoltEngine: %v", err)
+	}
+	defer e.Close()
+
+	coll, err := e.Collection("bench", "scan")
+	if err != nil {
+		b.Fatalf("Collection: %v", err)
+	}
+	for i := int32(0); i < int32(n); i++ {
+		doc := mustMarshal(bson.D{
+			{Key: "_id", Value: i},
+			{Key: "field1", Value: "some string data for padding"},
+			{Key: "field2", Value: i * 100},
+		})
+		if _, err := coll.InsertOne(doc); err != nil {
+			b.Fatalf("InsertOne: %v", err)
+		}
+	}
+
+	emptyFilter := mustMarshal(bson.D{})
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		cur, err := coll.Find(emptyFilter, FindOptions{})
+		if err != nil {
+			b.Fatalf("Find: %v", err)
+		}
+		for {
+			batch, _, err := cur.NextBatch(100)
+			if err != nil {
+				b.Fatalf("NextBatch: %v", err)
+			}
+			if len(batch) == 0 {
+				break
+			}
+		}
+		cur.Close()
+	}
+}
+
+func BenchmarkCollScan_100(b *testing.B)  { benchmarkCollScanN(b, 100) }
+func BenchmarkCollScan_1000(b *testing.B) { benchmarkCollScanN(b, 1000) }
