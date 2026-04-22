@@ -794,6 +794,326 @@ func TestEvalAll(t *testing.T) {
 	}
 }
 
+// ─── $mod ──────────────────────────────────────────────────────────────────────
+
+func TestEvalMod(t *testing.T) {
+	tests := []struct {
+		name      string
+		doc       bson.D
+		filter    bson.D
+		wantMatch bool
+		wantErr   bool
+	}{
+		{
+			name:      "10 mod 3 == 1",
+			doc:       bson.D{{Key: "x", Value: int32(10)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(3), int32(1)}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "10 mod 3 != 0",
+			doc:       bson.D{{Key: "x", Value: int32(10)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(3), int32(0)}}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "9 mod 3 == 0",
+			doc:       bson.D{{Key: "x", Value: int32(9)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(3), int32(0)}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "float field truncated: 10.5 mod 3 == 1",
+			doc:       bson.D{{Key: "x", Value: float64(10.5)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(3), int32(1)}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "int64 field: 100 mod 7 == 2",
+			doc:       bson.D{{Key: "x", Value: int64(100)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(7), int32(2)}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "zero divisor returns error",
+			doc:       bson.D{{Key: "x", Value: int32(10)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(0), int32(0)}}}}},
+			wantMatch: false,
+			wantErr:   true,
+		},
+		{
+			name:      "non-numeric field returns false",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(3), int32(1)}}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "missing field returns false",
+			doc:       bson.D{{Key: "other", Value: int32(1)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(3), int32(0)}}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "wrong element count returns error",
+			doc:       bson.D{{Key: "x", Value: int32(10)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(3)}}}}},
+			wantMatch: false,
+			wantErr:   true,
+		},
+		{
+			name:      "non-array operand returns error",
+			doc:       bson.D{{Key: "x", Value: int32(10)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: int32(3)}}}},
+			wantMatch: false,
+			wantErr:   true,
+		},
+		{
+			name:      "negative field value: -7 mod 3 == -1",
+			doc:       bson.D{{Key: "x", Value: int32(-7)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(3), int32(-1)}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "negative divisor: 7 mod -3 == 1 (Go math.Mod follows dividend sign)",
+			doc:       bson.D{{Key: "x", Value: int32(7)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$mod", Value: bson.A{int32(-3), int32(1)}}}}},
+			wantMatch: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			match, err := Filter(mustMarshal(tc.doc), mustMarshal(tc.filter))
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if match != tc.wantMatch {
+				t.Errorf("got match=%v, want %v", match, tc.wantMatch)
+			}
+		})
+	}
+}
+
+// ─── $not ──────────────────────────────────────────────────────────────────────
+
+func TestEvalNot(t *testing.T) {
+	tests := []struct {
+		name      string
+		doc       bson.D
+		filter    bson.D
+		wantMatch bool
+		wantErr   bool
+	}{
+		{
+			name:      "$not $gt: negation of true yields false",
+			doc:       bson.D{{Key: "x", Value: int32(10)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$gt", Value: int32(5)}}}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "$not $gt: negation of false yields true",
+			doc:       bson.D{{Key: "x", Value: int32(3)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$gt", Value: int32(5)}}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$not $regex: negation of matching regex",
+			doc:       bson.D{{Key: "name", Value: "alice"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$regex", Value: "ali"}}}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "$not $regex: negation of non-matching regex",
+			doc:       bson.D{{Key: "name", Value: "bob"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$regex", Value: "ali"}}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$not $exists true: present field",
+			doc:       bson.D{{Key: "x", Value: int32(1)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$exists", Value: true}}}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "$not $exists true: missing field",
+			doc:       bson.D{{Key: "other", Value: int32(1)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$exists", Value: true}}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$not wrapping $lt and $gt (compound negation)",
+			doc:       bson.D{{Key: "x", Value: int32(5)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$lt", Value: int32(3)}, {Key: "$gt", Value: int32(7)}}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$not requires document operand",
+			doc:       bson.D{{Key: "x", Value: int32(5)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: int32(5)}}}},
+			wantMatch: false,
+			wantErr:   true,
+		},
+		{
+			name:      "$not $type: negate type match",
+			doc:       bson.D{{Key: "x", Value: "hello"}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$type", Value: "int"}}}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$not on missing field with $gt: missing treated as undefined",
+			doc:       bson.D{{Key: "other", Value: int32(1)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$not", Value: bson.D{{Key: "$gt", Value: int32(0)}}}}}},
+			wantMatch: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			match, err := Filter(mustMarshal(tc.doc), mustMarshal(tc.filter))
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if match != tc.wantMatch {
+				t.Errorf("got match=%v, want %v", match, tc.wantMatch)
+			}
+		})
+	}
+}
+
+// ─── $regex ────────────────────────────────────────────────────────────────────
+
+func TestEvalRegex(t *testing.T) {
+	tests := []struct {
+		name      string
+		doc       bson.D
+		filter    bson.D
+		wantMatch bool
+		wantErr   bool
+	}{
+		{
+			name:      "string pattern matches",
+			doc:       bson.D{{Key: "name", Value: "alice"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "ali"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "string pattern no match",
+			doc:       bson.D{{Key: "name", Value: "bob"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "ali"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "anchored pattern matches",
+			doc:       bson.D{{Key: "name", Value: "alice"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "^ali"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "anchored pattern end no match",
+			doc:       bson.D{{Key: "name", Value: "alice"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "^ice"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "compiled regex (bson.Regex) as implicit eq does not route to regex eval",
+			doc:       bson.D{{Key: "name", Value: "Alice"}},
+			filter:    bson.D{{Key: "name", Value: bson.Regex{Pattern: "alice", Options: "i"}}},
+			wantMatch: false, // bare bson.Regex goes through $eq comparison, not regex matching
+		},
+		{
+			name:      "case insensitive via $options",
+			doc:       bson.D{{Key: "name", Value: "ALICE"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "alice"}, {Key: "$options", Value: "i"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "case sensitive by default",
+			doc:       bson.D{{Key: "name", Value: "ALICE"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "alice"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "multiline option m: ^ matches line start",
+			doc:       bson.D{{Key: "text", Value: "line1\nline2"}},
+			filter:    bson.D{{Key: "text", Value: bson.D{{Key: "$regex", Value: "^line2"}, {Key: "$options", Value: "m"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "dotall option s: . matches newline",
+			doc:       bson.D{{Key: "text", Value: "line1\nline2"}},
+			filter:    bson.D{{Key: "text", Value: bson.D{{Key: "$regex", Value: "line1.line2"}, {Key: "$options", Value: "s"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "without s option: . does not match newline",
+			doc:       bson.D{{Key: "text", Value: "line1\nline2"}},
+			filter:    bson.D{{Key: "text", Value: bson.D{{Key: "$regex", Value: "line1.line2"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "non-string field returns false",
+			doc:       bson.D{{Key: "x", Value: int32(42)}},
+			filter:    bson.D{{Key: "x", Value: bson.D{{Key: "$regex", Value: "42"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "missing field returns false",
+			doc:       bson.D{{Key: "other", Value: "hello"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "hello"}}}},
+			wantMatch: false,
+		},
+		{
+			name:      "invalid regex returns error",
+			doc:       bson.D{{Key: "name", Value: "alice"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "[invalid"}}}},
+			wantMatch: false,
+			wantErr:   true,
+		},
+		{
+			name:      "$regex combined with other operators",
+			doc:       bson.D{{Key: "name", Value: "alice"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: "ali"}, {Key: "$ne", Value: "bob"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "$regex with bson.Regex operand extracts pattern and options",
+			doc:       bson.D{{Key: "name", Value: "Alice"}},
+			filter:    bson.D{{Key: "name", Value: bson.D{{Key: "$regex", Value: bson.Regex{Pattern: "alice", Options: "i"}}}}},
+			wantMatch: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			match, err := Filter(mustMarshal(tc.doc), mustMarshal(tc.filter))
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if match != tc.wantMatch {
+				t.Errorf("got match=%v, want %v", match, tc.wantMatch)
+			}
+		})
+	}
+}
+
 // ─── $expr (fallback evaluator) ───────────────────────────────────────────────
 
 // TestEvalExprFallback tests the built-in limited $expr evaluator directly
