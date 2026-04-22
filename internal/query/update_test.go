@@ -225,6 +225,334 @@ func TestApplyPull(t *testing.T) {
 	}
 }
 
+// ─── $currentDate ────────────────────────────────────────────────────────────
+
+func TestApplyCurrentDate(t *testing.T) {
+	t.Run("boolean true sets DateTime", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$currentDate", Value: bson.D{{Key: "lastModified", Value: true}}}}
+		result := applyOp(t, doc, update)
+
+		val, err := result.LookupErr("lastModified")
+		if err != nil {
+			t.Fatal("lastModified missing after $currentDate")
+		}
+		if val.Type != bson.TypeDateTime {
+			t.Errorf("expected TypeDateTime, got %v", val.Type)
+		}
+	})
+
+	t.Run("type timestamp sets Timestamp", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$currentDate", Value: bson.D{
+			{Key: "ts", Value: bson.D{{Key: "$type", Value: "timestamp"}}},
+		}}}
+		result := applyOp(t, doc, update)
+
+		val, err := result.LookupErr("ts")
+		if err != nil {
+			t.Fatal("ts missing after $currentDate")
+		}
+		if val.Type != bson.TypeTimestamp {
+			t.Errorf("expected TypeTimestamp, got %v", val.Type)
+		}
+	})
+
+	t.Run("type date sets DateTime", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$currentDate", Value: bson.D{
+			{Key: "dt", Value: bson.D{{Key: "$type", Value: "date"}}},
+		}}}
+		result := applyOp(t, doc, update)
+
+		val, err := result.LookupErr("dt")
+		if err != nil {
+			t.Fatal("dt missing after $currentDate")
+		}
+		if val.Type != bson.TypeDateTime {
+			t.Errorf("expected TypeDateTime, got %v", val.Type)
+		}
+	})
+
+	t.Run("boolean false is no-op", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}, {Key: "lastModified", Value: "old"}}
+		update := bson.D{{Key: "$currentDate", Value: bson.D{{Key: "lastModified", Value: false}}}}
+		result := applyOp(t, doc, update)
+
+		// Field should remain unchanged — false means "do not set"
+		val := getString(t, result, "lastModified")
+		if val != "old" {
+			t.Errorf("false value should not modify existing field, got %q", val)
+		}
+	})
+
+	t.Run("non-boolean defaults to DateTime", func(t *testing.T) {
+		// NOTE: MongoDB rejects non-boolean/non-document values with an error.
+		// Salvobase is permissive here — treats any non-boolean as "set DateTime".
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$currentDate", Value: bson.D{{Key: "lastModified", Value: int32(1)}}}}
+		result := applyOp(t, doc, update)
+
+		val, err := result.LookupErr("lastModified")
+		if err != nil {
+			t.Fatal("lastModified missing")
+		}
+		if val.Type != bson.TypeDateTime {
+			t.Errorf("expected TypeDateTime for non-boolean, got %v", val.Type)
+		}
+	})
+
+	t.Run("multiple fields", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$currentDate", Value: bson.D{
+			{Key: "a", Value: true},
+			{Key: "b", Value: bson.D{{Key: "$type", Value: "timestamp"}}},
+		}}}
+		result := applyOp(t, doc, update)
+
+		aVal, err := result.LookupErr("a")
+		if err != nil {
+			t.Fatal("field a missing")
+		}
+		if aVal.Type != bson.TypeDateTime {
+			t.Errorf("a: expected TypeDateTime, got %v", aVal.Type)
+		}
+		bVal, err := result.LookupErr("b")
+		if err != nil {
+			t.Fatal("field b missing")
+		}
+		if bVal.Type != bson.TypeTimestamp {
+			t.Errorf("b: expected TypeTimestamp, got %v", bVal.Type)
+		}
+	})
+}
+
+// ─── $setOnInsert ────────────────────────────────────────────────────────────
+
+func TestApplySetOnInsert(t *testing.T) {
+	t.Run("upsert true sets fields", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$setOnInsert", Value: bson.D{
+			{Key: "y", Value: int32(42)},
+			{Key: "z", Value: "hello"},
+		}}}
+		result, err := Apply(mustMarshal(doc), mustMarshal(update), true)
+		if err != nil {
+			t.Fatalf("Apply error: %v", err)
+		}
+		if v := getInt(t, result, "y"); v != 42 {
+			t.Errorf("$setOnInsert upsert=true: want y=42, got %d", v)
+		}
+		if v := getString(t, result, "z"); v != "hello" {
+			t.Errorf("$setOnInsert upsert=true: want z=hello, got %q", v)
+		}
+	})
+
+	t.Run("upsert false skips fields", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$setOnInsert", Value: bson.D{
+			{Key: "y", Value: int32(42)},
+		}}}
+		result, err := Apply(mustMarshal(doc), mustMarshal(update), false)
+		if err != nil {
+			t.Fatalf("Apply error: %v", err)
+		}
+		if _, err := result.LookupErr("y"); err == nil {
+			t.Error("$setOnInsert upsert=false: y should not be set")
+		}
+	})
+
+	t.Run("upsert true overwrites existing fields via set semantics", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$setOnInsert", Value: bson.D{
+			{Key: "x", Value: int32(99)},
+		}}}
+		result, err := Apply(mustMarshal(doc), mustMarshal(update), true)
+		if err != nil {
+			t.Fatalf("Apply error: %v", err)
+		}
+		// $setOnInsert delegates to applySet — overwrites existing fields
+		if v := getInt(t, result, "x"); v != 99 {
+			t.Errorf("$setOnInsert overwrites existing: want 99, got %d", v)
+		}
+	})
+}
+
+// ─── $pullAll ────────────────────────────────────────────────────────────────
+
+func TestApplyPullAll(t *testing.T) {
+	t.Run("removes multiple matching values", func(t *testing.T) {
+		doc := bson.D{{Key: "arr", Value: bson.A{int32(1), int32(2), int32(3), int32(2), int32(4)}}}
+		update := bson.D{{Key: "$pullAll", Value: bson.D{
+			{Key: "arr", Value: bson.A{int32(2), int32(4)}},
+		}}}
+		result := applyOp(t, doc, update)
+
+		vals, _ := result.Lookup("arr").Array().Values()
+		if len(vals) != 2 {
+			t.Errorf("expected 2 remaining elements, got %d", len(vals))
+		}
+		for _, v := range vals {
+			if v.Int32() == 2 || v.Int32() == 4 {
+				t.Errorf("value %d should have been removed", v.Int32())
+			}
+		}
+	})
+
+	t.Run("no-match leaves array unchanged", func(t *testing.T) {
+		doc := bson.D{{Key: "arr", Value: bson.A{int32(1), int32(2), int32(3)}}}
+		update := bson.D{{Key: "$pullAll", Value: bson.D{
+			{Key: "arr", Value: bson.A{int32(99)}},
+		}}}
+		result := applyOp(t, doc, update)
+
+		vals, _ := result.Lookup("arr").Array().Values()
+		if len(vals) != 3 {
+			t.Errorf("expected 3 elements unchanged, got %d", len(vals))
+		}
+	})
+
+	t.Run("empty removal array is no-op", func(t *testing.T) {
+		doc := bson.D{{Key: "arr", Value: bson.A{int32(1), int32(2)}}}
+		update := bson.D{{Key: "$pullAll", Value: bson.D{
+			{Key: "arr", Value: bson.A{}},
+		}}}
+		result := applyOp(t, doc, update)
+
+		vals, _ := result.Lookup("arr").Array().Values()
+		if len(vals) != 2 {
+			t.Errorf("expected 2 elements unchanged, got %d", len(vals))
+		}
+	})
+
+	t.Run("missing field is no-op", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$pullAll", Value: bson.D{
+			{Key: "arr", Value: bson.A{int32(1)}},
+		}}}
+		result := applyOp(t, doc, update)
+
+		if _, err := result.LookupErr("arr"); err == nil {
+			t.Error("missing field should not be created")
+		}
+	})
+
+	t.Run("non-array field is no-op", func(t *testing.T) {
+		// NOTE: MongoDB returns an error here ("must be an array").
+		// Salvobase silently skips non-array fields for $pullAll.
+		doc := bson.D{{Key: "arr", Value: int32(42)}}
+		update := bson.D{{Key: "$pullAll", Value: bson.D{
+			{Key: "arr", Value: bson.A{int32(42)}},
+		}}}
+		result := applyOp(t, doc, update)
+
+		val := getInt(t, result, "arr")
+		if val != 42 {
+			t.Errorf("non-array field should be unchanged, got %d", val)
+		}
+	})
+
+	t.Run("non-array operand returns error", func(t *testing.T) {
+		doc := bson.D{{Key: "arr", Value: bson.A{int32(1)}}}
+		update := bson.D{{Key: "$pullAll", Value: bson.D{
+			{Key: "arr", Value: int32(1)},
+		}}}
+		_, err := Apply(mustMarshal(doc), mustMarshal(update), false)
+		if err == nil {
+			t.Error("expected error for non-array $pullAll operand")
+		}
+	})
+}
+
+// ─── $bit ────────────────────────────────────────────────────────────────────
+
+func TestApplyBit(t *testing.T) {
+	t.Run("AND operation", func(t *testing.T) {
+		// 0b1111 (15) & 0b1010 (10) = 0b1010 (10)
+		doc := bson.D{{Key: "flags", Value: int32(15)}}
+		update := bson.D{{Key: "$bit", Value: bson.D{
+			{Key: "flags", Value: bson.D{{Key: "and", Value: int32(10)}}},
+		}}}
+		result := applyOp(t, doc, update)
+		if v := getInt(t, result, "flags"); v != 10 {
+			t.Errorf("$bit and: want 10, got %d", v)
+		}
+	})
+
+	t.Run("OR operation", func(t *testing.T) {
+		// 0b1010 (10) | 0b0101 (5) = 0b1111 (15)
+		doc := bson.D{{Key: "flags", Value: int32(10)}}
+		update := bson.D{{Key: "$bit", Value: bson.D{
+			{Key: "flags", Value: bson.D{{Key: "or", Value: int32(5)}}},
+		}}}
+		result := applyOp(t, doc, update)
+		if v := getInt(t, result, "flags"); v != 15 {
+			t.Errorf("$bit or: want 15, got %d", v)
+		}
+	})
+
+	t.Run("XOR operation", func(t *testing.T) {
+		// 0b1010 (10) ^ 0b1100 (12) = 0b0110 (6)
+		doc := bson.D{{Key: "flags", Value: int32(10)}}
+		update := bson.D{{Key: "$bit", Value: bson.D{
+			{Key: "flags", Value: bson.D{{Key: "xor", Value: int32(12)}}},
+		}}}
+		result := applyOp(t, doc, update)
+		if v := getInt(t, result, "flags"); v != 6 {
+			t.Errorf("$bit xor: want 6, got %d", v)
+		}
+	})
+
+	t.Run("missing field initializes to 0", func(t *testing.T) {
+		doc := bson.D{{Key: "x", Value: int32(1)}}
+		update := bson.D{{Key: "$bit", Value: bson.D{
+			{Key: "flags", Value: bson.D{{Key: "or", Value: int32(5)}}},
+		}}}
+		result := applyOp(t, doc, update)
+		// 0 | 5 = 5
+		if v := getInt(t, result, "flags"); v != 5 {
+			t.Errorf("$bit missing field or: want 5, got %d", v)
+		}
+	})
+
+	t.Run("unknown sub-operator returns error", func(t *testing.T) {
+		doc := bson.D{{Key: "flags", Value: int32(10)}}
+		update := bson.D{{Key: "$bit", Value: bson.D{
+			{Key: "flags", Value: bson.D{{Key: "nand", Value: int32(5)}}},
+		}}}
+		_, err := Apply(mustMarshal(doc), mustMarshal(update), false)
+		if err == nil {
+			t.Error("expected error for unknown $bit sub-operator")
+		}
+	})
+
+	t.Run("non-document operand returns error", func(t *testing.T) {
+		doc := bson.D{{Key: "flags", Value: int32(10)}}
+		update := bson.D{{Key: "$bit", Value: bson.D{
+			{Key: "flags", Value: int32(5)},
+		}}}
+		_, err := Apply(mustMarshal(doc), mustMarshal(update), false)
+		if err == nil {
+			t.Error("expected error for non-document $bit operand")
+		}
+	})
+
+	t.Run("chained operations in single field", func(t *testing.T) {
+		// Start with 15 (0b1111), AND 12 (0b1100) = 12, then OR 3 (0b0011) = 15
+		doc := bson.D{{Key: "flags", Value: int32(15)}}
+		update := bson.D{{Key: "$bit", Value: bson.D{
+			{Key: "flags", Value: bson.D{
+				{Key: "and", Value: int32(12)},
+				{Key: "or", Value: int32(3)},
+			}},
+		}}}
+		result := applyOp(t, doc, update)
+		if v := getInt(t, result, "flags"); v != 15 {
+			t.Errorf("$bit chained: want 15, got %d", v)
+		}
+	})
+}
+
 // ─── Replacement document ─────────────────────────────────────────────────────
 
 func TestApplyReplacement(t *testing.T) {
