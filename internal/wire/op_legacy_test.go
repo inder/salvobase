@@ -48,10 +48,10 @@ func dummyHeader() Header {
 func TestParseLegacyGetMore(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		var body bytes.Buffer
-		putLE32(&body, 0)                     // reserved
+		putLE32(&body, 0)                      // reserved
 		putCString(&body, "mydb.mycollection") // fullCollectionName
-		putLE32(&body, 100)                   // numberToReturn
-		putLE64(&body, 0x123456789ABCDEF0)    // cursorID
+		putLE32(&body, 100)                    // numberToReturn
+		putLE64(&body, 0x123456789ABCDEF0)     // cursorID
 
 		hdr := dummyHeader()
 		msg, err := readOpGetMore(bufio.NewReader(&body), hdr)
@@ -194,9 +194,9 @@ func TestParseLegacyDelete(t *testing.T) {
 	t.Run("valid with SingleRemove flag", func(t *testing.T) {
 		selector := minimalBSONDoc()
 		var body bytes.Buffer
-		putLE32(&body, 0)                     // reserved
+		putLE32(&body, 0)                      // reserved
 		putCString(&body, "mydb.mycollection") // fullCollectionName
-		putLE32(&body, 1)                     // flags (SingleRemove = bit 0)
+		putLE32(&body, 1)                      // flags (SingleRemove = bit 0)
 		body.Write(selector)
 
 		msg, err := readOpDelete(bufio.NewReader(&body), dummyHeader())
@@ -436,9 +436,9 @@ func TestReadMessageLegacyGetMore(t *testing.T) {
 	msgLen := int32(HeaderSize + body.Len())
 	var frame bytes.Buffer
 	putLE32(&frame, msgLen)
-	putLE32(&frame, 7)                    // requestID
-	putLE32(&frame, 0)                    // responseTo
-	putLE32(&frame, int32(OpGetMore))     // opCode
+	putLE32(&frame, 7)                // requestID
+	putLE32(&frame, 0)                // responseTo
+	putLE32(&frame, int32(OpGetMore)) // opCode
 	frame.Write(body.Bytes())
 
 	br := bufio.NewReader(&frame)
@@ -468,9 +468,9 @@ func TestReadMessageLegacyKillCursors(t *testing.T) {
 	msgLen := int32(HeaderSize + body.Len())
 	var frame bytes.Buffer
 	putLE32(&frame, msgLen)
-	putLE32(&frame, 8)                      // requestID
-	putLE32(&frame, 0)                      // responseTo
-	putLE32(&frame, int32(OpKillCursors))   // opCode
+	putLE32(&frame, 8)                    // requestID
+	putLE32(&frame, 0)                    // responseTo
+	putLE32(&frame, int32(OpKillCursors)) // opCode
 	frame.Write(body.Bytes())
 
 	br := bufio.NewReader(&frame)
@@ -501,9 +501,9 @@ func TestReadMessageLegacyDelete(t *testing.T) {
 	msgLen := int32(HeaderSize + body.Len())
 	var frame bytes.Buffer
 	putLE32(&frame, msgLen)
-	putLE32(&frame, 9)                 // requestID
-	putLE32(&frame, 0)                 // responseTo
-	putLE32(&frame, int32(OpDelete))   // opCode
+	putLE32(&frame, 9)               // requestID
+	putLE32(&frame, 0)               // responseTo
+	putLE32(&frame, int32(OpDelete)) // opCode
 	frame.Write(body.Bytes())
 
 	br := bufio.NewReader(&frame)
