@@ -527,8 +527,9 @@ type lookupTestCollection struct {
 	name string
 }
 
-func (c *lookupTestCollection) Name() string     { return c.name }
-func (c *lookupTestCollection) Database() string  { return "testdb" }
+func (c *lookupTestCollection) Name() string { return c.name }
+
+func (c *lookupTestCollection) Database() string { return "testdb" }
 func (c *lookupTestCollection) Find(filter bson.Raw, opts storage.FindOptions) (storage.Cursor, error) {
 	// Apply filter against stored docs using query.Filter
 	var matched []bson.Raw
