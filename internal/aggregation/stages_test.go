@@ -98,14 +98,14 @@ func TestStageGroup(t *testing.T) {
 		if getFieldD(d0, "_id") != "a" {
 			t.Errorf("expected group _id='a', got %v", getFieldD(d0, "_id"))
 		}
-		if toFloatT(t,getFieldD(d0, "total")) != 90 {
+		if toFloatT(t, getFieldD(d0, "total")) != 90 {
 			t.Errorf("expected total=90 for group a, got %v", getFieldD(d0, "total"))
 		}
 		d1 := decodeResult(t, result[1])
 		if getFieldD(d1, "_id") != "b" {
 			t.Errorf("expected group _id='b', got %v", getFieldD(d1, "_id"))
 		}
-		if toFloatT(t,getFieldD(d1, "total")) != 60 {
+		if toFloatT(t, getFieldD(d1, "total")) != 60 {
 			t.Errorf("expected total=60 for group b, got %v", getFieldD(d1, "total"))
 		}
 	})
@@ -124,7 +124,7 @@ func TestStageGroup(t *testing.T) {
 			t.Fatalf("expected 1 group, got %d", len(result))
 		}
 		d := decodeResult(t, result[0])
-		if toFloatT(t,getFieldD(d, "total")) != 150 {
+		if toFloatT(t, getFieldD(d, "total")) != 150 {
 			t.Errorf("expected total=150, got %v", getFieldD(d, "total"))
 		}
 	})
@@ -140,7 +140,7 @@ func TestStageGroup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		avg := toFloatT(t,getFieldD(d, "avg"))
+		avg := toFloatT(t, getFieldD(d, "avg"))
 		if avg != 30.0 {
 			t.Errorf("expected avg=30, got %v", avg)
 		}
@@ -158,10 +158,10 @@ func TestStageGroup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		if toFloatT(t,getFieldD(d, "minVal")) != 10 {
+		if toFloatT(t, getFieldD(d, "minVal")) != 10 {
 			t.Errorf("expected minVal=10, got %v", getFieldD(d, "minVal"))
 		}
-		if toFloatT(t,getFieldD(d, "maxVal")) != 50 {
+		if toFloatT(t, getFieldD(d, "maxVal")) != 50 {
 			t.Errorf("expected maxVal=50, got %v", getFieldD(d, "maxVal"))
 		}
 	})
@@ -179,10 +179,10 @@ func TestStageGroup(t *testing.T) {
 		}
 		// Group "a": first=10, last=50
 		d0 := decodeResult(t, result[0])
-		if toFloatT(t,getFieldD(d0, "firstVal")) != 10 {
+		if toFloatT(t, getFieldD(d0, "firstVal")) != 10 {
 			t.Errorf("expected firstVal=10 for 'a', got %v", getFieldD(d0, "firstVal"))
 		}
-		if toFloatT(t,getFieldD(d0, "lastVal")) != 50 {
+		if toFloatT(t, getFieldD(d0, "lastVal")) != 50 {
 			t.Errorf("expected lastVal=50 for 'a', got %v", getFieldD(d0, "lastVal"))
 		}
 	})
@@ -248,7 +248,7 @@ func TestStageGroup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d0 := decodeResult(t, result[0]) // group "a" has 3 docs
-		if toFloatT(t,getFieldD(d0, "count")) != 3 {
+		if toFloatT(t, getFieldD(d0, "count")) != 3 {
 			t.Errorf("expected count=3 for 'a', got %v", getFieldD(d0, "count"))
 		}
 	})
@@ -474,12 +474,12 @@ func TestStageUnwind(t *testing.T) {
 		}
 		d0 := decodeResult(t, result[0])
 		idx0 := getFieldD(d0, "idx")
-		if toFloatT(t,idx0) != 0 {
+		if toFloatT(t, idx0) != 0 {
 			t.Errorf("expected idx=0, got %v (%T)", idx0, idx0)
 		}
 		d1 := decodeResult(t, result[1])
 		idx1 := getFieldD(d1, "idx")
-		if toFloatT(t,idx1) != 1 {
+		if toFloatT(t, idx1) != 1 {
 			t.Errorf("expected idx=1, got %v (%T)", idx1, idx1)
 		}
 	})
@@ -533,7 +533,7 @@ func (c *lookupTestCollection) Find(filter bson.Raw, opts storage.FindOptions) (
 	// Apply filter against stored docs using query.Filter
 	var matched []bson.Raw
 	for _, doc := range c.docs {
-		if filter == nil || len(filter) == 0 {
+		if len(filter) == 0 {
 			matched = append(matched, doc)
 			continue
 		}
@@ -713,17 +713,17 @@ func TestStageBucket(t *testing.T) {
 		}
 		// Bucket [0,20): 1 doc (score=15)
 		d0 := decodeResult(t, result[0])
-		if toFloatT(t,getFieldD(d0, "count")) != 1 {
+		if toFloatT(t, getFieldD(d0, "count")) != 1 {
 			t.Errorf("bucket [0,20) expected count=1, got %v", getFieldD(d0, "count"))
 		}
 		// Bucket [20,40): 2 docs (score=25,35)
 		d1 := decodeResult(t, result[1])
-		if toFloatT(t,getFieldD(d1, "count")) != 2 {
+		if toFloatT(t, getFieldD(d1, "count")) != 2 {
 			t.Errorf("bucket [20,40) expected count=2, got %v", getFieldD(d1, "count"))
 		}
 		// Bucket [40,60): 2 docs (score=45,55)
 		d2 := decodeResult(t, result[2])
-		if toFloatT(t,getFieldD(d2, "count")) != 2 {
+		if toFloatT(t, getFieldD(d2, "count")) != 2 {
 			t.Errorf("bucket [40,60) expected count=2, got %v", getFieldD(d2, "count"))
 		}
 	})
@@ -754,7 +754,7 @@ func TestStageBucket(t *testing.T) {
 		if getFieldD(dLast, "_id") != "Other" {
 			t.Errorf("expected default bucket _id='Other', got %v", getFieldD(dLast, "_id"))
 		}
-		if toFloatT(t,getFieldD(dLast, "count")) != 1 {
+		if toFloatT(t, getFieldD(dLast, "count")) != 1 {
 			t.Errorf("expected default bucket count=1, got %v", getFieldD(dLast, "count"))
 		}
 	})
@@ -796,7 +796,7 @@ func TestStageBucket(t *testing.T) {
 			t.Errorf("expected 2 empty buckets, got %d", len(result))
 		}
 		d0 := decodeResult(t, result[0])
-		if toFloatT(t,getFieldD(d0, "count")) != 0 {
+		if toFloatT(t, getFieldD(d0, "count")) != 0 {
 			t.Errorf("expected count=0 for empty bucket, got %v", getFieldD(d0, "count"))
 		}
 	})
