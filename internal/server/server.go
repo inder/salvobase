@@ -38,6 +38,7 @@ type Config struct {
 	TLSKey         string
 	Version        string
 	BuildTime      string
+	ConfigFile     string // Path to YAML config file (for SIGHUP reload)
 }
 
 // Server is the main Salvobase server.
