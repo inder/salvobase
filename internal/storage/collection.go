@@ -442,7 +442,8 @@ func (c *bboltCollection) Find(filter bson.Raw, opts FindOptions) (Cursor, error
 			return nil, err
 		}
 		if hasSort {
-			sortFn, err := query.SortFunc(opts.Sort)
+			textQuery := query.ExtractTextSearch(filter)
+			sortFn, err := query.SortFuncWithTextScore(opts.Sort, textQuery)
 			if err != nil {
 				return nil, fmt.Errorf("find: sort: %w", err)
 			}
@@ -2312,7 +2313,8 @@ func (c *bboltCollection) findAndModify(
 
 		// Apply sort if specified
 		if len(opts.Sort) > 0 && len(candidates) > 1 {
-			sortFn, sortErr := query.SortFunc(opts.Sort)
+			textQuery := query.ExtractTextSearch(filter)
+			sortFn, sortErr := query.SortFuncWithTextScore(opts.Sort, textQuery)
 			if sortErr != nil {
 				return sortErr
 			}
