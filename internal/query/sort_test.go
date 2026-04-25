@@ -40,7 +40,7 @@ func TestSortFunc_BasicAscDesc(t *testing.T) {
 
 func TestSortFuncWithTextScore_MetaTextScore(t *testing.T) {
 	docs := []bson.Raw{
-		mustMarshal(bson.D{{Key: "title", Value: "python tutorial"}}),                   // 0 matches
+		mustMarshal(bson.D{{Key: "title", Value: "python tutorial"}}),                    // 0 matches
 		mustMarshal(bson.D{{Key: "title", Value: "go programming in go language"}}),      // 2 matches
 		mustMarshal(bson.D{{Key: "title", Value: "go tutorial"}}),                        // 1 match
 		mustMarshal(bson.D{{Key: "title", Value: "go go go: three reasons to love go"}}), // 4 matches
@@ -51,9 +51,9 @@ func TestSortFuncWithTextScore_MetaTextScore(t *testing.T) {
 
 	wantOrder := []string{
 		"go go go: three reasons to love go", // 4
-		"go programming in go language",       // 2
-		"go tutorial",                         // 1
-		"python tutorial",                     // 0
+		"go programming in go language",      // 2
+		"go tutorial",                        // 1
+		"python tutorial",                    // 0
 	}
 	for i, want := range wantOrder {
 		got, _ := docs[i].LookupErr("title")
