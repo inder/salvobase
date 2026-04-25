@@ -76,6 +76,9 @@ Improvements over MongoDB Community:
 	cmd.Flags().IntVar(&cfg.MaxDocSize, "maxDocSize", 16*1024*1024, "Maximum BSON document size in bytes")
 	cmd.Flags().IntVar(&cfg.RequestsPerSec, "rateLimit", 0, "Per-database rate limit (req/s, 0 = unlimited)")
 
+	// Config file (for SIGHUP reload)
+	cmd.Flags().StringVar(&cfg.ConfigFile, "config", "", "Path to YAML config file (enables SIGHUP reload)")
+
 	// Sub-commands
 	cmd.AddCommand(versionCmd(), adminCmd(&cfg))
 
@@ -116,7 +119,12 @@ func run(cfg server.Config) error {
 		for sig := range sigCh {
 			switch sig {
 			case syscall.SIGHUP:
-				log.Info("received SIGHUP — reloading config (not yet implemented)")
+				log.Info("received SIGHUP — reloading config")
+				if err := server.ReloadConfig(cfg.ConfigFile, srv.RuntimeConfig(), log); err != nil {
+					log.Error("config reload failed", zap.Error(err))
+				} else {
+					log.Info("config reload complete")
+				}
 			default:
 				log.Info("received signal, shutting down", zap.String("signal", sig.String()))
 				if err := srv.Shutdown(); err != nil {
