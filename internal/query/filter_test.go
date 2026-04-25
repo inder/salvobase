@@ -1211,3 +1211,476 @@ func TestEvalExprFallback(t *testing.T) {
 		})
 	}
 }
+
+// ─── $jsonSchema ─────────────────────────────────────────────────────────────
+
+func TestEvalJsonSchema(t *testing.T) {
+	tests := []struct {
+		name      string
+		doc       bson.D
+		filter    bson.D
+		wantMatch bool
+		wantErr   bool
+	}{
+		// --- type keyword ---
+		{
+			name:      "type object matches document",
+			doc:       bson.D{{Key: "name", Value: "alice"}},
+			filter:    bson.D{{Key: "$jsonSchema", Value: bson.D{{Key: "type", Value: "object"}}}},
+			wantMatch: true,
+		},
+		{
+			name:      "type string does not match document root",
+			doc:       bson.D{{Key: "name", Value: "alice"}},
+			filter:    bson.D{{Key: "$jsonSchema", Value: bson.D{{Key: "type", Value: "string"}}}},
+			wantMatch: false,
+		},
+		// --- bsonType keyword ---
+		{
+			name:      "bsonType object matches document",
+			doc:       bson.D{{Key: "x", Value: 1}},
+			filter:    bson.D{{Key: "$jsonSchema", Value: bson.D{{Key: "bsonType", Value: "object"}}}},
+			wantMatch: true,
+		},
+		// --- required keyword ---
+		{
+			name: "required fields present",
+			doc:  bson.D{{Key: "name", Value: "alice"}, {Key: "age", Value: 30}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "required", Value: bson.A{"name", "age"}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "required field missing",
+			doc:  bson.D{{Key: "name", Value: "alice"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "required", Value: bson.A{"name", "age"}},
+			}}},
+			wantMatch: false,
+		},
+		// --- properties with type ---
+		{
+			name: "property type string matches",
+			doc:  bson.D{{Key: "name", Value: "alice"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "type", Value: "string"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "property type string does not match integer",
+			doc:  bson.D{{Key: "name", Value: 42}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "type", Value: "string"}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		{
+			name: "property type number matches int32",
+			doc:  bson.D{{Key: "age", Value: int32(25)}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "age", Value: bson.D{{Key: "type", Value: "number"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "property type integer matches int32",
+			doc:  bson.D{{Key: "age", Value: int32(25)}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "age", Value: bson.D{{Key: "type", Value: "integer"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "property type integer does not match double",
+			doc:  bson.D{{Key: "age", Value: 25.5}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "age", Value: bson.D{{Key: "type", Value: "integer"}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		{
+			name: "absent property is not validated",
+			doc:  bson.D{{Key: "other", Value: 1}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "type", Value: "string"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		// --- minimum / maximum ---
+		{
+			name: "minimum passes",
+			doc:  bson.D{{Key: "age", Value: int32(18)}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "age", Value: bson.D{{Key: "minimum", Value: 18}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "minimum fails",
+			doc:  bson.D{{Key: "age", Value: int32(17)}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "age", Value: bson.D{{Key: "minimum", Value: 18}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		{
+			name: "maximum passes",
+			doc:  bson.D{{Key: "score", Value: 100.0}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "score", Value: bson.D{{Key: "maximum", Value: 100}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "maximum fails",
+			doc:  bson.D{{Key: "score", Value: 101.0}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "score", Value: bson.D{{Key: "maximum", Value: 100}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- minLength / maxLength ---
+		{
+			name: "minLength passes",
+			doc:  bson.D{{Key: "name", Value: "alice"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "minLength", Value: 3}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "minLength fails",
+			doc:  bson.D{{Key: "name", Value: "al"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "minLength", Value: 3}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		{
+			name: "maxLength passes",
+			doc:  bson.D{{Key: "name", Value: "alice"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "maxLength", Value: 10}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "maxLength fails",
+			doc:  bson.D{{Key: "name", Value: "alice in wonderland"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "maxLength", Value: 10}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- enum ---
+		{
+			name: "enum match",
+			doc:  bson.D{{Key: "status", Value: "active"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "status", Value: bson.D{{Key: "enum", Value: bson.A{"active", "inactive"}}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "enum no match",
+			doc:  bson.D{{Key: "status", Value: "deleted"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "status", Value: bson.D{{Key: "enum", Value: bson.A{"active", "inactive"}}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- pattern ---
+		{
+			name: "pattern matches",
+			doc:  bson.D{{Key: "email", Value: "alice@example.com"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "email", Value: bson.D{{Key: "pattern", Value: "^[a-z]+@"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "pattern does not match",
+			doc:  bson.D{{Key: "email", Value: "123@example.com"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "email", Value: bson.D{{Key: "pattern", Value: "^[a-z]+@"}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		{
+			name: "pattern on non-string field",
+			doc:  bson.D{{Key: "email", Value: 42}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "email", Value: bson.D{{Key: "pattern", Value: "^[a-z]+@"}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- bsonType in properties ---
+		{
+			name: "bsonType double matches",
+			doc:  bson.D{{Key: "score", Value: 9.5}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "score", Value: bson.D{{Key: "bsonType", Value: "double"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "bsonType int does not match double",
+			doc:  bson.D{{Key: "score", Value: 9.5}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "score", Value: bson.D{{Key: "bsonType", Value: "int"}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- combined keywords ---
+		{
+			name: "combined required + properties + type",
+			doc:  bson.D{{Key: "name", Value: "alice"}, {Key: "age", Value: int32(25)}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "type", Value: "object"},
+				{Key: "required", Value: bson.A{"name", "age"}},
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "type", Value: "string"}, {Key: "minLength", Value: 1}}},
+					{Key: "age", Value: bson.D{{Key: "type", Value: "integer"}, {Key: "minimum", Value: 0}, {Key: "maximum", Value: 150}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "combined fails on age type",
+			doc:  bson.D{{Key: "name", Value: "alice"}, {Key: "age", Value: "twenty-five"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "required", Value: bson.A{"name", "age"}},
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "type", Value: "string"}}},
+					{Key: "age", Value: bson.D{{Key: "type", Value: "integer"}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- nested properties ---
+		{
+			name: "nested object validated",
+			doc: bson.D{{Key: "address", Value: bson.D{
+				{Key: "city", Value: "NYC"},
+				{Key: "zip", Value: "10001"},
+			}}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "address", Value: bson.D{
+						{Key: "type", Value: "object"},
+						{Key: "required", Value: bson.A{"city"}},
+						{Key: "properties", Value: bson.D{
+							{Key: "city", Value: bson.D{{Key: "type", Value: "string"}}},
+						}},
+					}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "nested object missing required",
+			doc: bson.D{{Key: "address", Value: bson.D{
+				{Key: "zip", Value: "10001"},
+			}}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "address", Value: bson.D{
+						{Key: "type", Value: "object"},
+						{Key: "required", Value: bson.A{"city"}},
+					}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- type array and boolean ---
+		{
+			name: "property type array matches",
+			doc:  bson.D{{Key: "tags", Value: bson.A{"a", "b"}}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "tags", Value: bson.D{{Key: "type", Value: "array"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "property type boolean matches",
+			doc:  bson.D{{Key: "active", Value: true}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "active", Value: bson.D{{Key: "type", Value: "boolean"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "property type null matches",
+			doc:  bson.D{{Key: "deleted", Value: nil}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "deleted", Value: bson.D{{Key: "type", Value: "null"}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		// --- cross-type enum (type-strict) ---
+		{
+			name: "enum int32 does not match double of same magnitude",
+			doc:  bson.D{{Key: "x", Value: 42.0}}, // double
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "x", Value: bson.D{{Key: "enum", Value: bson.A{int32(42)}}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		{
+			name: "enum int32 matches int32",
+			doc:  bson.D{{Key: "x", Value: int32(42)}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "x", Value: bson.D{{Key: "enum", Value: bson.A{int32(42)}}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		// --- required with null value (field present but null) ---
+		{
+			name: "required passes when field is null",
+			doc:  bson.D{{Key: "x", Value: nil}}, // nil -> BSON null, field IS present
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "required", Value: bson.A{"x"}},
+			}}},
+			wantMatch: true,
+		},
+		// --- minimum/maximum on non-numeric field ---
+		{
+			name: "minimum on string field does not match",
+			doc:  bson.D{{Key: "x", Value: "hello"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "x", Value: bson.D{{Key: "minimum", Value: 5}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- integer type vs double holding whole number ---
+		{
+			name: "integer type rejects double 25.0",
+			doc:  bson.D{{Key: "x", Value: 25.0}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "x", Value: bson.D{{Key: "type", Value: "integer"}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+		// --- error cases ---
+		{
+			name:    "$jsonSchema not a document",
+			doc:     bson.D{{Key: "x", Value: 1}},
+			filter:  bson.D{{Key: "$jsonSchema", Value: "bad"}},
+			wantErr: true,
+		},
+		{
+			name: "unsupported keyword",
+			doc:  bson.D{{Key: "x", Value: 1}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "additionalProperties", Value: false},
+			}}},
+			wantErr: true,
+		},
+		// --- empty schema matches everything ---
+		{
+			name:      "empty schema matches any doc",
+			doc:       bson.D{{Key: "x", Value: 1}},
+			filter:    bson.D{{Key: "$jsonSchema", Value: bson.D{}}},
+			wantMatch: true,
+		},
+		// --- minLength with unicode ---
+		{
+			name: "minLength counts runes not bytes",
+			doc:  bson.D{{Key: "name", Value: "日本語"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "minLength", Value: 3}}},
+				}},
+			}}},
+			wantMatch: true,
+		},
+		{
+			name: "minLength unicode too short",
+			doc:  bson.D{{Key: "name", Value: "日本"}},
+			filter: bson.D{{Key: "$jsonSchema", Value: bson.D{
+				{Key: "properties", Value: bson.D{
+					{Key: "name", Value: bson.D{{Key: "minLength", Value: 3}}},
+				}},
+			}}},
+			wantMatch: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := mustMarshal(tc.doc)
+			filter := mustMarshal(tc.filter)
+			match, err := Filter(doc, filter)
+			if tc.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if match != tc.wantMatch {
+				t.Errorf("got match=%v, want %v", match, tc.wantMatch)
+			}
+		})
+	}
+}

@@ -173,7 +173,7 @@ func evalLogical(doc bson.Raw, op string, val bson.RawValue) (bool, error) {
 		return false, fmt.Errorf("$where is not supported for security reasons")
 
 	case "$jsonSchema":
-		return false, fmt.Errorf("$jsonSchema is not implemented")
+		return evalJsonSchema(doc, val)
 
 	default:
 		return false, fmt.Errorf("unknown top-level operator: %s", op)
@@ -1500,3 +1500,319 @@ func evalRegexWithOptions(fieldVal bson.RawValue, pattern, options string) (bool
 
 // ensure toInt64 is used somewhere or remove unused warning suppression
 var _ = toInt64
+
+// ─── $jsonSchema ─────────────────────────────────────────────────────────────
+
+// evalJsonSchema validates a document against a MongoDB $jsonSchema filter.
+// Supports the MongoDB subset of JSON Schema draft 4: type, bsonType, required,
+// properties, minimum, maximum, minLength, maxLength, enum, pattern.
+func evalJsonSchema(doc bson.Raw, val bson.RawValue) (bool, error) {
+	if val.Type != bson.TypeEmbeddedDocument {
+		return false, fmt.Errorf("$jsonSchema must be a document")
+	}
+	return jsonSchemaValidateDoc(doc, val.Document())
+}
+
+// jsonSchemaValidateDoc validates a BSON document against a schema document.
+func jsonSchemaValidateDoc(doc bson.Raw, schema bson.Raw) (bool, error) {
+	schemaElems, err := schema.Elements()
+	if err != nil {
+		return false, fmt.Errorf("invalid $jsonSchema: %w", err)
+	}
+
+	// Collect schema keywords.
+	var (
+		schemaType     string // JSON Schema "type"
+		bsonType       string // MongoDB extension "bsonType"
+		requiredFields []string
+		properties     bson.Raw
+	)
+
+	for _, elem := range schemaElems {
+		switch elem.Key() {
+		case "type":
+			if elem.Value().Type != bson.TypeString {
+				return false, fmt.Errorf("$jsonSchema 'type' must be a string")
+			}
+			schemaType = elem.Value().StringValue()
+		case "bsonType":
+			if elem.Value().Type != bson.TypeString {
+				return false, fmt.Errorf("$jsonSchema 'bsonType' must be a string")
+			}
+			bsonType = elem.Value().StringValue()
+		case "required":
+			if elem.Value().Type != bson.TypeArray {
+				return false, fmt.Errorf("$jsonSchema 'required' must be an array")
+			}
+			arr, err := elem.Value().Array().Values()
+			if err != nil {
+				return false, err
+			}
+			for _, v := range arr {
+				if v.Type != bson.TypeString {
+					return false, fmt.Errorf("$jsonSchema 'required' elements must be strings")
+				}
+				requiredFields = append(requiredFields, v.StringValue())
+			}
+		case "properties":
+			if elem.Value().Type != bson.TypeEmbeddedDocument {
+				return false, fmt.Errorf("$jsonSchema 'properties' must be a document")
+			}
+			properties = elem.Value().Document()
+		case "minimum", "maximum", "minLength", "maxLength", "enum", "pattern":
+			// Scalar constraints at root level are no-ops — the root is always an object.
+			// These keywords only apply to field values via "properties".
+		case "title", "description":
+			// Informational, ignored.
+		default:
+			return false, fmt.Errorf("$jsonSchema keyword %q is not supported", elem.Key())
+		}
+	}
+
+	// --- type / bsonType check (applies to the document root as "object") ---
+	if schemaType != "" {
+		if !jsonSchemaTypeMatchesDoc(schemaType, doc) {
+			return false, nil
+		}
+	}
+	if bsonType != "" {
+		if !jsonSchemaBsonTypeMatchesDoc(bsonType, doc) {
+			return false, nil
+		}
+	}
+
+	// --- required ---
+	for _, field := range requiredFields {
+		if doc.Lookup(field).IsZero() {
+			return false, nil
+		}
+	}
+
+	// --- properties ---
+	if properties != nil {
+		propElems, err := properties.Elements()
+		if err != nil {
+			return false, err
+		}
+		for _, prop := range propElems {
+			fieldName := prop.Key()
+			fieldVal := doc.Lookup(fieldName)
+			if fieldVal.IsZero() {
+				// Field absent — properties only validate present fields.
+				continue
+			}
+			subSchema := prop.Value()
+			if subSchema.Type != bson.TypeEmbeddedDocument {
+				return false, fmt.Errorf("$jsonSchema property schema must be a document")
+			}
+			match, err := jsonSchemaValidateValue(fieldVal, subSchema.Document())
+			if err != nil {
+				return false, err
+			}
+			if !match {
+				return false, nil
+			}
+		}
+	}
+
+	return true, nil
+}
+
+// jsonSchemaValidateValue validates a single BSON value against a schema.
+func jsonSchemaValidateValue(val bson.RawValue, schema bson.Raw) (bool, error) {
+	schemaElems, err := schema.Elements()
+	if err != nil {
+		return false, err
+	}
+
+	for _, elem := range schemaElems {
+		switch elem.Key() {
+		case "type":
+			if elem.Value().Type != bson.TypeString {
+				return false, fmt.Errorf("$jsonSchema 'type' must be a string")
+			}
+			if !jsonSchemaTypeMatchesValue(elem.Value().StringValue(), val) {
+				return false, nil
+			}
+		case "bsonType":
+			if elem.Value().Type != bson.TypeString {
+				return false, fmt.Errorf("$jsonSchema 'bsonType' must be a string")
+			}
+			if !jsonSchemaBsonTypeMatchesValue(elem.Value().StringValue(), val) {
+				return false, nil
+			}
+		case "minimum":
+			n, ok := toFloat64(elem.Value())
+			if !ok {
+				return false, fmt.Errorf("$jsonSchema 'minimum' must be a number")
+			}
+			fv, ok := toFloat64(val)
+			if !ok {
+				return false, nil // non-numeric doesn't match minimum
+			}
+			if fv < n {
+				return false, nil
+			}
+		case "maximum":
+			n, ok := toFloat64(elem.Value())
+			if !ok {
+				return false, fmt.Errorf("$jsonSchema 'maximum' must be a number")
+			}
+			fv, ok := toFloat64(val)
+			if !ok {
+				return false, nil
+			}
+			if fv > n {
+				return false, nil
+			}
+		case "minLength":
+			n, ok := toFloat64(elem.Value())
+			if !ok {
+				return false, fmt.Errorf("$jsonSchema 'minLength' must be a number")
+			}
+			if val.Type != bson.TypeString {
+				return false, nil
+			}
+			if int64(len([]rune(val.StringValue()))) < int64(n) {
+				return false, nil
+			}
+		case "maxLength":
+			n, ok := toFloat64(elem.Value())
+			if !ok {
+				return false, fmt.Errorf("$jsonSchema 'maxLength' must be a number")
+			}
+			if val.Type != bson.TypeString {
+				return false, nil
+			}
+			if int64(len([]rune(val.StringValue()))) > int64(n) {
+				return false, nil
+			}
+		case "enum":
+			if elem.Value().Type != bson.TypeArray {
+				return false, fmt.Errorf("$jsonSchema 'enum' must be an array")
+			}
+			enumArr, err := elem.Value().Array().Values()
+			if err != nil {
+				return false, err
+			}
+			found := false
+			for _, ev := range enumArr {
+				// Schema enum uses strict type+value equality, not cross-type numeric comparison.
+				if val.Type == ev.Type && compareValues(val, ev) == 0 {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false, nil
+			}
+		case "pattern":
+			if elem.Value().Type != bson.TypeString {
+				return false, fmt.Errorf("$jsonSchema 'pattern' must be a string")
+			}
+			if val.Type != bson.TypeString {
+				return false, nil
+			}
+			re, err := regexp.Compile(elem.Value().StringValue())
+			if err != nil {
+				return false, fmt.Errorf("invalid pattern in $jsonSchema: %w", err)
+			}
+			if !re.MatchString(val.StringValue()) {
+				return false, nil
+			}
+		case "required":
+			if val.Type != bson.TypeEmbeddedDocument {
+				return false, nil
+			}
+			if elem.Value().Type != bson.TypeArray {
+				return false, fmt.Errorf("$jsonSchema 'required' must be an array")
+			}
+			arr, err := elem.Value().Array().Values()
+			if err != nil {
+				return false, err
+			}
+			subdoc := val.Document()
+			for _, rv := range arr {
+				if rv.Type != bson.TypeString {
+					return false, fmt.Errorf("$jsonSchema 'required' elements must be strings")
+				}
+				if subdoc.Lookup(rv.StringValue()).IsZero() {
+					return false, nil
+				}
+			}
+		case "properties":
+			if val.Type != bson.TypeEmbeddedDocument {
+				return false, nil
+			}
+			if elem.Value().Type != bson.TypeEmbeddedDocument {
+				return false, fmt.Errorf("$jsonSchema 'properties' must be a document")
+			}
+			subdoc := val.Document()
+			propElems, err := elem.Value().Document().Elements()
+			if err != nil {
+				return false, err
+			}
+			for _, prop := range propElems {
+				fieldVal := subdoc.Lookup(prop.Key())
+				if fieldVal.IsZero() {
+					continue
+				}
+				if prop.Value().Type != bson.TypeEmbeddedDocument {
+					return false, fmt.Errorf("$jsonSchema property schema must be a document")
+				}
+				match, err := jsonSchemaValidateValue(fieldVal, prop.Value().Document())
+				if err != nil {
+					return false, err
+				}
+				if !match {
+					return false, nil
+				}
+			}
+		case "title", "description":
+			// Informational, ignored.
+		default:
+			return false, fmt.Errorf("$jsonSchema keyword %q is not supported", elem.Key())
+		}
+	}
+	return true, nil
+}
+
+// jsonSchemaTypeMatchesDoc checks if a document matches a JSON Schema "type".
+// At the document root level, the type should be "object".
+func jsonSchemaTypeMatchesDoc(t string, doc bson.Raw) bool {
+	return t == "object"
+}
+
+// jsonSchemaBsonTypeMatchesDoc checks if a document matches a MongoDB "bsonType".
+func jsonSchemaBsonTypeMatchesDoc(t string, doc bson.Raw) bool {
+	return t == "object"
+}
+
+// jsonSchemaTypeMatchesValue maps JSON Schema type names to BSON types.
+func jsonSchemaTypeMatchesValue(t string, val bson.RawValue) bool {
+	switch t {
+	case "string":
+		return val.Type == bson.TypeString
+	case "number":
+		return isNumeric(val.Type)
+	case "integer":
+		return val.Type == bson.TypeInt32 || val.Type == bson.TypeInt64
+	case "boolean":
+		return val.Type == bson.TypeBoolean
+	case "object":
+		return val.Type == bson.TypeEmbeddedDocument
+	case "array":
+		return val.Type == bson.TypeArray
+	case "null":
+		return val.Type == bson.TypeNull
+	}
+	return false
+}
+
+// jsonSchemaBsonTypeMatchesValue maps MongoDB bsonType names to BSON types.
+func jsonSchemaBsonTypeMatchesValue(t string, val bson.RawValue) bool {
+	if t == "number" {
+		return isNumeric(val.Type)
+	}
+	return bsonTypeName(val.Type) == t
+}
