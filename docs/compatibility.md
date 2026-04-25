@@ -107,7 +107,7 @@ Server URI: `mongodb://localhost:27017`
 | `$replaceRoot` | ✅ pass |  |
 | `$count` | ✅ pass |  |
 | `$sortByCount` | ✅ pass |  |
-| `$facet` | ⚠️ partial | nested pipeline $group inside $facet may produce empty results in edge cases |
+| `$facet` | ✅ pass |  |
 | `$lookup` | ✅ pass |  |
 
 ## Aggregation Expressions
