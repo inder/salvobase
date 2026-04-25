@@ -900,3 +900,198 @@ func TestBuildUnwindStage(t *testing.T) {
 		}
 	})
 }
+
+// ─── $facet + $group edge case tests ────────────────────────────────────────
+
+func TestStageFacetWithGroup(t *testing.T) {
+	docs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "dept", Value: "eng"}, {Key: "sal", Value: int32(100)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "dept", Value: "eng"}, {Key: "sal", Value: int32(120)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "dept", Value: "sales"}, {Key: "sal", Value: int32(80)}}),
+	}
+
+	t.Run("two group pipelines", func(t *testing.T) {
+		groupByDept := &groupStage{spec: makeRaw(t, bson.D{
+			{Key: "_id", Value: "$dept"},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: int32(1)}}},
+		})}
+		groupByNull := &groupStage{spec: makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "total", Value: bson.D{{Key: "$sum", Value: "$sal"}}},
+		})}
+
+		facet := &facetStage{
+			pipelines: []facetPipeline{
+				{name: "byDept", stages: []Stage{groupByDept}},
+				{name: "totalSal", stages: []Stage{groupByNull}},
+			},
+		}
+
+		result, err := facet.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 result doc, got %d", len(result))
+		}
+
+		d := decodeResult(t, result[0])
+
+		byDeptRaw := getFieldD(d, "byDept")
+		byDept, ok := byDeptRaw.(bson.A)
+		if !ok {
+			t.Fatalf("byDept: expected bson.A, got %T", byDeptRaw)
+		}
+		if len(byDept) != 2 {
+			t.Errorf("byDept: expected 2 groups (eng, sales), got %d", len(byDept))
+		}
+
+		totalSalRaw := getFieldD(d, "totalSal")
+		totalSal, ok := totalSalRaw.(bson.A)
+		if !ok {
+			t.Fatalf("totalSal: expected bson.A, got %T", totalSalRaw)
+		}
+		if len(totalSal) != 1 {
+			t.Fatalf("totalSal: expected 1 group, got %d", len(totalSal))
+		}
+		totalDoc, ok := totalSal[0].(bson.D)
+		if !ok {
+			t.Fatalf("totalSal[0]: expected bson.D, got %T", totalSal[0])
+		}
+		total := getFieldD(totalDoc, "total")
+		if toFloatT(t, total) != 300 {
+			t.Errorf("totalSal total: expected 300, got %v", total)
+		}
+	})
+
+	t.Run("match then group in one facet", func(t *testing.T) {
+		matchEng := &matchStage{filter: makeRaw(t, bson.D{{Key: "dept", Value: "eng"}})}
+		groupCount := &groupStage{spec: makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: int32(1)}}},
+		})}
+
+		facet := &facetStage{
+			pipelines: []facetPipeline{
+				{name: "engCount", stages: []Stage{matchEng, groupCount}},
+			},
+		}
+
+		result, err := facet.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		engCountRaw := getFieldD(d, "engCount")
+		engCount, ok := engCountRaw.(bson.A)
+		if !ok {
+			t.Fatalf("engCount: expected bson.A, got %T", engCountRaw)
+		}
+		if len(engCount) != 1 {
+			t.Fatalf("engCount: expected 1 group, got %d", len(engCount))
+		}
+		countDoc, ok := engCount[0].(bson.D)
+		if !ok {
+			t.Fatalf("engCount[0]: expected bson.D, got %T", engCount[0])
+		}
+		count := getFieldD(countDoc, "count")
+		if toFloatT(t, count) != 2 {
+			t.Errorf("engCount: expected 2, got %v", count)
+		}
+	})
+
+	t.Run("match filters to empty then group", func(t *testing.T) {
+		matchNone := &matchStage{filter: makeRaw(t, bson.D{{Key: "dept", Value: "nonexistent"}})}
+		groupCount := &groupStage{spec: makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: int32(1)}}},
+		})}
+
+		facet := &facetStage{
+			pipelines: []facetPipeline{
+				{name: "empty", stages: []Stage{matchNone, groupCount}},
+			},
+		}
+
+		result, err := facet.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		emptyRaw := getFieldD(d, "empty")
+		empty, ok := emptyRaw.(bson.A)
+		if !ok {
+			t.Fatalf("empty: expected bson.A, got %T", emptyRaw)
+		}
+		if len(empty) != 0 {
+			t.Errorf("empty: expected 0 groups from filtered-to-empty input, got %d", len(empty))
+		}
+	})
+
+	t.Run("single doc input", func(t *testing.T) {
+		singleDoc := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "x", Value: int32(42)}}),
+		}
+		groupNull := &groupStage{spec: makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "total", Value: bson.D{{Key: "$sum", Value: "$x"}}},
+		})}
+
+		facet := &facetStage{
+			pipelines: []facetPipeline{
+				{name: "result", stages: []Stage{groupNull}},
+			},
+		}
+
+		result, err := facet.Process(singleDoc)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		resRaw := getFieldD(d, "result")
+		res, ok := resRaw.(bson.A)
+		if !ok {
+			t.Fatalf("result: expected bson.A, got %T", resRaw)
+		}
+		if len(res) != 1 {
+			t.Fatalf("result: expected 1 group, got %d", len(res))
+		}
+		resDoc, ok := res[0].(bson.D)
+		if !ok {
+			t.Fatalf("result[0]: expected bson.D, got %T", res[0])
+		}
+		if toFloatT(t, getFieldD(resDoc, "total")) != 42 {
+			t.Errorf("expected total=42, got %v", getFieldD(resDoc, "total"))
+		}
+	})
+
+	t.Run("empty input docs", func(t *testing.T) {
+		groupNull := &groupStage{spec: makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "count", Value: bson.D{{Key: "$sum", Value: int32(1)}}},
+		})}
+
+		facet := &facetStage{
+			pipelines: []facetPipeline{
+				{name: "result", stages: []Stage{groupNull}},
+			},
+		}
+
+		result, err := facet.Process(nil)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 result doc, got %d", len(result))
+		}
+		d := decodeResult(t, result[0])
+		resRaw := getFieldD(d, "result")
+		res, ok := resRaw.(bson.A)
+		if !ok {
+			t.Fatalf("result: expected bson.A, got %T", resRaw)
+		}
+		if len(res) != 0 {
+			t.Errorf("expected 0 groups from nil input, got %d", len(res))
+		}
+	})
+}
