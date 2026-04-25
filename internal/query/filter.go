@@ -729,6 +729,23 @@ func evalBits(fieldVal bson.RawValue, opVal bson.RawValue, mode string) (bool, e
 	return false, nil
 }
 
+// ExtractTextSearch returns the $text.$search string from a filter, or ""
+// if the filter does not contain a $text operator.
+func ExtractTextSearch(filter bson.Raw) string {
+	if len(filter) == 0 {
+		return ""
+	}
+	textVal, err := filter.LookupErr("$text")
+	if err != nil || textVal.Type != bson.TypeEmbeddedDocument {
+		return ""
+	}
+	searchVal, err := textVal.Document().LookupErr("$search")
+	if err != nil || searchVal.Type != bson.TypeString {
+		return ""
+	}
+	return searchVal.StringValue()
+}
+
 // evalTextFilter implements basic $text search (substring match on string fields).
 func evalTextFilter(doc bson.Raw, opVal bson.RawValue) (bool, error) {
 	if opVal.Type != bson.TypeEmbeddedDocument {
