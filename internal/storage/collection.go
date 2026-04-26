@@ -1636,10 +1636,13 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			}
 			c.engine.insertIntoIndexes(tx, c.db, c.coll, newKey, newDoc) //nolint:errcheck
 			result.ModifiedCount++
+
+			// Compute field-level diff for change stream updateDescription.
+			diff := query.ComputeUpdateDiff(item.doc, newDoc)
 			pendingEvents = append(pendingEvents, ChangeEvent{
 				OperationType:     ChangeUpdate,
 				DocumentKey:       makeDocumentKey(newDoc.Lookup("_id")),
-				UpdateDescription: updateDescriptionPlaceholder,
+				UpdateDescription: query.MarshalUpdateDescription(diff),
 			})
 		}
 		return nil
