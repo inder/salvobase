@@ -159,7 +159,11 @@ func buildStage(spec bson.Raw, engine storage.Engine, db string) (Stage, error) 
 		return nil, fmt.Errorf("$geoNear is not implemented")
 
 	case "$graphLookup":
-		return nil, fmt.Errorf("$graphLookup is not implemented")
+		glDoc, ok := stageVal.DocumentOK()
+		if !ok {
+			return nil, fmt.Errorf("$graphLookup requires a document")
+		}
+		return buildGraphLookupStage(glDoc, engine, db)
 
 	case "$search":
 		return nil, fmt.Errorf("$search is not implemented")
@@ -1708,6 +1712,271 @@ func (s *redactStage) redactDoc(doc bson.Raw) (bson.Raw, error) {
 	default:
 		return nil, fmt.Errorf("$redact: expression must evaluate to $$DESCEND, $$PRUNE, or $$KEEP")
 	}
+}
+
+// ─── $graphLookup ─────────────────────────────────────────────────────────────
+
+type graphLookupStage struct {
+	from                  string
+	startWith             bson.RawValue
+	connectFromField      string
+	connectToField        string
+	as                    string
+	maxDepth              int
+	hasMaxDepth           bool
+	depthField            string
+	restrictSearchWithMatch bson.Raw
+	engine                storage.Engine
+	db                    string
+}
+
+func buildGraphLookupStage(spec bson.Raw, engine storage.Engine, db string) (*graphLookupStage, error) {
+	s := &graphLookupStage{engine: engine, db: db, maxDepth: -1}
+
+	elems, err := spec.Elements()
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range elems {
+		switch e.Key() {
+		case "from":
+			if e.Value().Type == bson.TypeString {
+				s.from = e.Value().StringValue()
+			}
+		case "startWith":
+			s.startWith = e.Value()
+		case "connectFromField":
+			if e.Value().Type == bson.TypeString {
+				s.connectFromField = e.Value().StringValue()
+			}
+		case "connectToField":
+			if e.Value().Type == bson.TypeString {
+				s.connectToField = e.Value().StringValue()
+			}
+		case "as":
+			if e.Value().Type == bson.TypeString {
+				s.as = e.Value().StringValue()
+			}
+		case "maxDepth":
+			n, ok := toFloat64Interface(rawValToInterface(e.Value()))
+			if ok {
+				s.maxDepth = int(n)
+				s.hasMaxDepth = true
+			}
+		case "depthField":
+			if e.Value().Type == bson.TypeString {
+				s.depthField = e.Value().StringValue()
+			}
+		case "restrictSearchWithMatch":
+			if e.Value().Type == bson.TypeEmbeddedDocument {
+				s.restrictSearchWithMatch = e.Value().Document()
+			}
+		}
+	}
+
+	if s.from == "" {
+		return nil, fmt.Errorf("$graphLookup requires 'from'")
+	}
+	if s.connectFromField == "" {
+		return nil, fmt.Errorf("$graphLookup requires 'connectFromField'")
+	}
+	if s.connectToField == "" {
+		return nil, fmt.Errorf("$graphLookup requires 'connectToField'")
+	}
+	if s.as == "" {
+		return nil, fmt.Errorf("$graphLookup requires 'as'")
+	}
+	if s.startWith.Type == 0 {
+		return nil, fmt.Errorf("$graphLookup requires 'startWith'")
+	}
+
+	return s, nil
+}
+
+func (s *graphLookupStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
+	if s.engine == nil {
+		return nil, fmt.Errorf("$graphLookup requires a storage engine")
+	}
+
+	coll, err := s.engine.Collection(s.db, s.from)
+	if err != nil {
+		return nil, fmt.Errorf("$graphLookup: cannot open collection %s: %w", s.from, err)
+	}
+
+	// Load all documents from the target collection once.
+	cursor, err := coll.Find(nil, storage.FindOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("$graphLookup: find: %w", err)
+	}
+	var allTargetDocs []bson.Raw
+	for {
+		batch, exhausted, err := cursor.NextBatch(1000)
+		if err != nil {
+			cursor.Close()
+			return nil, fmt.Errorf("$graphLookup: read: %w", err)
+		}
+		allTargetDocs = append(allTargetDocs, batch...)
+		if exhausted {
+			break
+		}
+	}
+	cursor.Close()
+
+	result := make([]bson.Raw, 0, len(docs))
+	for _, doc := range docs {
+		matched, err := s.traverse(doc, allTargetDocs)
+		if err != nil {
+			return nil, err
+		}
+
+		d, err := rawToD(doc)
+		if err != nil {
+			return nil, err
+		}
+		arr := make(bson.A, len(matched))
+		for i, m := range matched {
+			arr[i] = m
+		}
+		d = setFieldD(d, s.as, arr)
+		raw, err := dToRaw(d)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, raw)
+	}
+	return result, nil
+}
+
+// traverse performs BFS from the startWith expression value through the target docs.
+func (s *graphLookupStage) traverse(inputDoc bson.Raw, targetDocs []bson.Raw) ([]bson.Raw, error) {
+	// Evaluate startWith to get initial search value(s)
+	startVal, err := EvalExpr(s.startWith, inputDoc)
+	if err != nil {
+		return nil, fmt.Errorf("$graphLookup startWith: %w", err)
+	}
+
+	// Normalize start values into a slice for uniform handling
+	frontier := normalizeToSlice(startVal)
+	if len(frontier) == 0 {
+		return nil, nil
+	}
+
+	// Track visited documents by serialized _id to prevent cycles
+	visited := make(map[string]bool)
+
+	var results []bson.Raw
+	depth := 0
+
+	for len(frontier) > 0 {
+		if s.hasMaxDepth && depth > s.maxDepth {
+			break
+		}
+
+		var nextFrontier []interface{}
+		for _, searchVal := range frontier {
+			searchRV := interfaceToRawValue(searchVal)
+
+			for _, targetDoc := range targetDocs {
+				connectToVal, found := query.GetField(targetDoc, s.connectToField)
+				if !found {
+					continue
+				}
+
+				if !valuesMatch(searchRV, connectToVal) {
+					continue
+				}
+
+				// Apply restrictSearchWithMatch if present
+				if len(s.restrictSearchWithMatch) > 0 {
+					match, err := query.Filter(targetDoc, s.restrictSearchWithMatch)
+					if err != nil {
+						return nil, err
+					}
+					if !match {
+						continue
+					}
+				}
+
+				// Cycle detection: track by _id for efficiency and correctness
+				idVal, _ := query.GetField(targetDoc, "_id")
+				docKey := string(idVal.Value)
+				if visited[docKey] {
+					continue
+				}
+				visited[docKey] = true
+
+				// Add depth field if requested
+				var resultDoc bson.Raw
+				if s.depthField != "" {
+					d, err := rawToD(targetDoc)
+					if err != nil {
+						return nil, err
+					}
+					d = setFieldD(d, s.depthField, int64(depth))
+					resultDoc, err = dToRaw(d)
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					resultDoc = targetDoc
+				}
+				results = append(results, resultDoc)
+
+				// Extract connectFrom value for next level
+				connectFromVal, found := query.GetField(targetDoc, s.connectFromField)
+				if found {
+					nextFrontier = append(nextFrontier, normalizeToSlice(rawValToInterface(connectFromVal))...)
+				}
+			}
+		}
+		frontier = nextFrontier
+		depth++
+	}
+	return results, nil
+}
+
+// normalizeToSlice converts a value (possibly an array) into a flat slice of values.
+func normalizeToSlice(val interface{}) []interface{} {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case []interface{}:
+		return v
+	case bson.RawValue:
+		if v.Type == bson.TypeArray {
+			arr, ok := v.ArrayOK()
+			if ok {
+				vals, _ := arr.Values()
+				result := make([]interface{}, len(vals))
+				for i, rv := range vals {
+					result[i] = rawValToInterface(rv)
+				}
+				return result
+			}
+		}
+		return []interface{}{rawValToInterface(v)}
+	default:
+		return []interface{}{val}
+	}
+}
+
+// valuesMatch checks if a search value matches a target connectTo value.
+// The connectTo value may be an array, in which case any element match counts.
+func valuesMatch(search bson.RawValue, target bson.RawValue) bool {
+	if target.Type == bson.TypeArray {
+		arr, ok := target.ArrayOK()
+		if ok {
+			vals, _ := arr.Values()
+			for _, v := range vals {
+				if query.CompareValues(search, v) == 0 {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return query.CompareValues(search, target) == 0
 }
 
 // ─── $unionWith ───────────────────────────────────────────────────────────────
