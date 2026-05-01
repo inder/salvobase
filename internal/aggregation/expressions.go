@@ -278,6 +278,10 @@ func evalOperatorExpr(op string, arg bson.RawValue, doc bson.Raw) (interface{}, 
 		return evalFirstN(arg, doc)
 	case "$lastN":
 		return evalLastN(arg, doc)
+	case "$maxN":
+		return evalMaxN(arg, doc)
+	case "$minN":
+		return evalMinN(arg, doc)
 
 	// ── String ───────────────────────────────────────────────────────────────
 	case "$concat":
@@ -1613,6 +1617,84 @@ func evalFirstN(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 
 func evalLastN(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 	return evalFirstNLastN(arg, doc, true)
+}
+
+// ─── $maxN / $minN ──────────────────────────────────────────────────────────
+
+func evalMaxNMinN(arg bson.RawValue, doc bson.Raw, descending bool) (interface{}, error) {
+	opName := "$maxN"
+	if !descending {
+		opName = "$minN"
+	}
+
+	subDoc, ok := arg.DocumentOK()
+	if !ok {
+		return nil, fmt.Errorf("%s requires a document argument with 'n' and 'input'", opName)
+	}
+
+	nVal, err := subDoc.LookupErr("n")
+	if err != nil {
+		return nil, fmt.Errorf("%s requires 'n'", opName)
+	}
+	inputVal, err := subDoc.LookupErr("input")
+	if err != nil {
+		return nil, fmt.Errorf("%s requires 'input'", opName)
+	}
+
+	nEvaled, err := EvalExpr(nVal, doc)
+	if err != nil {
+		return nil, err
+	}
+	nFloat, ok := toFloat64Interface(nEvaled)
+	if !ok {
+		return nil, fmt.Errorf("%s: 'n' must be a positive integer", opName)
+	}
+	n := int(nFloat)
+	if nFloat != float64(n) || n <= 0 {
+		return nil, fmt.Errorf("%s: 'n' must be a positive integer, got %v", opName, nEvaled)
+	}
+
+	inputEvaled, err := EvalExpr(inputVal, doc)
+	if err != nil {
+		return nil, err
+	}
+	if inputEvaled == nil {
+		return nil, nil
+	}
+	arr := toSlice(inputEvaled)
+	if arr == nil {
+		return nil, fmt.Errorf("%s: 'input' must be an array", opName)
+	}
+
+	// Copy and sort using MongoDB comparison order.
+	sorted := make([]interface{}, len(arr))
+	copy(sorted, arr)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		a := interfaceToRawValue(sorted[i])
+		b := interfaceToRawValue(sorted[j])
+		cmp := query.CompareValues(a, b)
+		if descending {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+
+	if n >= len(sorted) {
+		result := make([]interface{}, len(sorted))
+		copy(result, sorted)
+		return result, nil
+	}
+	result := make([]interface{}, n)
+	copy(result, sorted[:n])
+	return result, nil
+}
+
+func evalMaxN(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	return evalMaxNMinN(arg, doc, true)
+}
+
+func evalMinN(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	return evalMaxNMinN(arg, doc, false)
 }
 
 func marshalToRawDoc(v interface{}) (bson.Raw, error) {
