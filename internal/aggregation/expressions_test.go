@@ -1420,6 +1420,275 @@ func TestExprSortArray(t *testing.T) {
 	})
 }
 
+// ─── $firstN / $lastN ────────────────────────────────────────────────────────
+
+func TestExprFirstN(t *testing.T) {
+	doc := makeDoc(t, bson.D{
+		{Key: "scores", Value: bson.A{int32(10), int32(20), int32(30), int32(40), int32(50)}},
+		{Key: "empty", Value: bson.A{}},
+		{Key: "single", Value: bson.A{int32(42)}},
+	})
+
+	t.Run("basic first 3", func(t *testing.T) {
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(10), int32(20), int32(30)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("first 1", func(t *testing.T) {
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(1)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(10)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("n greater than array length returns full array", func(t *testing.T) {
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(100)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 5 {
+			t.Errorf("expected 5 elements, got %d", len(arr))
+		}
+	})
+
+	t.Run("n = 0 returns empty array", func(t *testing.T) {
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(0)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected 0 elements, got %d", len(arr))
+		}
+	})
+
+	t.Run("null input returns nil", func(t *testing.T) {
+		nullDoc := makeDoc(t, bson.D{{Key: "x", Value: nil}})
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$x"},
+		}}}
+		got := evalExprHelper(t, expr, nullDoc)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("missing input field returns nil", func(t *testing.T) {
+		emptyDoc := makeDoc(t, bson.D{})
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$nonexistent"},
+		}}}
+		got := evalExprHelper(t, expr, emptyDoc)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("empty array returns empty array", func(t *testing.T) {
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$empty"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected 0 elements, got %d", len(arr))
+		}
+	})
+
+	t.Run("error on negative n", func(t *testing.T) {
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(-1)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for negative n")
+		}
+	})
+
+	t.Run("error on missing n", func(t *testing.T) {
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "input", Value: "$scores"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for missing n")
+		}
+	})
+
+	t.Run("error on missing input", func(t *testing.T) {
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for missing input")
+		}
+	})
+
+	t.Run("expression for n", func(t *testing.T) {
+		docWithN := makeDoc(t, bson.D{
+			{Key: "scores", Value: bson.A{int32(10), int32(20), int32(30)}},
+			{Key: "count", Value: int32(2)},
+		})
+		expr := bson.D{{Key: "$firstN", Value: bson.D{
+			{Key: "n", Value: "$count"},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, docWithN)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(10), int32(20)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+}
+
+func TestExprLastN(t *testing.T) {
+	doc := makeDoc(t, bson.D{
+		{Key: "scores", Value: bson.A{int32(10), int32(20), int32(30), int32(40), int32(50)}},
+		{Key: "empty", Value: bson.A{}},
+	})
+
+	t.Run("basic last 3", func(t *testing.T) {
+		expr := bson.D{{Key: "$lastN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(30), int32(40), int32(50)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("last 1", func(t *testing.T) {
+		expr := bson.D{{Key: "$lastN", Value: bson.D{
+			{Key: "n", Value: int32(1)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(50)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("n greater than array length returns full array", func(t *testing.T) {
+		expr := bson.D{{Key: "$lastN", Value: bson.D{
+			{Key: "n", Value: int32(100)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 5 {
+			t.Errorf("expected 5 elements, got %d", len(arr))
+		}
+	})
+
+	t.Run("n = 0 returns empty array", func(t *testing.T) {
+		expr := bson.D{{Key: "$lastN", Value: bson.D{
+			{Key: "n", Value: int32(0)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected 0 elements, got %d", len(arr))
+		}
+	})
+
+	t.Run("null input returns nil", func(t *testing.T) {
+		nullDoc := makeDoc(t, bson.D{{Key: "x", Value: nil}})
+		expr := bson.D{{Key: "$lastN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$x"},
+		}}}
+		got := evalExprHelper(t, expr, nullDoc)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("empty array returns empty array", func(t *testing.T) {
+		expr := bson.D{{Key: "$lastN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$empty"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected 0 elements, got %d", len(arr))
+		}
+	})
+
+	t.Run("error on negative n", func(t *testing.T) {
+		expr := bson.D{{Key: "$lastN", Value: bson.D{
+			{Key: "n", Value: int32(-1)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for negative n")
+		}
+	})
+}
+
 func extractField(t *testing.T, arr []interface{}, field string) []interface{} {
 	t.Helper()
 	result := make([]interface{}, len(arr))
