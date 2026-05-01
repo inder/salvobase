@@ -2399,10 +2399,7 @@ func (s *densifyStage) densifyPartition(docs []bson.Raw, partKey bson.D, lo, hi 
 
 		if emittedAtCursor == 0 {
 			// Create a synthetic doc with just the densify field (+ partition keys).
-			newDoc := bson.D{}
-			for _, e := range partKey {
-				newDoc = append(newDoc, e)
-			}
+			newDoc := append(bson.D{}, partKey...)
 			newDoc = setFieldD(newDoc, s.field, cursor)
 			raw, err := dToRaw(newDoc)
 			if err != nil {
