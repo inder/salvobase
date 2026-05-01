@@ -1574,7 +1574,7 @@ func evalFirstNLastN(arg bson.RawValue, doc bson.Raw, takeLast bool) (interface{
 		return nil, fmt.Errorf("%s: 'n' must be a positive integer", opName)
 	}
 	n := int(nFloat)
-	if nFloat != float64(n) || n < 0 {
+	if nFloat != float64(n) || n <= 0 {
 		return nil, fmt.Errorf("%s: 'n' must be a positive integer, got %v", opName, nEvaled)
 	}
 
