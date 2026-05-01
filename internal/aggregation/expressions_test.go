@@ -906,7 +906,11 @@ func TestExprRand(t *testing.T) {
 		seen := make(map[float64]bool)
 		for i := 0; i < 10; i++ {
 			result := evalExprHelper(t, bson.D{{Key: "$rand", Value: bson.D{}}}, doc)
-			seen[result.(float64)] = true
+			f, ok := result.(float64)
+			if !ok {
+				t.Fatalf("$rand returned %T, want float64", result)
+			}
+			seen[f] = true
 		}
 		if len(seen) < 2 {
 			t.Fatalf("$rand produced %d unique values in 10 calls, expected variation", len(seen))
