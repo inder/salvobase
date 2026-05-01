@@ -3,6 +3,7 @@ package aggregation
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
@@ -2140,6 +2141,252 @@ func TestExprMinN(t *testing.T) {
 		_, err := EvalExpr(expr, doc)
 		if err == nil {
 			t.Fatal("expected error for negative n")
+		}
+	})
+}
+
+// ─── $dateToParts / $dateFromParts ────────────────────────────────────────────
+
+func TestExprDateToParts(t *testing.T) {
+	// 2026-05-01T14:30:45.123Z
+	ts := time.Date(2026, 5, 1, 14, 30, 45, 123000000, time.UTC)
+	doc := makeDoc(t, bson.D{{Key: "d", Value: ts}})
+
+	t.Run("basic decompose", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateToParts", Value: bson.D{
+			{Key: "date", Value: "$d"},
+		}}}
+		result := evalExprHelper(t, expr, doc)
+		got, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		expect := bson.D{
+			{Key: "year", Value: int32(2026)},
+			{Key: "month", Value: int32(5)},
+			{Key: "day", Value: int32(1)},
+			{Key: "hour", Value: int32(14)},
+			{Key: "minute", Value: int32(30)},
+			{Key: "second", Value: int32(45)},
+			{Key: "millisecond", Value: int32(123)},
+		}
+		if !reflect.DeepEqual(got, expect) {
+			t.Fatalf("got %v, want %v", got, expect)
+		}
+	})
+
+	t.Run("iso8601 mode", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateToParts", Value: bson.D{
+			{Key: "date", Value: "$d"},
+			{Key: "iso8601", Value: true},
+		}}}
+		result := evalExprHelper(t, expr, doc)
+		got, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		// 2026-05-01 is a Friday: isoWeekYear=2026, isoWeek=18, isoDayOfWeek=5
+		isoYear, isoWeek := ts.ISOWeek()
+		expect := bson.D{
+			{Key: "isoWeekYear", Value: int32(isoYear)},
+			{Key: "isoWeek", Value: int32(isoWeek)},
+			{Key: "isoDayOfWeek", Value: int32(5)}, // Friday
+			{Key: "hour", Value: int32(14)},
+			{Key: "minute", Value: int32(30)},
+			{Key: "second", Value: int32(45)},
+			{Key: "millisecond", Value: int32(123)},
+		}
+		if !reflect.DeepEqual(got, expect) {
+			t.Fatalf("got %v, want %v", got, expect)
+		}
+	})
+
+	t.Run("with timezone", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateToParts", Value: bson.D{
+			{Key: "date", Value: "$d"},
+			{Key: "timezone", Value: "America/New_York"},
+		}}}
+		result := evalExprHelper(t, expr, doc)
+		got, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		// UTC 14:30 → EDT (UTC-4) = 10:30
+		expect := bson.D{
+			{Key: "year", Value: int32(2026)},
+			{Key: "month", Value: int32(5)},
+			{Key: "day", Value: int32(1)},
+			{Key: "hour", Value: int32(10)},
+			{Key: "minute", Value: int32(30)},
+			{Key: "second", Value: int32(45)},
+			{Key: "millisecond", Value: int32(123)},
+		}
+		if !reflect.DeepEqual(got, expect) {
+			t.Fatalf("got %v, want %v", got, expect)
+		}
+	})
+
+	t.Run("null input", func(t *testing.T) {
+		nullDoc := makeDoc(t, bson.D{{Key: "d", Value: nil}})
+		expr := bson.D{{Key: "$dateToParts", Value: bson.D{
+			{Key: "date", Value: "$d"},
+		}}}
+		result := evalExprHelper(t, expr, nullDoc)
+		if result != nil {
+			t.Fatalf("expected nil for null date, got %v", result)
+		}
+	})
+
+	t.Run("invalid timezone error", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateToParts", Value: bson.D{
+			{Key: "date", Value: "$d"},
+			{Key: "timezone", Value: "Fake/Zone"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for invalid timezone")
+		}
+	})
+
+	t.Run("missing field returns null", func(t *testing.T) {
+		emptyDoc := makeDoc(t, bson.D{})
+		expr := bson.D{{Key: "$dateToParts", Value: bson.D{
+			{Key: "date", Value: "$nofield"},
+		}}}
+		result := evalExprHelper(t, expr, emptyDoc)
+		if result != nil {
+			t.Fatalf("expected nil for missing field, got %v", result)
+		}
+	})
+}
+
+func TestExprDateFromParts(t *testing.T) {
+	doc := makeDoc(t, bson.D{})
+
+	t.Run("basic calendar", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateFromParts", Value: bson.D{
+			{Key: "year", Value: int32(2026)},
+			{Key: "month", Value: int32(5)},
+			{Key: "day", Value: int32(1)},
+			{Key: "hour", Value: int32(14)},
+			{Key: "minute", Value: int32(30)},
+			{Key: "second", Value: int32(45)},
+			{Key: "millisecond", Value: int32(123)},
+		}}}
+		result := evalExprHelper(t, expr, doc)
+		got, ok := toTime(result)
+		if !ok {
+			t.Fatalf("expected time.Time, got %T (%v)", result, result)
+		}
+		expect := time.Date(2026, 5, 1, 14, 30, 45, 123000000, time.UTC)
+		if !got.Equal(expect) {
+			t.Fatalf("got %v, want %v", got, expect)
+		}
+	})
+
+	t.Run("missing optional fields default to lowest", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateFromParts", Value: bson.D{
+			{Key: "year", Value: int32(2026)},
+		}}}
+		result := evalExprHelper(t, expr, doc)
+		got, ok := toTime(result)
+		if !ok {
+			t.Fatalf("expected time.Time, got %T", result)
+		}
+		expect := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		if !got.Equal(expect) {
+			t.Fatalf("got %v, want %v", got, expect)
+		}
+	})
+
+	t.Run("ISO week date form", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateFromParts", Value: bson.D{
+			{Key: "isoWeekYear", Value: int32(2026)},
+			{Key: "isoWeek", Value: int32(18)},
+			{Key: "isoDayOfWeek", Value: int32(5)}, // Friday
+		}}}
+		result := evalExprHelper(t, expr, doc)
+		got, ok := toTime(result)
+		if !ok {
+			t.Fatalf("expected time.Time, got %T", result)
+		}
+		expect := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+		if !got.Equal(expect) {
+			t.Fatalf("got %v, want %v", got, expect)
+		}
+	})
+
+	t.Run("with timezone", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateFromParts", Value: bson.D{
+			{Key: "year", Value: int32(2026)},
+			{Key: "month", Value: int32(5)},
+			{Key: "day", Value: int32(1)},
+			{Key: "hour", Value: int32(10)},
+			{Key: "timezone", Value: "America/New_York"},
+		}}}
+		result := evalExprHelper(t, expr, doc)
+		got, ok := toTime(result)
+		if !ok {
+			t.Fatalf("expected time.Time, got %T", result)
+		}
+		// 10:00 EDT (UTC-4) = 14:00 UTC
+		expect := time.Date(2026, 5, 1, 14, 0, 0, 0, time.UTC)
+		if !got.Equal(expect) {
+			t.Fatalf("got %v, want %v", got, expect)
+		}
+	})
+
+	t.Run("ISO defaults only isoWeekYear", func(t *testing.T) {
+		// Only isoWeekYear → defaults to week 1, day 1 (Monday)
+		expr := bson.D{{Key: "$dateFromParts", Value: bson.D{
+			{Key: "isoWeekYear", Value: int32(2026)},
+		}}}
+		result := evalExprHelper(t, expr, doc)
+		got, ok := toTime(result)
+		if !ok {
+			t.Fatalf("expected time.Time, got %T", result)
+		}
+		// ISO week 1 day 1 of 2026 = Monday 2025-12-29
+		expect := time.Date(2025, 12, 29, 0, 0, 0, 0, time.UTC)
+		if !got.Equal(expect) {
+			t.Fatalf("got %v, want %v", got, expect)
+		}
+	})
+
+	t.Run("invalid timezone", func(t *testing.T) {
+		expr := bson.D{{Key: "$dateFromParts", Value: bson.D{
+			{Key: "year", Value: int32(2026)},
+			{Key: "timezone", Value: "Not/A/Timezone"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for invalid timezone")
+		}
+	})
+
+	t.Run("round-trip parts to date to parts", func(t *testing.T) {
+		ts := time.Date(2026, 7, 15, 8, 45, 30, 500000000, time.UTC)
+		tsDoc := makeDoc(t, bson.D{{Key: "d", Value: ts}})
+
+		// dateToParts
+		partsExpr := bson.D{{Key: "$dateToParts", Value: bson.D{
+			{Key: "date", Value: "$d"},
+		}}}
+		parts := evalExprHelper(t, partsExpr, tsDoc)
+		partsDoc, ok := parts.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", parts)
+		}
+
+		// Reconstruct using $dateFromParts
+		fromPartsInput := bson.D{{Key: "$dateFromParts", Value: partsDoc}}
+		result := evalExprHelper(t, fromPartsInput, tsDoc)
+		got, ok := toTime(result)
+		if !ok {
+			t.Fatalf("expected time.Time, got %T", result)
+		}
+		if !got.Equal(ts) {
+			t.Fatalf("round-trip failed: got %v, want %v", got, ts)
 		}
 	})
 }

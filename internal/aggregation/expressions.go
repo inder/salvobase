@@ -372,6 +372,10 @@ func evalOperatorExpr(op string, arg bson.RawValue, doc bson.Raw) (interface{}, 
 		return evalDateDiff(arg, doc)
 	case "$dateTrunc":
 		return evalDateTrunc(arg, doc)
+	case "$dateToParts":
+		return evalDateToParts(arg, doc)
+	case "$dateFromParts":
+		return evalDateFromParts(arg, doc)
 
 	// ── Comparison ───────────────────────────────────────────────────────────
 	case "$cmp":
@@ -2522,6 +2526,203 @@ func evalDateTrunc(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 	}
 	unit, _ := toStringInterface(rawValToInterface(unitVal))
 	return truncateDate(t, unit), nil
+}
+
+func evalDateToParts(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	subDoc, ok := arg.DocumentOK()
+	if !ok {
+		return nil, fmt.Errorf("$dateToParts requires a document argument")
+	}
+
+	dateVal, err := subDoc.LookupErr("date")
+	if err != nil {
+		return nil, fmt.Errorf("$dateToParts requires a 'date' field")
+	}
+	dateInterface, err := EvalExpr(dateVal, doc)
+	if err != nil {
+		return nil, err
+	}
+	if dateInterface == nil {
+		return nil, nil
+	}
+	t, ok := toTime(dateInterface)
+	if !ok {
+		return nil, nil
+	}
+
+	// Handle optional timezone
+	if tzVal, tzErr := subDoc.LookupErr("timezone"); tzErr == nil {
+		tzInterface, err := EvalExpr(tzVal, doc)
+		if err != nil {
+			return nil, err
+		}
+		if tzStr, ok := toStringInterface(tzInterface); ok && tzStr != "" {
+			loc, err := time.LoadLocation(tzStr)
+			if err != nil {
+				return nil, fmt.Errorf("$dateToParts: unrecognized timezone %q", tzStr)
+			}
+			t = t.In(loc)
+		}
+	}
+
+	// Check for iso8601 mode
+	iso8601 := false
+	if isoVal, isoErr := subDoc.LookupErr("iso8601"); isoErr == nil {
+		isoInterface, err := EvalExpr(isoVal, doc)
+		if err != nil {
+			return nil, err
+		}
+		iso8601 = toBoolInterface(isoInterface)
+	}
+
+	if iso8601 {
+		isoYear, isoWeek := t.ISOWeek()
+		isoDayOfWeek := int32(t.Weekday())
+		if isoDayOfWeek == 0 {
+			isoDayOfWeek = 7 // ISO: Sunday = 7
+		}
+		return bson.D{
+			{Key: "isoWeekYear", Value: int32(isoYear)},
+			{Key: "isoWeek", Value: int32(isoWeek)},
+			{Key: "isoDayOfWeek", Value: isoDayOfWeek},
+			{Key: "hour", Value: int32(t.Hour())},
+			{Key: "minute", Value: int32(t.Minute())},
+			{Key: "second", Value: int32(t.Second())},
+			{Key: "millisecond", Value: int32(t.Nanosecond() / 1e6)},
+		}, nil
+	}
+
+	return bson.D{
+		{Key: "year", Value: int32(t.Year())},
+		{Key: "month", Value: int32(t.Month())},
+		{Key: "day", Value: int32(t.Day())},
+		{Key: "hour", Value: int32(t.Hour())},
+		{Key: "minute", Value: int32(t.Minute())},
+		{Key: "second", Value: int32(t.Second())},
+		{Key: "millisecond", Value: int32(t.Nanosecond() / 1e6)},
+	}, nil
+}
+
+func evalDateFromParts(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	subDoc, ok := arg.DocumentOK()
+	if !ok {
+		return nil, fmt.Errorf("$dateFromParts requires a document argument")
+	}
+
+	// Helper to extract an optional int32 field, defaulting to a given value.
+	getInt := func(key string, def int) (int, error) {
+		val, err := subDoc.LookupErr(key)
+		if err != nil {
+			return def, nil
+		}
+		v, err := EvalExpr(val, doc)
+		if err != nil {
+			return 0, err
+		}
+		if v == nil {
+			return def, nil
+		}
+		n, ok := toFloat64Interface(v)
+		if !ok {
+			return 0, fmt.Errorf("$dateFromParts: '%s' must be a number", key)
+		}
+		return int(n), nil
+	}
+
+	// Determine timezone (applies to both forms)
+	loc := time.UTC
+	if tzVal, tzErr := subDoc.LookupErr("timezone"); tzErr == nil {
+		tzInterface, err := EvalExpr(tzVal, doc)
+		if err != nil {
+			return nil, err
+		}
+		if tzStr, ok := toStringInterface(tzInterface); ok && tzStr != "" {
+			l, err := time.LoadLocation(tzStr)
+			if err != nil {
+				return nil, fmt.Errorf("$dateFromParts: unrecognized timezone %q", tzStr)
+			}
+			loc = l
+		}
+	}
+
+	// Check if this is the ISO week date form
+	_, hasIsoWeekYear := subDoc.LookupErr("isoWeekYear")
+	if hasIsoWeekYear == nil {
+		isoWeekYear, err := getInt("isoWeekYear", 1970)
+		if err != nil {
+			return nil, err
+		}
+		isoWeek, err := getInt("isoWeek", 1)
+		if err != nil {
+			return nil, err
+		}
+		isoDayOfWeek, err := getInt("isoDayOfWeek", 1)
+		if err != nil {
+			return nil, err
+		}
+		hour, err := getInt("hour", 0)
+		if err != nil {
+			return nil, err
+		}
+		minute, err := getInt("minute", 0)
+		if err != nil {
+			return nil, err
+		}
+		second, err := getInt("second", 0)
+		if err != nil {
+			return nil, err
+		}
+		millisecond, err := getInt("millisecond", 0)
+		if err != nil {
+			return nil, err
+		}
+
+		// Find the date of ISO week 1 day 1 (Monday) of the given ISO year.
+		// Jan 4 is always in ISO week 1.
+		jan4 := time.Date(isoWeekYear, time.January, 4, 0, 0, 0, 0, loc)
+		// Monday of that week
+		daysSinceMonday := int(jan4.Weekday()+6) % 7
+		week1Monday := jan4.AddDate(0, 0, -daysSinceMonday)
+		// Add weeks and days
+		target := week1Monday.AddDate(0, 0, (isoWeek-1)*7+(isoDayOfWeek-1))
+		target = time.Date(target.Year(), target.Month(), target.Day(),
+			hour, minute, second, millisecond*1e6, loc)
+		return target.UTC(), nil
+	}
+
+	// Calendar form
+	year, err := getInt("year", 1970)
+	if err != nil {
+		return nil, err
+	}
+	month, err := getInt("month", 1)
+	if err != nil {
+		return nil, err
+	}
+	day, err := getInt("day", 1)
+	if err != nil {
+		return nil, err
+	}
+	hour, err := getInt("hour", 0)
+	if err != nil {
+		return nil, err
+	}
+	minute, err := getInt("minute", 0)
+	if err != nil {
+		return nil, err
+	}
+	second, err := getInt("second", 0)
+	if err != nil {
+		return nil, err
+	}
+	millisecond, err := getInt("millisecond", 0)
+	if err != nil {
+		return nil, err
+	}
+
+	t := time.Date(year, time.Month(month), day, hour, minute, second,
+		millisecond*1e6, loc)
+	return t.UTC(), nil
 }
 
 func addDateUnit(t time.Time, unit string, amount int64) time.Time {
