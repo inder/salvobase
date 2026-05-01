@@ -924,3 +924,272 @@ func TestExprRand(t *testing.T) {
 		}
 	})
 }
+
+// ─── $getField / $setField / $unsetField ────────────────────────────────────
+
+func TestExprGetField(t *testing.T) {
+	doc := makeDoc(t, bson.D{
+		{Key: "name", Value: "Alice"},
+		{Key: "price.usd", Value: 9.99},
+		{Key: "$secret", Value: "hidden"},
+		{Key: "nested", Value: bson.D{{Key: "x", Value: int32(1)}}},
+	})
+
+	t.Run("shorthand string", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$getField", Value: "name"}}, doc)
+		if result != "Alice" {
+			t.Fatalf("got %v, want Alice", result)
+		}
+	})
+
+	t.Run("field with dot in name", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$getField", Value: "price.usd"}}, doc)
+		if result != 9.99 {
+			t.Fatalf("got %v, want 9.99", result)
+		}
+	})
+
+	t.Run("field with dollar in name", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$getField", Value: "$secret"}}, doc)
+		if result != "hidden" {
+			t.Fatalf("got %v, want hidden", result)
+		}
+	})
+
+	t.Run("full form with field and input", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$getField", Value: bson.D{
+			{Key: "field", Value: "name"},
+			{Key: "input", Value: "$$ROOT"},
+		}}}, doc)
+		if result != "Alice" {
+			t.Fatalf("got %v, want Alice", result)
+		}
+	})
+
+	t.Run("missing field returns nil", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$getField", Value: "nonexistent"}}, doc)
+		if result != nil {
+			t.Fatalf("got %v, want nil", result)
+		}
+	})
+
+	t.Run("full form default input", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$getField", Value: bson.D{
+			{Key: "field", Value: "name"},
+		}}}, doc)
+		if result != "Alice" {
+			t.Fatalf("got %v, want Alice", result)
+		}
+	})
+
+	t.Run("error on missing field key", func(t *testing.T) {
+		_, err := EvalExpr(bson.D{{Key: "$getField", Value: bson.D{
+			{Key: "input", Value: "$$ROOT"},
+		}}}, doc)
+		if err == nil {
+			t.Fatal("expected error for missing 'field'")
+		}
+	})
+
+	t.Run("error on non-string non-doc arg", func(t *testing.T) {
+		_, err := EvalExpr(bson.D{{Key: "$getField", Value: int32(42)}}, doc)
+		if err == nil {
+			t.Fatal("expected error for integer argument")
+		}
+	})
+}
+
+func TestExprSetField(t *testing.T) {
+	doc := makeDoc(t, bson.D{
+		{Key: "name", Value: "Alice"},
+		{Key: "age", Value: int32(30)},
+	})
+
+	t.Run("set existing field", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$setField", Value: bson.D{
+			{Key: "field", Value: "name"},
+			{Key: "input", Value: "$$ROOT"},
+			{Key: "value", Value: "Bob"},
+		}}}, doc)
+		d, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		for _, e := range d {
+			if e.Key == "name" {
+				if e.Value != "Bob" {
+					t.Fatalf("name = %v, want Bob", e.Value)
+				}
+				return
+			}
+		}
+		t.Fatal("field 'name' not found in result")
+	})
+
+	t.Run("add new field", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$setField", Value: bson.D{
+			{Key: "field", Value: "email"},
+			{Key: "input", Value: "$$ROOT"},
+			{Key: "value", Value: "alice@example.com"},
+		}}}, doc)
+		d, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		for _, e := range d {
+			if e.Key == "email" {
+				if e.Value != "alice@example.com" {
+					t.Fatalf("email = %v, want alice@example.com", e.Value)
+				}
+				return
+			}
+		}
+		t.Fatal("field 'email' not found in result")
+	})
+
+	t.Run("set field with dot in name", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$setField", Value: bson.D{
+			{Key: "field", Value: "price.usd"},
+			{Key: "input", Value: "$$ROOT"},
+			{Key: "value", Value: 19.99},
+		}}}, doc)
+		d, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		for _, e := range d {
+			if e.Key == "price.usd" {
+				if e.Value != 19.99 {
+					t.Fatalf("price.usd = %v, want 19.99", e.Value)
+				}
+				return
+			}
+		}
+		t.Fatal("field 'price.usd' not found in result")
+	})
+
+	t.Run("set with $$REMOVE deletes field", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$setField", Value: bson.D{
+			{Key: "field", Value: "age"},
+			{Key: "input", Value: "$$ROOT"},
+			{Key: "value", Value: "$$REMOVE"},
+		}}}, doc)
+		d, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		for _, e := range d {
+			if e.Key == "age" {
+				t.Fatal("field 'age' should have been removed")
+			}
+		}
+		if len(d) != 1 {
+			t.Fatalf("expected 1 field, got %d", len(d))
+		}
+	})
+
+	t.Run("error on missing field", func(t *testing.T) {
+		_, err := EvalExpr(bson.D{{Key: "$setField", Value: bson.D{
+			{Key: "input", Value: "$$ROOT"},
+			{Key: "value", Value: "x"},
+		}}}, doc)
+		if err == nil {
+			t.Fatal("expected error for missing 'field'")
+		}
+	})
+
+	t.Run("error on missing input", func(t *testing.T) {
+		_, err := EvalExpr(bson.D{{Key: "$setField", Value: bson.D{
+			{Key: "field", Value: "name"},
+			{Key: "value", Value: "x"},
+		}}}, doc)
+		if err == nil {
+			t.Fatal("expected error for missing 'input'")
+		}
+	})
+
+	t.Run("error on missing value", func(t *testing.T) {
+		_, err := EvalExpr(bson.D{{Key: "$setField", Value: bson.D{
+			{Key: "field", Value: "name"},
+			{Key: "input", Value: "$$ROOT"},
+		}}}, doc)
+		if err == nil {
+			t.Fatal("expected error for missing 'value'")
+		}
+	})
+}
+
+func TestExprUnsetField(t *testing.T) {
+	doc := makeDoc(t, bson.D{
+		{Key: "name", Value: "Alice"},
+		{Key: "age", Value: int32(30)},
+		{Key: "price.usd", Value: 9.99},
+	})
+
+	t.Run("remove existing field", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$unsetField", Value: bson.D{
+			{Key: "field", Value: "age"},
+			{Key: "input", Value: "$$ROOT"},
+		}}}, doc)
+		d, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		for _, e := range d {
+			if e.Key == "age" {
+				t.Fatal("field 'age' should have been removed")
+			}
+		}
+		if len(d) != 2 {
+			t.Fatalf("expected 2 fields, got %d", len(d))
+		}
+	})
+
+	t.Run("remove field with dot in name", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$unsetField", Value: bson.D{
+			{Key: "field", Value: "price.usd"},
+			{Key: "input", Value: "$$ROOT"},
+		}}}, doc)
+		d, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		for _, e := range d {
+			if e.Key == "price.usd" {
+				t.Fatal("field 'price.usd' should have been removed")
+			}
+		}
+	})
+
+	t.Run("remove nonexistent field is no-op", func(t *testing.T) {
+		result := evalExprHelper(t, bson.D{{Key: "$unsetField", Value: bson.D{
+			{Key: "field", Value: "nonexistent"},
+			{Key: "input", Value: "$$ROOT"},
+		}}}, doc)
+		d, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", result)
+		}
+		if len(d) != 3 {
+			t.Fatalf("expected 3 fields unchanged, got %d", len(d))
+		}
+	})
+
+	t.Run("error on missing field", func(t *testing.T) {
+		_, err := EvalExpr(bson.D{{Key: "$unsetField", Value: bson.D{
+			{Key: "input", Value: "$$ROOT"},
+		}}}, doc)
+		if err == nil {
+			t.Fatal("expected error for missing 'field'")
+		}
+	})
+
+	t.Run("error on missing input", func(t *testing.T) {
+		_, err := EvalExpr(bson.D{{Key: "$unsetField", Value: bson.D{
+			{Key: "field", Value: "name"},
+		}}}, doc)
+		if err == nil {
+			t.Fatal("expected error for missing 'input'")
+		}
+	})
+}
