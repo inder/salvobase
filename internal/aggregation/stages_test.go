@@ -1204,7 +1204,11 @@ func TestStageGraphLookup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		arr := getFieldD(d, "chain").(bson.A)
+		arrVal := getFieldD(d, "chain")
+		arr, ok := arrVal.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for chain, got %T", arrVal)
+		}
 
 		// Check that each matched doc has a "depth" field
 		for i, elem := range arr {
@@ -1255,7 +1259,11 @@ func TestStageGraphLookup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		arr := getFieldD(d, "traversed").(bson.A)
+		arrVal := getFieldD(d, "traversed")
+		arr, ok := arrVal.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for traversed, got %T", arrVal)
+		}
 		// Should find all 3 nodes and stop (cycle detection prevents infinite loop)
 		if len(arr) != 3 {
 			t.Errorf("expected 3 nodes with cycle detection, got %d", len(arr))
@@ -1281,7 +1289,11 @@ func TestStageGraphLookup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		arr := getFieldD(d, "chain").(bson.A)
+		arrVal := getFieldD(d, "chain")
+		arr, ok := arrVal.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for chain, got %T", arrVal)
+		}
 		if len(arr) != 0 {
 			t.Errorf("expected 0 matches for nonexistent start, got %d", len(arr))
 		}
@@ -1309,8 +1321,8 @@ func TestStageGraphLookup(t *testing.T) {
 		stage := &graphLookupStage{
 			from:             "tree",
 			startWith:        mustRawValue(t, "$start"),
-			connectFromField: "name",     // from the matched doc, take "name"
-			connectToField:   "parent",   // and find docs where parent == name
+			connectFromField: "name",   // from the matched doc, take "name"
+			connectToField:   "parent", // and find docs where parent == name
 			as:               "descendants",
 			maxDepth:         -1,
 			engine:           treeEngine,
@@ -1321,7 +1333,11 @@ func TestStageGraphLookup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		arr := getFieldD(d, "descendants").(bson.A)
+		arrVal := getFieldD(d, "descendants")
+		arr, ok := arrVal.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for descendants, got %T", arrVal)
+		}
 		// root matches parent=root: child1, child2
 		// child1 matches parent=child1: grandchild1
 		// child2 matches parent=child2: none
@@ -1373,7 +1389,11 @@ func TestStageGraphLookup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		arr := getFieldD(d, "engChain").(bson.A)
+		arrVal := getFieldD(d, "engChain")
+		arr, ok := arrVal.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for engChain, got %T", arrVal)
+		}
 		// Dev (dept=eng) -> reportsTo=VP-Eng (dept=eng) -> reportsTo=CEO (dept=exec, FILTERED OUT)
 		// So only Dev and VP-Eng match
 		if len(arr) != 2 {
@@ -1401,7 +1421,11 @@ func TestStageGraphLookup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		arr := getFieldD(d, "chain").(bson.A)
+		arrVal := getFieldD(d, "chain")
+		arr, ok := arrVal.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for chain, got %T", arrVal)
+		}
 		// maxDepth=0: only depth 0 matches, finds Dev only
 		if len(arr) != 1 {
 			t.Errorf("expected 1 doc with maxDepth=0, got %d", len(arr))
@@ -1428,7 +1452,11 @@ func TestStageGraphLookup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		arr := getFieldD(d, "chain").(bson.A)
+		arrVal := getFieldD(d, "chain")
+		arr, ok := arrVal.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for chain, got %T", arrVal)
+		}
 		// startWith=["Dev","VP"], maxDepth=0: finds Dev and VP
 		if len(arr) != 2 {
 			t.Errorf("expected 2 docs from array startWith, got %d", len(arr))
@@ -1455,7 +1483,11 @@ func TestStageGraphLookup(t *testing.T) {
 			t.Fatalf("Process: %v", err)
 		}
 		d := decodeResult(t, result[0])
-		arr := getFieldD(d, "ancestors").(bson.A)
+		arrVal := getFieldD(d, "ancestors")
+		arr, ok := arrVal.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for ancestors, got %T", arrVal)
+		}
 		// Manager -> VP -> CEO = find Manager, then VP, then CEO
 		if len(arr) != 3 {
 			t.Errorf("expected 3 ancestors, got %d", len(arr))

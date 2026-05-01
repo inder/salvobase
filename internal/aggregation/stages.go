@@ -1717,17 +1717,17 @@ func (s *redactStage) redactDoc(doc bson.Raw) (bson.Raw, error) {
 // ─── $graphLookup ─────────────────────────────────────────────────────────────
 
 type graphLookupStage struct {
-	from                  string
-	startWith             bson.RawValue
-	connectFromField      string
-	connectToField        string
-	as                    string
-	maxDepth              int
-	hasMaxDepth           bool
-	depthField            string
+	from                    string
+	startWith               bson.RawValue
+	connectFromField        string
+	connectToField          string
+	as                      string
+	maxDepth                int
+	hasMaxDepth             bool
+	depthField              string
 	restrictSearchWithMatch bson.Raw
-	engine                storage.Engine
-	db                    string
+	engine                  storage.Engine
+	db                      string
 }
 
 func buildGraphLookupStage(spec bson.Raw, engine storage.Engine, db string) (*graphLookupStage, error) {
