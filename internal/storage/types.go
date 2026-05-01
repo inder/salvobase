@@ -49,6 +49,9 @@ type Engine interface {
 	// RenameCollection renames a collection, optionally across databases.
 	RenameCollection(fromDB, fromColl, toDB, toColl string, dropTarget bool) error
 
+	// UpdateCollectionOptions updates the validator and validation settings.
+	UpdateCollectionOptions(db, coll string, validator bson.Raw, level, action string) error
+
 	// Close flushes and closes all open database files.
 	Close() error
 }
@@ -226,14 +229,15 @@ type CreateCollectionOptions struct {
 
 // FindAndModifyOptions controls findAndModify behavior.
 type FindAndModifyOptions struct {
-	Sort         bson.Raw
-	Projection   bson.Raw
-	Upsert       bool
-	ReturnNew    bool // if true, return the document after modification
-	Remove       bool // if true, delete the document instead of updating
-	Hint         bson.Raw
-	Comment      string
-	ArrayFilters []bson.Raw
+	Sort                     bson.Raw
+	Projection               bson.Raw
+	Upsert                   bool
+	ReturnNew                bool // if true, return the document after modification
+	Remove                   bool // if true, delete the document instead of updating
+	Hint                     bson.Raw
+	Comment                  string
+	ArrayFilters             []bson.Raw
+	BypassDocumentValidation bool
 }
 
 // UpdateResult is returned by UpdateOne/UpdateMany/ReplaceOne.
@@ -376,5 +380,6 @@ const (
 	ErrCodeCursorNotFound          = int32(43)
 	ErrCodeCommandFailed           = int32(125)
 	ErrCodeNotImplemented          = int32(238)
-	ErrCodeChangeStreamHistoryLost = int32(286)
+	ErrCodeChangeStreamHistoryLost       = int32(286)
+	ErrCodeDocumentValidationFailure     = int32(121)
 )
