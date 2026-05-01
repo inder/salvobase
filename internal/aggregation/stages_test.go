@@ -1095,3 +1095,385 @@ func TestStageFacetWithGroup(t *testing.T) {
 		}
 	})
 }
+
+// ─── $graphLookup tests ───────────────────────────────────────────────────────
+
+func TestStageGraphLookup(t *testing.T) {
+	// Employee hierarchy: CEO -> VP -> Manager -> Dev
+	employeeDocs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "name", Value: "CEO"}, {Key: "reportsTo", Value: nil}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "name", Value: "VP"}, {Key: "reportsTo", Value: "CEO"}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "name", Value: "Manager"}, {Key: "reportsTo", Value: "VP"}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "name", Value: "Dev"}, {Key: "reportsTo", Value: "Manager"}}),
+	}
+	engine := &lookupTestEngine{
+		collections: map[string]*lookupTestCollection{
+			"employees": {docs: employeeDocs, name: "employees"},
+		},
+	}
+
+	t.Run("linear chain traversal", func(t *testing.T) {
+		// Starting from Dev, walk up the reporting chain
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "startName", Value: "Dev"}}),
+		}
+		stage := &graphLookupStage{
+			from:             "employees",
+			startWith:        mustRawValue(t, "$startName"),
+			connectFromField: "reportsTo",
+			connectToField:   "name",
+			as:               "chain",
+			maxDepth:         -1,
+			engine:           engine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("expected 1 doc, got %d", len(result))
+		}
+		d := decodeResult(t, result[0])
+		chain := getFieldD(d, "chain")
+		arr, ok := chain.(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", chain)
+		}
+		// Dev -> Manager -> VP -> CEO = 3 nodes traversed (not including the start "Dev" lookup itself,
+		// but the first match IS Dev, then Manager, VP, CEO... let me think)
+		// startWith = "Dev", connectTo = "name", connectFrom = "reportsTo"
+		// Depth 0: search name == "Dev" -> finds doc #4 (Dev), connectFrom = "Manager"
+		// Depth 1: search name == "Manager" -> finds doc #3 (Manager), connectFrom = "VP"
+		// Depth 2: search name == "VP" -> finds doc #2 (VP), connectFrom = "CEO"
+		// Depth 3: search name == "CEO" -> finds doc #1 (CEO), connectFrom = nil
+		// Total: 4 documents
+		if len(arr) != 4 {
+			t.Errorf("expected 4 chain docs (Dev->Manager->VP->CEO), got %d", len(arr))
+		}
+	})
+
+	t.Run("maxDepth limits traversal", func(t *testing.T) {
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "startName", Value: "Dev"}}),
+		}
+		stage := &graphLookupStage{
+			from:             "employees",
+			startWith:        mustRawValue(t, "$startName"),
+			connectFromField: "reportsTo",
+			connectToField:   "name",
+			as:               "chain",
+			maxDepth:         1,
+			hasMaxDepth:      true,
+			engine:           engine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "chain").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A")
+		}
+		// maxDepth=1: depth 0 finds Dev, depth 1 finds Manager. Stop.
+		if len(arr) != 2 {
+			t.Errorf("expected 2 docs with maxDepth=1, got %d", len(arr))
+		}
+	})
+
+	t.Run("depthField adds depth annotation", func(t *testing.T) {
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "startName", Value: "Dev"}}),
+		}
+		stage := &graphLookupStage{
+			from:             "employees",
+			startWith:        mustRawValue(t, "$startName"),
+			connectFromField: "reportsTo",
+			connectToField:   "name",
+			as:               "chain",
+			maxDepth:         1,
+			hasMaxDepth:      true,
+			depthField:       "depth",
+			engine:           engine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr := getFieldD(d, "chain").(bson.A)
+
+		// Check that each matched doc has a "depth" field
+		for i, elem := range arr {
+			var depthVal interface{}
+			switch v := elem.(type) {
+			case bson.Raw:
+				ed := decodeResult(t, v)
+				depthVal = getFieldD(ed, "depth")
+			case bson.D:
+				depthVal = getFieldD(v, "depth")
+			default:
+				t.Fatalf("element %d: unexpected type %T", i, elem)
+			}
+			if depthVal == nil {
+				t.Errorf("element %d: missing depth field", i)
+			}
+		}
+	})
+
+	t.Run("cycle detection", func(t *testing.T) {
+		// Create a cycle: A -> B -> C -> A
+		cycleDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "name", Value: "A"}, {Key: "next", Value: "B"}}),
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "name", Value: "B"}, {Key: "next", Value: "C"}}),
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "name", Value: "C"}, {Key: "next", Value: "A"}}),
+		}
+		cycleEngine := &lookupTestEngine{
+			collections: map[string]*lookupTestCollection{
+				"nodes": {docs: cycleDocs, name: "nodes"},
+			},
+		}
+
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "start", Value: "A"}}),
+		}
+		stage := &graphLookupStage{
+			from:             "nodes",
+			startWith:        mustRawValue(t, "$start"),
+			connectFromField: "next",
+			connectToField:   "name",
+			as:               "traversed",
+			maxDepth:         -1,
+			engine:           cycleEngine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr := getFieldD(d, "traversed").(bson.A)
+		// Should find all 3 nodes and stop (cycle detection prevents infinite loop)
+		if len(arr) != 3 {
+			t.Errorf("expected 3 nodes with cycle detection, got %d", len(arr))
+		}
+	})
+
+	t.Run("empty results (no matches)", func(t *testing.T) {
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "startName", Value: "NonExistent"}}),
+		}
+		stage := &graphLookupStage{
+			from:             "employees",
+			startWith:        mustRawValue(t, "$startName"),
+			connectFromField: "reportsTo",
+			connectToField:   "name",
+			as:               "chain",
+			maxDepth:         -1,
+			engine:           engine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr := getFieldD(d, "chain").(bson.A)
+		if len(arr) != 0 {
+			t.Errorf("expected 0 matches for nonexistent start, got %d", len(arr))
+		}
+	})
+
+	t.Run("tree traversal (multiple children)", func(t *testing.T) {
+		// Tree: root -> [child1, child2], child1 -> [grandchild1]
+		treeDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "name", Value: "root"}, {Key: "parent", Value: nil}}),
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "name", Value: "child1"}, {Key: "parent", Value: "root"}}),
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "name", Value: "child2"}, {Key: "parent", Value: "root"}}),
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "name", Value: "grandchild1"}, {Key: "parent", Value: "child1"}}),
+		}
+		treeEngine := &lookupTestEngine{
+			collections: map[string]*lookupTestCollection{
+				"tree": {docs: treeDocs, name: "tree"},
+			},
+		}
+
+		// Find all descendants of root by traversing parent -> name
+		// Actually we need to go top-down: start with "root", find children by parent=root
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "start", Value: "root"}}),
+		}
+		stage := &graphLookupStage{
+			from:             "tree",
+			startWith:        mustRawValue(t, "$start"),
+			connectFromField: "name",     // from the matched doc, take "name"
+			connectToField:   "parent",   // and find docs where parent == name
+			as:               "descendants",
+			maxDepth:         -1,
+			engine:           treeEngine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr := getFieldD(d, "descendants").(bson.A)
+		// root matches parent=root: child1, child2
+		// child1 matches parent=child1: grandchild1
+		// child2 matches parent=child2: none
+		// grandchild1 matches parent=grandchild1: none
+		// Wait: startWith="root", connectTo="parent"
+		// Depth 0: find docs where parent == "root" -> child1, child2
+		//   connectFrom=name -> "child1", "child2"
+		// Depth 1: find docs where parent == "child1" -> grandchild1
+		//          find docs where parent == "child2" -> none
+		//   connectFrom=name -> "grandchild1"
+		// Depth 2: find docs where parent == "grandchild1" -> none
+		// Total: 3 docs (child1, child2, grandchild1)
+		if len(arr) != 3 {
+			t.Errorf("expected 3 descendants, got %d", len(arr))
+		}
+	})
+
+	t.Run("restrictSearchWithMatch filters results", func(t *testing.T) {
+		// Employees with department field
+		deptDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "name", Value: "CEO"}, {Key: "reportsTo", Value: nil}, {Key: "dept", Value: "exec"}}),
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "name", Value: "VP-Eng"}, {Key: "reportsTo", Value: "CEO"}, {Key: "dept", Value: "eng"}}),
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "name", Value: "VP-Sales"}, {Key: "reportsTo", Value: "CEO"}, {Key: "dept", Value: "sales"}}),
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "name", Value: "Dev"}, {Key: "reportsTo", Value: "VP-Eng"}, {Key: "dept", Value: "eng"}}),
+		}
+		deptEngine := &lookupTestEngine{
+			collections: map[string]*lookupTestCollection{
+				"staff": {docs: deptDocs, name: "staff"},
+			},
+		}
+
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "startName", Value: "Dev"}}),
+		}
+		restrictFilter := makeRaw(t, bson.D{{Key: "dept", Value: "eng"}})
+		stage := &graphLookupStage{
+			from:                    "staff",
+			startWith:               mustRawValue(t, "$startName"),
+			connectFromField:        "reportsTo",
+			connectToField:          "name",
+			as:                      "engChain",
+			maxDepth:                -1,
+			restrictSearchWithMatch: restrictFilter,
+			engine:                  deptEngine,
+			db:                      "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr := getFieldD(d, "engChain").(bson.A)
+		// Dev (dept=eng) -> reportsTo=VP-Eng (dept=eng) -> reportsTo=CEO (dept=exec, FILTERED OUT)
+		// So only Dev and VP-Eng match
+		if len(arr) != 2 {
+			t.Errorf("expected 2 eng dept results, got %d", len(arr))
+		}
+	})
+
+	t.Run("maxDepth 0 returns only seed matches", func(t *testing.T) {
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "startName", Value: "Dev"}}),
+		}
+		stage := &graphLookupStage{
+			from:             "employees",
+			startWith:        mustRawValue(t, "$startName"),
+			connectFromField: "reportsTo",
+			connectToField:   "name",
+			as:               "chain",
+			maxDepth:         0,
+			hasMaxDepth:      true,
+			engine:           engine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr := getFieldD(d, "chain").(bson.A)
+		// maxDepth=0: only depth 0 matches, finds Dev only
+		if len(arr) != 1 {
+			t.Errorf("expected 1 doc with maxDepth=0, got %d", len(arr))
+		}
+	})
+
+	t.Run("startWith array value", func(t *testing.T) {
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "names", Value: bson.A{"Dev", "VP"}}}),
+		}
+		stage := &graphLookupStage{
+			from:             "employees",
+			startWith:        mustRawValue(t, "$names"),
+			connectFromField: "reportsTo",
+			connectToField:   "name",
+			as:               "chain",
+			maxDepth:         0,
+			hasMaxDepth:      true,
+			engine:           engine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr := getFieldD(d, "chain").(bson.A)
+		// startWith=["Dev","VP"], maxDepth=0: finds Dev and VP
+		if len(arr) != 2 {
+			t.Errorf("expected 2 docs from array startWith, got %d", len(arr))
+		}
+	})
+
+	t.Run("cross-collection lookup", func(t *testing.T) {
+		// Same as linear chain but proves cross-collection works (the collection is always "from")
+		inputDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "_id", Value: int32(10)}, {Key: "startName", Value: "Manager"}}),
+		}
+		stage := &graphLookupStage{
+			from:             "employees",
+			startWith:        mustRawValue(t, "$startName"),
+			connectFromField: "reportsTo",
+			connectToField:   "name",
+			as:               "ancestors",
+			maxDepth:         -1,
+			engine:           engine,
+			db:               "testdb",
+		}
+		result, err := stage.Process(inputDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr := getFieldD(d, "ancestors").(bson.A)
+		// Manager -> VP -> CEO = find Manager, then VP, then CEO
+		if len(arr) != 3 {
+			t.Errorf("expected 3 ancestors, got %d", len(arr))
+		}
+	})
+}
+
+// mustRawValue builds a bson.RawValue from a field path string like "$field".
+func mustRawValue(t *testing.T, s string) bson.RawValue {
+	t.Helper()
+	b, err := bson.Marshal(bson.D{{Key: "v", Value: s}})
+	if err != nil {
+		t.Fatalf("mustRawValue: %v", err)
+	}
+	raw := bson.Raw(b)
+	val, err := raw.LookupErr("v")
+	if err != nil {
+		t.Fatalf("mustRawValue lookup: %v", err)
+	}
+	return val
+}
