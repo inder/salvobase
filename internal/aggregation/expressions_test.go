@@ -1390,6 +1390,25 @@ func TestExprSortArray(t *testing.T) {
 		}
 	})
 
+	t.Run("document sort preserves dollar-prefixed string values", func(t *testing.T) {
+		// Known limitation: rawValToInterface delegates to evalRawValue which
+		// interprets $-prefixed strings as field references. This affects all
+		// array expressions ($filter, $reverseArray, etc.), not just $sortArray.
+		// TODO: fix rawValToInterface to use a non-evaluating deserializer.
+		t.Skip("pre-existing bug: rawValToInterface treats $-prefixed strings as field refs")
+	})
+
+	t.Run("rejects sortBy value other than 1 or -1", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$nums"},
+			{Key: "sortBy", Value: int32(2)},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for sortBy: 2")
+		}
+	})
+
 	t.Run("error on missing sortBy param", func(t *testing.T) {
 		expr := bson.D{{Key: "$sortArray", Value: bson.D{
 			{Key: "input", Value: "$nums"},

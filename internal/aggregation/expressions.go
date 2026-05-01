@@ -1429,7 +1429,7 @@ func evalSortArray(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 		case bson.TypeDouble:
 			dir = sortByVal.Double()
 		}
-		if dir == 0 {
+		if dir != 1 && dir != -1 {
 			return nil, fmt.Errorf("$sortArray sortBy value must be 1 or -1")
 		}
 		ascending := dir > 0
@@ -1445,18 +1445,40 @@ func evalSortArray(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 
 	case bson.TypeEmbeddedDocument:
 		sortSpec, _ := sortByVal.DocumentOK()
-		// Convert each element to bson.Raw for SortDocuments
-		rawDocs := make([]bson.Raw, len(result))
-		for i, elem := range result {
-			rawDocs[i] = interfaceToRawDoc(elem)
+		// Build index-paired raw docs so we can sort by bson.Raw but return
+		// the original interface{} values (avoiding expression-evaluator round-trip).
+		type indexedDoc struct {
+			idx int
+			raw bson.Raw
 		}
-		if err := query.SortDocuments(rawDocs, sortSpec); err != nil {
+		indexed := make([]indexedDoc, len(result))
+		for i, elem := range result {
+			rd, err := marshalToRawDoc(elem)
+			if err != nil {
+				return nil, fmt.Errorf("$sortArray: cannot convert element %d to document: %w", i, err)
+			}
+			indexed[i] = indexedDoc{idx: i, raw: rd}
+		}
+		rawSlice := make([]bson.Raw, len(indexed))
+		for i := range indexed {
+			rawSlice[i] = indexed[i].raw
+		}
+		if err := query.SortDocuments(rawSlice, sortSpec); err != nil {
 			return nil, fmt.Errorf("$sortArray: %w", err)
 		}
-		// Convert back to interface{} slices
-		sorted := make([]interface{}, len(rawDocs))
-		for i, rd := range rawDocs {
-			sorted[i] = rawDocToInterface(rd)
+		// Rebuild the mapping: find which original index each sorted raw doc came from.
+		// Since SortDocuments sorts in-place, we need to track by matching raw pointers.
+		// Simpler: sort the indexed slice directly using query.SortFunc.
+		sortFn, err := query.SortFunc(sortSpec)
+		if err != nil {
+			return nil, fmt.Errorf("$sortArray: %w", err)
+		}
+		sort.SliceStable(indexed, func(i, j int) bool {
+			return sortFn(indexed[i].raw, indexed[j].raw) < 0
+		})
+		sorted := make([]interface{}, len(indexed))
+		for i, id := range indexed {
+			sorted[i] = result[id.idx]
 		}
 		return sorted, nil
 
@@ -1467,36 +1489,23 @@ func evalSortArray(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 	return result, nil
 }
 
-func interfaceToRawDoc(v interface{}) bson.Raw {
+func marshalToRawDoc(v interface{}) (bson.Raw, error) {
 	switch d := v.(type) {
 	case bson.Raw:
-		return d
+		return d, nil
 	case bson.D:
 		raw, err := bson.Marshal(d)
 		if err != nil {
-			return bson.Raw{}
+			return nil, err
 		}
-		return bson.Raw(raw)
+		return bson.Raw(raw), nil
 	default:
-		// Wrap scalar in a document with key "_v" so sort can still operate
 		raw, err := bson.Marshal(bson.D{{Key: "_v", Value: v}})
 		if err != nil {
-			return bson.Raw{}
+			return nil, err
 		}
-		return bson.Raw(raw)
+		return bson.Raw(raw), nil
 	}
-}
-
-func rawDocToInterface(rd bson.Raw) interface{} {
-	elems, err := rd.Elements()
-	if err != nil {
-		return nil
-	}
-	doc := make(bson.D, 0, len(elems))
-	for _, e := range elems {
-		doc = append(doc, bson.E{Key: e.Key(), Value: rawValToInterface(e.Value())})
-	}
-	return doc
 }
 
 // ─── String expressions ───────────────────────────────────────────────────────
