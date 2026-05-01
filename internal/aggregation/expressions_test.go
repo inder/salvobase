@@ -1391,11 +1391,34 @@ func TestExprSortArray(t *testing.T) {
 	})
 
 	t.Run("document sort preserves dollar-prefixed string values", func(t *testing.T) {
-		// Known limitation: rawValToInterface delegates to evalRawValue which
-		// interprets $-prefixed strings as field references. This affects all
-		// array expressions ($filter, $reverseArray, etc.), not just $sortArray.
-		// TODO: fix rawValToInterface to use a non-evaluating deserializer.
-		t.Skip("pre-existing bug: rawValToInterface treats $-prefixed strings as field refs")
+		// Regression test for #493: $-prefixed string values in array elements
+		// must be preserved as literal strings, not interpreted as field refs.
+		doc := makeDoc(t, bson.D{
+			{Key: "items", Value: bson.A{
+				bson.D{{Key: "name", Value: "Widget"}, {Key: "tag", Value: "$sale"}},
+				bson.D{{Key: "name", Value: "Gadget"}, {Key: "tag", Value: "$new"}},
+			}},
+		})
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$items"},
+			{Key: "sortBy", Value: bson.D{{Key: "name", Value: int32(1)}}},
+		}}}
+		result, err := EvalExpr(expr, doc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		arr, ok := result.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", result)
+		}
+		tags := extractField(t, arr, "tag")
+		// Gadget sorts before Widget
+		if tags[0] != "$new" {
+			t.Errorf("tags[0] = %v, want \"$new\"", tags[0])
+		}
+		if tags[1] != "$sale" {
+			t.Errorf("tags[1] = %v, want \"$sale\"", tags[1])
+		}
 	})
 
 	t.Run("rejects sortBy value other than 1 or -1", func(t *testing.T) {
@@ -1450,4 +1473,80 @@ func toInt32(v interface{}) int32 {
 	default:
 		return 0
 	}
+}
+
+func TestRawValToInterface(t *testing.T) {
+	t.Run("preserves dollar-prefixed strings", func(t *testing.T) {
+		raw, err := bson.Marshal(bson.D{{Key: "x", Value: "$sale"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := bson.Raw(raw)
+		elems, _ := doc.Elements()
+		got := rawValToInterface(elems[0].Value())
+		if got != "$sale" {
+			t.Errorf("rawValToInterface($sale) = %v (%T), want \"$sale\"", got, got)
+		}
+	})
+
+	t.Run("preserves dollar-prefixed strings in nested docs", func(t *testing.T) {
+		raw, err := bson.Marshal(bson.D{{Key: "x", Value: bson.D{
+			{Key: "tag", Value: "$promo"},
+			{Key: "name", Value: "Widget"},
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := bson.Raw(raw)
+		elems, _ := doc.Elements()
+		got := rawValToInterface(elems[0].Value())
+		d, ok := got.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T", got)
+		}
+		if d[0].Value != "$promo" {
+			t.Errorf("nested doc tag = %v, want \"$promo\"", d[0].Value)
+		}
+	})
+
+	t.Run("preserves dollar-prefixed strings in arrays", func(t *testing.T) {
+		raw, err := bson.Marshal(bson.D{{Key: "x", Value: bson.A{"$a", "$b", "c"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		doc := bson.Raw(raw)
+		elems, _ := doc.Elements()
+		got := rawValToInterface(elems[0].Value())
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if arr[0] != "$a" || arr[1] != "$b" || arr[2] != "c" {
+			t.Errorf("got %v, want [\"$a\", \"$b\", \"c\"]", arr)
+		}
+	})
+}
+
+func TestExprLiteral(t *testing.T) {
+	doc := makeDoc(t, bson.D{{Key: "x", Value: 1}})
+
+	t.Run("dollar-prefixed string preserved", func(t *testing.T) {
+		expr := bson.D{{Key: "$literal", Value: "$notAField"}}
+		result := evalExprHelper(t, expr, doc)
+		if result != "$notAField" {
+			t.Errorf("$literal(\"$notAField\") = %v (%T), want \"$notAField\"", result, result)
+		}
+	})
+
+	t.Run("dollar-prefixed doc preserved", func(t *testing.T) {
+		expr := bson.D{{Key: "$literal", Value: bson.D{{Key: "$add", Value: bson.A{1, 2}}}}}
+		result := evalExprHelper(t, expr, doc)
+		d, ok := result.(bson.D)
+		if !ok {
+			t.Fatalf("expected bson.D, got %T (%v)", result, result)
+		}
+		if len(d) != 1 || d[0].Key != "$add" {
+			t.Errorf("expected {$add: [1,2]} as literal, got %v", d)
+		}
+	})
 }
