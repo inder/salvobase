@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"math/rand/v2"
 	"regexp"
 	"strconv"
 	"strings"
@@ -420,6 +421,11 @@ func evalOperatorExpr(op string, arg bson.RawValue, doc bson.Raw) (interface{}, 
 		return evalAnyAllElementsTrue(arg, doc, true)
 
 	// ── Miscellaneous ────────────────────────────────────────────────────────
+	case "$rand":
+		if arg.Type != bson.TypeEmbeddedDocument {
+			return nil, fmt.Errorf("$rand takes no arguments, got %s", arg.Type)
+		}
+		return rand.Float64(), nil
 	case "$literal":
 		return rawValToInterface(arg), nil
 	case "$mergeObjects":
