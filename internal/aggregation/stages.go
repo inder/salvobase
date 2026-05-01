@@ -150,7 +150,11 @@ func buildStage(spec bson.Raw, engine storage.Engine, db string) (Stage, error) 
 		return &redactStage{expr: stageVal}, nil
 
 	case "$densify":
-		return nil, fmt.Errorf("$densify is not implemented")
+		densifyDoc, ok := stageVal.DocumentOK()
+		if !ok {
+			return nil, fmt.Errorf("$densify requires a document")
+		}
+		return buildDensifyStage(densifyDoc)
 
 	case "$fill":
 		return nil, fmt.Errorf("$fill is not implemented")
@@ -2089,6 +2093,344 @@ func (s *unsetStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 		}
 		result = append(result, raw)
 	}
+	return result, nil
+}
+
+// ─── $densify ─────────────────────────────────────────────────────────────────
+
+type densifyStage struct {
+	field             string
+	partitionByFields []string
+	step              float64
+	unit              string // empty for numeric, "hour"/"day"/etc. for date
+	boundsMode        string // "full", "partition"
+	explicitBounds    [2]interface{}
+	hasExplicit       bool
+}
+
+func buildDensifyStage(spec bson.Raw) (*densifyStage, error) {
+	s := &densifyStage{}
+
+	fieldVal, err := spec.LookupErr("field")
+	if err != nil {
+		return nil, fmt.Errorf("$densify requires 'field'")
+	}
+	fieldStr, ok := fieldVal.StringValueOK()
+	if !ok {
+		return nil, fmt.Errorf("$densify 'field' must be a string")
+	}
+	s.field = fieldStr
+
+	rangeVal, err := spec.LookupErr("range")
+	if err != nil {
+		return nil, fmt.Errorf("$densify requires 'range'")
+	}
+	rangeDoc, ok := rangeVal.DocumentOK()
+	if !ok {
+		return nil, fmt.Errorf("$densify range must be a document")
+	}
+
+	stepVal, err := rangeDoc.LookupErr("step")
+	if err != nil {
+		return nil, fmt.Errorf("$densify range requires 'step'")
+	}
+	stepF, ok := toFloat64Interface(rawValToInterface(stepVal))
+	if !ok || stepF <= 0 {
+		return nil, fmt.Errorf("$densify range step must be a positive number")
+	}
+	s.step = stepF
+
+	if unitVal, uErr := rangeDoc.LookupErr("unit"); uErr == nil {
+		if stepF != math.Trunc(stepF) {
+			return nil, fmt.Errorf("$densify range step must be an integer when unit is specified")
+		}
+		unitStr, ok := unitVal.StringValueOK()
+		if !ok {
+			return nil, fmt.Errorf("$densify range 'unit' must be a string")
+		}
+		s.unit = unitStr
+	}
+
+	boundsVal, err := rangeDoc.LookupErr("bounds")
+	if err != nil {
+		return nil, fmt.Errorf("$densify range requires 'bounds'")
+	}
+
+	if boundsVal.Type == bson.TypeString {
+		s.boundsMode, _ = boundsVal.StringValueOK()
+		if s.boundsMode != "full" && s.boundsMode != "partition" {
+			return nil, fmt.Errorf("$densify range bounds must be 'full', 'partition', or an array")
+		}
+	} else if boundsVal.Type == bson.TypeArray {
+		arr := boundsVal.Array()
+		arrVals, _ := arr.Values()
+		if len(arrVals) != 2 {
+			return nil, fmt.Errorf("$densify range bounds array must have exactly 2 elements")
+		}
+		s.explicitBounds[0] = rawValToInterface(arrVals[0])
+		s.explicitBounds[1] = rawValToInterface(arrVals[1])
+		s.hasExplicit = true
+	} else {
+		return nil, fmt.Errorf("$densify range bounds must be 'full', 'partition', or an array")
+	}
+
+	if partVal, pErr := spec.LookupErr("partitionByFields"); pErr == nil {
+		if partVal.Type != bson.TypeArray {
+			return nil, fmt.Errorf("$densify partitionByFields must be an array")
+		}
+		arr := partVal.Array()
+		arrVals, _ := arr.Values()
+		for _, rv := range arrVals {
+			pf, ok := rv.StringValueOK()
+			if !ok {
+				return nil, fmt.Errorf("$densify partitionByFields elements must be strings")
+			}
+			s.partitionByFields = append(s.partitionByFields, pf)
+		}
+	}
+
+	return s, nil
+}
+
+func (s *densifyStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
+	if len(docs) == 0 {
+		return docs, nil
+	}
+
+	// Group documents by partition key.
+	type partition struct {
+		key  bson.D
+		docs []bson.Raw
+	}
+	partMap := make(map[string]*partition)
+	var partOrder []string
+
+	for _, doc := range docs {
+		d, err := rawToD(doc)
+		if err != nil {
+			return nil, err
+		}
+		pk := s.partitionKey(d)
+		pkBytes, _ := bson.Marshal(pk)
+		pkStr := string(pkBytes)
+		if _, ok := partMap[pkStr]; !ok {
+			partMap[pkStr] = &partition{key: pk}
+			partOrder = append(partOrder, pkStr)
+		}
+		partMap[pkStr].docs = append(partMap[pkStr].docs, doc)
+	}
+
+	// Determine global min/max for "full" bounds mode.
+	var globalMin, globalMax interface{}
+	if s.boundsMode == "full" {
+		for _, p := range partMap {
+			mn, mx := s.minMax(p.docs)
+			if globalMin == nil || s.less(mn, globalMin) {
+				globalMin = mn
+			}
+			if globalMax == nil || s.less(globalMax, mx) {
+				globalMax = mx
+			}
+		}
+	}
+
+	var result []bson.Raw
+	for _, pkStr := range partOrder {
+		p := partMap[pkStr]
+
+		var lo, hi interface{}
+		if s.hasExplicit {
+			lo, hi = s.explicitBounds[0], s.explicitBounds[1]
+		} else if s.boundsMode == "full" {
+			lo, hi = globalMin, globalMax
+		} else {
+			lo, hi = s.minMax(p.docs)
+		}
+
+		densified, err := s.densifyPartition(p.docs, p.key, lo, hi)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, densified...)
+	}
+	return result, nil
+}
+
+// partitionKey extracts the partition key values from a document.
+func (s *densifyStage) partitionKey(d bson.D) bson.D {
+	if len(s.partitionByFields) == 0 {
+		return nil
+	}
+	pk := make(bson.D, 0, len(s.partitionByFields))
+	for _, f := range s.partitionByFields {
+		v, _ := getDFieldValue(d, f)
+		pk = append(pk, bson.E{Key: f, Value: v})
+	}
+	return pk
+}
+
+// minMax returns the min and max values of the densify field across docs.
+func (s *densifyStage) minMax(docs []bson.Raw) (interface{}, interface{}) {
+	var mn, mx interface{}
+	for _, doc := range docs {
+		d, err := rawToD(doc)
+		if err != nil {
+			continue
+		}
+		v, ok := getDFieldValue(d, s.field)
+		if !ok || v == nil {
+			continue
+		}
+		if mn == nil || s.less(v, mn) {
+			mn = v
+		}
+		if mx == nil || s.less(mx, v) {
+			mx = v
+		}
+	}
+	return mn, mx
+}
+
+// less compares two field values (numeric or date).
+func (s *densifyStage) less(a, b interface{}) bool {
+	if s.unit != "" {
+		ta, oka := toTime(a)
+		tb, okb := toTime(b)
+		if oka && okb {
+			return ta.Before(tb)
+		}
+	}
+	fa, oka := toFloat64Interface(a)
+	fb, okb := toFloat64Interface(b)
+	if oka && okb {
+		return fa < fb
+	}
+	return false
+}
+
+// equal checks equality of two field values.
+func (s *densifyStage) equal(a, b interface{}) bool {
+	if s.unit != "" {
+		ta, oka := toTime(a)
+		tb, okb := toTime(b)
+		if oka && okb {
+			return ta.Equal(tb)
+		}
+	}
+	fa, oka := toFloat64Interface(a)
+	fb, okb := toFloat64Interface(b)
+	if oka && okb {
+		return fa == fb
+	}
+	return false
+}
+
+// advance moves a value forward by s.step.
+func (s *densifyStage) advance(v interface{}) interface{} {
+	if s.unit != "" {
+		t, ok := toTime(v)
+		if ok {
+			return bson.DateTime(addDateUnit(t, s.unit, int64(s.step)).UnixMilli())
+		}
+	}
+	f, ok := toFloat64Interface(v)
+	if ok {
+		return f + s.step
+	}
+	return v
+}
+
+// densifyPartition fills gaps within a single partition.
+func (s *densifyStage) densifyPartition(docs []bson.Raw, partKey bson.D, lo, hi interface{}) ([]bson.Raw, error) {
+	if lo == nil || hi == nil {
+		return docs, nil
+	}
+
+	// Sort docs by the densify field.
+	type indexedDoc struct {
+		d   bson.D
+		raw bson.Raw
+		val interface{}
+	}
+	sorted := make([]indexedDoc, 0, len(docs))
+	for _, doc := range docs {
+		d, err := rawToD(doc)
+		if err != nil {
+			return nil, err
+		}
+		v, _ := getDFieldValue(d, s.field)
+		sorted = append(sorted, indexedDoc{d: d, raw: doc, val: v})
+	}
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].val == nil {
+			return true
+		}
+		if sorted[j].val == nil {
+			return false
+		}
+		return s.less(sorted[i].val, sorted[j].val)
+	})
+
+	// Build the sequence of step boundaries from lo up to and including hi.
+	var result []bson.Raw
+	cursor := lo
+	docIdx := 0
+
+	// Emit any docs with nil field values first (they sort to the front).
+	for docIdx < len(sorted) && sorted[docIdx].val == nil {
+		result = append(result, sorted[docIdx].raw)
+		docIdx++
+	}
+
+	for s.less(cursor, hi) || s.equal(cursor, hi) {
+		// Emit any original docs whose field value equals cursor.
+		emittedAtCursor := 0
+		for docIdx < len(sorted) && sorted[docIdx].val != nil && s.equal(sorted[docIdx].val, cursor) {
+			result = append(result, sorted[docIdx].raw)
+			docIdx++
+			emittedAtCursor++
+		}
+
+		// Emit any original docs with value less than cursor (safety for rounding).
+		for docIdx < len(sorted) && sorted[docIdx].val != nil && s.less(sorted[docIdx].val, cursor) {
+			result = append(result, sorted[docIdx].raw)
+			docIdx++
+		}
+
+		if emittedAtCursor == 0 {
+			// Create a synthetic doc with just the densify field (+ partition keys).
+			newDoc := bson.D{}
+			for _, e := range partKey {
+				newDoc = append(newDoc, e)
+			}
+			newDoc = setFieldD(newDoc, s.field, cursor)
+			raw, err := dToRaw(newDoc)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, raw)
+		}
+
+		next := s.advance(cursor)
+		if s.equal(next, cursor) {
+			break // prevent infinite loop if advance doesn't move
+		}
+
+		// Before moving cursor, emit any original docs between cursor and next.
+		for docIdx < len(sorted) && sorted[docIdx].val != nil && s.less(sorted[docIdx].val, next) && !s.equal(sorted[docIdx].val, next) {
+			result = append(result, sorted[docIdx].raw)
+			docIdx++
+		}
+
+		cursor = next
+	}
+
+	// Emit any remaining original docs past hi.
+	for docIdx < len(sorted) {
+		result = append(result, sorted[docIdx].raw)
+		docIdx++
+	}
+
 	return result, nil
 }
 
