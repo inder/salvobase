@@ -2,6 +2,7 @@ package aggregation
 
 import (
 	"testing"
+	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 
@@ -1508,4 +1509,389 @@ func mustRawValue(t *testing.T, s string) bson.RawValue {
 		t.Fatalf("mustRawValue lookup: %v", err)
 	}
 	return val
+}
+
+// ─── $densify tests ──────────────────────────────────────────────────────────
+
+func TestStageDensify(t *testing.T) {
+	t.Run("numeric gaps filled", func(t *testing.T) {
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(0)}, {Key: "x", Value: "a"}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(3)}, {Key: "x", Value: "b"}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(5)}, {Key: "x", Value: "c"}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// Expect docs at 0,1,2,3,4,5
+		if len(result) != 6 {
+			t.Fatalf("expected 6 docs, got %d", len(result))
+		}
+		for i, r := range result {
+			d := decodeResult(t, r)
+			v := toFloatT(t, getFieldD(d, "val"))
+			if v != float64(i) {
+				t.Errorf("doc %d: expected val=%d, got %v", i, i, v)
+			}
+		}
+		// Verify original docs preserve extra fields.
+		d0 := decodeResult(t, result[0])
+		if getFieldD(d0, "x") != "a" {
+			t.Errorf("original doc at val=0 should have x='a', got %v", getFieldD(d0, "x"))
+		}
+		// Verify synthetic docs only have the densify field.
+		d1 := decodeResult(t, result[1])
+		if getFieldD(d1, "x") != nil {
+			t.Errorf("synthetic doc at val=1 should not have x field, got %v", getFieldD(d1, "x"))
+		}
+	})
+
+	t.Run("no gaps is noop", func(t *testing.T) {
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(0)}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(1)}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(2)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 3 {
+			t.Fatalf("expected 3 docs (no gaps), got %d", len(result))
+		}
+	})
+
+	t.Run("explicit bounds", func(t *testing.T) {
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(2)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: bson.A{int32(0), int32(4)}},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// Expect docs at 0,1,2,3,4
+		if len(result) != 5 {
+			t.Fatalf("expected 5 docs, got %d", len(result))
+		}
+	})
+
+	t.Run("date gaps filled", func(t *testing.T) {
+		t0 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		t2 := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "ts", Value: bson.DateTime(t0.UnixMilli())}}),
+			makeRaw(t, bson.D{{Key: "ts", Value: bson.DateTime(t2.UnixMilli())}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "ts"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "unit", Value: "day"},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// Expect: Jan 1, Jan 2, Jan 3
+		if len(result) != 3 {
+			t.Fatalf("expected 3 docs, got %d", len(result))
+		}
+		// Verify Jan 2 was synthesized.
+		d1 := decodeResult(t, result[1])
+		tsVal := getFieldD(d1, "ts")
+		dt, ok := tsVal.(bson.DateTime)
+		if !ok {
+			t.Fatalf("expected bson.DateTime, got %T", tsVal)
+		}
+		expected := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+		if time.UnixMilli(int64(dt)).UTC() != expected {
+			t.Errorf("expected Jan 2, got %v", time.UnixMilli(int64(dt)).UTC())
+		}
+	})
+
+	t.Run("partitioned numeric", func(t *testing.T) {
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "group", Value: "A"}, {Key: "val", Value: int32(0)}}),
+			makeRaw(t, bson.D{{Key: "group", Value: "A"}, {Key: "val", Value: int32(2)}}),
+			makeRaw(t, bson.D{{Key: "group", Value: "B"}, {Key: "val", Value: int32(0)}}),
+			makeRaw(t, bson.D{{Key: "group", Value: "B"}, {Key: "val", Value: int32(3)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "partitionByFields", Value: bson.A{"group"}},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// Group A: 0,1,2 → 3 docs. Group B: 0,1,2,3 → 4 docs. Total: 7.
+		if len(result) != 7 {
+			t.Fatalf("expected 7 docs, got %d", len(result))
+		}
+		// Verify partition A synthetic doc at val=1 has group=A.
+		d := decodeResult(t, result[1])
+		if getFieldD(d, "group") != "A" {
+			t.Errorf("synthetic doc in partition A should have group='A', got %v", getFieldD(d, "group"))
+		}
+	})
+
+	t.Run("full bounds spans all partitions", func(t *testing.T) {
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "group", Value: "A"}, {Key: "val", Value: int32(0)}}),
+			makeRaw(t, bson.D{{Key: "group", Value: "A"}, {Key: "val", Value: int32(2)}}),
+			makeRaw(t, bson.D{{Key: "group", Value: "B"}, {Key: "val", Value: int32(1)}}),
+			makeRaw(t, bson.D{{Key: "group", Value: "B"}, {Key: "val", Value: int32(4)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "partitionByFields", Value: bson.A{"group"}},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: "full"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// Global range 0..4. Each partition gets 5 docs (0,1,2,3,4). Total: 10.
+		if len(result) != 10 {
+			t.Fatalf("expected 10 docs, got %d", len(result))
+		}
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(nil)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 0 {
+			t.Fatalf("expected 0 docs, got %d", len(result))
+		}
+	})
+
+	t.Run("step larger than range", func(t *testing.T) {
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(0)}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(1)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(10)},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// Step 10, range 0..1 → only val=0 hits, val=1 is between 0 and 10 so it's emitted as original.
+		if len(result) != 2 {
+			t.Fatalf("expected 2 docs, got %d", len(result))
+		}
+	})
+
+	t.Run("date hourly densification", func(t *testing.T) {
+		t0 := time.Date(2024, 6, 1, 10, 0, 0, 0, time.UTC)
+		t3 := time.Date(2024, 6, 1, 13, 0, 0, 0, time.UTC)
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "ts", Value: bson.DateTime(t0.UnixMilli())}}),
+			makeRaw(t, bson.D{{Key: "ts", Value: bson.DateTime(t3.UnixMilli())}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "ts"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "unit", Value: "hour"},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// 10:00, 11:00, 12:00, 13:00 → 4 docs
+		if len(result) != 4 {
+			t.Fatalf("expected 4 docs, got %d", len(result))
+		}
+	})
+
+	t.Run("docs missing densify field pass through", func(t *testing.T) {
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(0)}}),
+			makeRaw(t, bson.D{{Key: "other", Value: "no val field"}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(2)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// Expect: doc with no val (passed through), val=0, val=1 (synthetic), val=2 → 4 docs.
+		if len(result) != 4 {
+			t.Fatalf("expected 4 docs, got %d", len(result))
+		}
+		// First doc should be the one missing the field (nil sorts first).
+		d0 := decodeResult(t, result[0])
+		if getFieldD(d0, "other") != "no val field" {
+			t.Errorf("expected doc with missing val field first, got %v", d0)
+		}
+	})
+
+	t.Run("single document", func(t *testing.T) {
+		docs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(5)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: "partition"},
+			}},
+		})
+		stage, err := buildDensifyStage(spec)
+		if err != nil {
+			t.Fatalf("buildDensifyStage: %v", err)
+		}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		// Single doc, lo==hi, just the original.
+		if len(result) != 1 {
+			t.Fatalf("expected 1 doc, got %d", len(result))
+		}
+	})
+
+	t.Run("build errors", func(t *testing.T) {
+		// Missing field.
+		spec := makeRaw(t, bson.D{
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(1)},
+				{Key: "bounds", Value: "full"},
+			}},
+		})
+		_, err := buildDensifyStage(spec)
+		if err == nil {
+			t.Error("expected error for missing field")
+		}
+
+		// Missing range.
+		spec = makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+		})
+		_, err = buildDensifyStage(spec)
+		if err == nil {
+			t.Error("expected error for missing range")
+		}
+
+		// Zero step.
+		spec = makeRaw(t, bson.D{
+			{Key: "field", Value: "val"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: int32(0)},
+				{Key: "bounds", Value: "full"},
+			}},
+		})
+		_, err = buildDensifyStage(spec)
+		if err == nil {
+			t.Error("expected error for zero step")
+		}
+
+		// Fractional step with date unit.
+		spec = makeRaw(t, bson.D{
+			{Key: "field", Value: "ts"},
+			{Key: "range", Value: bson.D{
+				{Key: "step", Value: 1.5},
+				{Key: "unit", Value: "day"},
+				{Key: "bounds", Value: "full"},
+			}},
+		})
+		_, err = buildDensifyStage(spec)
+		if err == nil {
+			t.Error("expected error for fractional step with date unit")
+		}
+	})
 }
