@@ -1499,18 +1499,14 @@ func TestExprFirstN(t *testing.T) {
 		}
 	})
 
-	t.Run("n = 0 returns empty array", func(t *testing.T) {
+	t.Run("error on n = 0", func(t *testing.T) {
 		expr := bson.D{{Key: "$firstN", Value: bson.D{
 			{Key: "n", Value: int32(0)},
 			{Key: "input", Value: "$scores"},
 		}}}
-		got := evalExprHelper(t, expr, doc)
-		arr, ok := got.([]interface{})
-		if !ok {
-			t.Fatalf("expected []interface{}, got %T", got)
-		}
-		if len(arr) != 0 {
-			t.Errorf("expected 0 elements, got %d", len(arr))
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for n = 0")
 		}
 	})
 
@@ -1658,18 +1654,14 @@ func TestExprLastN(t *testing.T) {
 		}
 	})
 
-	t.Run("n = 0 returns empty array", func(t *testing.T) {
+	t.Run("error on n = 0", func(t *testing.T) {
 		expr := bson.D{{Key: "$lastN", Value: bson.D{
 			{Key: "n", Value: int32(0)},
 			{Key: "input", Value: "$scores"},
 		}}}
-		got := evalExprHelper(t, expr, doc)
-		arr, ok := got.([]interface{})
-		if !ok {
-			t.Fatalf("expected []interface{}, got %T", got)
-		}
-		if len(arr) != 0 {
-			t.Errorf("expected 0 elements, got %d", len(arr))
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for n = 0")
 		}
 	})
 
