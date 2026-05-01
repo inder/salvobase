@@ -434,6 +434,12 @@ func evalOperatorExpr(op string, arg bson.RawValue, doc bson.Raw) (interface{}, 
 		return evalToHashedIndexKey(arg, doc)
 	case "$let":
 		return evalLet(arg, doc)
+	case "$getField":
+		return evalGetField(arg, doc)
+	case "$setField":
+		return evalSetField(arg, doc)
+	case "$unsetField":
+		return evalUnsetField(arg, doc)
 	case "$cond_ternary": // internal alias
 		return evalCond(arg, doc)
 
@@ -2767,6 +2773,267 @@ func toSlice(v interface{}) []interface{} {
 		return result
 	}
 	return nil
+}
+
+// ─── $getField / $setField / $unsetField ────────────────────────────────────
+
+// evalGetField implements $getField.
+// Shorthand: { "$getField": "<fieldName>" }
+// Full form: { "$getField": { "field": "<fieldName>", "input": <expression> } }
+func evalGetField(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	var fieldName string
+	var inputDoc bson.D
+
+	if arg.Type == bson.TypeString {
+		// Shorthand: field name is the value, input is $$CURRENT (the doc).
+		fieldName, _ = arg.StringValueOK()
+		var d bson.D
+		if err := bson.Unmarshal(doc, &d); err != nil {
+			return nil, fmt.Errorf("$getField: failed to parse current doc: %w", err)
+		}
+		inputDoc = d
+	} else if arg.Type == bson.TypeEmbeddedDocument {
+		subDoc, ok := arg.DocumentOK()
+		if !ok {
+			return nil, fmt.Errorf("$getField: expected document argument")
+		}
+
+		elems, err := subDoc.Elements()
+		if err != nil {
+			return nil, fmt.Errorf("$getField: %w", err)
+		}
+
+		var hasField, hasInput bool
+		var inputExpr bson.RawValue
+		for _, el := range elems {
+			switch el.Key() {
+			case "field":
+				fv := el.Value()
+				// field can be an expression that evaluates to a string
+				resolved, err := EvalExpr(fv, doc)
+				if err != nil {
+					return nil, fmt.Errorf("$getField.field: %w", err)
+				}
+				s, ok := resolved.(string)
+				if !ok {
+					return nil, fmt.Errorf("$getField: 'field' must evaluate to a string, got %T", resolved)
+				}
+				fieldName = s
+				hasField = true
+			case "input":
+				inputExpr = el.Value()
+				hasInput = true
+			default:
+				return nil, fmt.Errorf("$getField: unrecognized argument '%s'", el.Key())
+			}
+		}
+		if !hasField {
+			return nil, fmt.Errorf("$getField: missing 'field' argument")
+		}
+
+		if hasInput {
+			inputVal, err := EvalExpr(inputExpr, doc)
+			if err != nil {
+				return nil, fmt.Errorf("$getField.input: %w", err)
+			}
+			inputDoc = toDoc(inputVal)
+			if inputDoc == nil {
+				if inputVal == nil {
+					return nil, nil
+				}
+				return nil, fmt.Errorf("$getField: 'input' must evaluate to a document, got %T", inputVal)
+			}
+		} else {
+			// Default input is $$CURRENT (the document).
+			var d bson.D
+			if err := bson.Unmarshal(doc, &d); err != nil {
+				return nil, fmt.Errorf("$getField: failed to parse current doc: %w", err)
+			}
+			inputDoc = d
+		}
+	} else {
+		return nil, fmt.Errorf("$getField: argument must be a string or document, got %s", arg.Type)
+	}
+
+	// Literal field lookup — no dot-notation splitting. This is the whole
+	// point of $getField: it can access fields with dots/dollars in them.
+	for _, e := range inputDoc {
+		if e.Key == fieldName {
+			return e.Value, nil
+		}
+	}
+	// Field not found → return missing (nil).
+	return nil, nil
+}
+
+// evalSetField implements $setField.
+// { "$setField": { "field": "<fieldName>", "input": <expression>, "value": <expression> } }
+func evalSetField(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	subDoc, ok := arg.DocumentOK()
+	if !ok {
+		return nil, fmt.Errorf("$setField: expected document argument")
+	}
+
+	elems, err := subDoc.Elements()
+	if err != nil {
+		return nil, fmt.Errorf("$setField: %w", err)
+	}
+
+	var fieldName string
+	var hasField, hasInput, hasValue bool
+	var inputExpr, valueExpr bson.RawValue
+
+	for _, el := range elems {
+		switch el.Key() {
+		case "field":
+			fv := el.Value()
+			resolved, err := EvalExpr(fv, doc)
+			if err != nil {
+				return nil, fmt.Errorf("$setField.field: %w", err)
+			}
+			s, ok := resolved.(string)
+			if !ok {
+				return nil, fmt.Errorf("$setField: 'field' must evaluate to a string, got %T", resolved)
+			}
+			fieldName = s
+			hasField = true
+		case "input":
+			inputExpr = el.Value()
+			hasInput = true
+		case "value":
+			valueExpr = el.Value()
+			hasValue = true
+		default:
+			return nil, fmt.Errorf("$setField: unrecognized argument '%s'", el.Key())
+		}
+	}
+
+	if !hasField {
+		return nil, fmt.Errorf("$setField: missing 'field' argument")
+	}
+	if !hasInput {
+		return nil, fmt.Errorf("$setField: missing 'input' argument")
+	}
+	if !hasValue {
+		return nil, fmt.Errorf("$setField: missing 'value' argument")
+	}
+
+	// Resolve input document.
+	inputVal, err := EvalExpr(inputExpr, doc)
+	if err != nil {
+		return nil, fmt.Errorf("$setField.input: %w", err)
+	}
+	inputDoc := toDoc(inputVal)
+	if inputDoc == nil {
+		if inputVal == nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("$setField: 'input' must evaluate to a document, got %T", inputVal)
+	}
+
+	// Resolve the value.
+	newVal, err := EvalExpr(valueExpr, doc)
+	if err != nil {
+		return nil, fmt.Errorf("$setField.value: %w", err)
+	}
+
+	// If value is $$REMOVE, delete the field.
+	if _, isRemove := newVal.(removeMarker); isRemove {
+		result := make(bson.D, 0, len(inputDoc))
+		for _, e := range inputDoc {
+			if e.Key != fieldName {
+				result = append(result, e)
+			}
+		}
+		return result, nil
+	}
+
+	// Set or add the field (preserve order; update in-place if exists).
+	result := make(bson.D, 0, len(inputDoc)+1)
+	found := false
+	for _, e := range inputDoc {
+		if e.Key == fieldName {
+			result = append(result, bson.E{Key: fieldName, Value: newVal})
+			found = true
+		} else {
+			result = append(result, e)
+		}
+	}
+	if !found {
+		result = append(result, bson.E{Key: fieldName, Value: newVal})
+	}
+	return result, nil
+}
+
+// evalUnsetField implements $unsetField — syntactic sugar for $setField with $$REMOVE.
+// Implemented independently (not delegating to evalSetField) to avoid synthesising
+// a bson.RawValue for the $$REMOVE value expression. The deletion logic is trivial
+// enough that duplication is preferable to the indirection.
+// { "$unsetField": { "field": "<fieldName>", "input": <expression> } }
+func evalUnsetField(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	subDoc, ok := arg.DocumentOK()
+	if !ok {
+		return nil, fmt.Errorf("$unsetField: expected document argument")
+	}
+
+	elems, err := subDoc.Elements()
+	if err != nil {
+		return nil, fmt.Errorf("$unsetField: %w", err)
+	}
+
+	var fieldName string
+	var hasField, hasInput bool
+	var inputExpr bson.RawValue
+
+	for _, el := range elems {
+		switch el.Key() {
+		case "field":
+			fv := el.Value()
+			resolved, err := EvalExpr(fv, doc)
+			if err != nil {
+				return nil, fmt.Errorf("$unsetField.field: %w", err)
+			}
+			s, ok := resolved.(string)
+			if !ok {
+				return nil, fmt.Errorf("$unsetField: 'field' must evaluate to a string, got %T", resolved)
+			}
+			fieldName = s
+			hasField = true
+		case "input":
+			inputExpr = el.Value()
+			hasInput = true
+		default:
+			return nil, fmt.Errorf("$unsetField: unrecognized argument '%s'", el.Key())
+		}
+	}
+
+	if !hasField {
+		return nil, fmt.Errorf("$unsetField: missing 'field' argument")
+	}
+	if !hasInput {
+		return nil, fmt.Errorf("$unsetField: missing 'input' argument")
+	}
+
+	// Resolve input document.
+	inputVal, err := EvalExpr(inputExpr, doc)
+	if err != nil {
+		return nil, fmt.Errorf("$unsetField.input: %w", err)
+	}
+	inputDoc := toDoc(inputVal)
+	if inputDoc == nil {
+		if inputVal == nil {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("$unsetField: 'input' must evaluate to a document, got %T", inputVal)
+	}
+
+	result := make(bson.D, 0, len(inputDoc))
+	for _, e := range inputDoc {
+		if e.Key != fieldName {
+			result = append(result, e)
+		}
+	}
+	return result, nil
 }
 
 // toDoc converts various doc types to bson.D.
