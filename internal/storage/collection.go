@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -140,6 +141,15 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 					return fmt.Errorf("insert at index %d: %w", i, dupErr)
 				}
 				insertErr = dupErr
+				ids = append(ids, bson.ObjectID{})
+				continue
+			}
+			// Validate document against collection validator.
+			if valErr := validateDocument(r.prep.finalDoc, collInfo, opts.BypassDocumentValidation); valErr != nil {
+				if opts.Ordered {
+					return fmt.Errorf("insert at index %d: %w", i, valErr)
+				}
+				insertErr = valErr
 				ids = append(ids, bson.ObjectID{})
 				continue
 			}
@@ -331,6 +341,100 @@ func getCollectionInfoTx(tx *bolt.Tx, coll string) (CollectionInfo, bool) {
 		return CollectionInfo{}, false
 	}
 	return info, true
+}
+
+// validateDocument checks doc against the collection's validator if one is configured.
+// It returns an error for validationAction "error" and logs a warning for "warn".
+// If bypassValidation is true or validationLevel is "off", validation is skipped.
+func validateDocument(doc bson.Raw, info CollectionInfo, bypassValidation bool) error {
+	if bypassValidation || len(info.Options) == 0 {
+		return nil
+	}
+	validator, level, action := extractValidator(info)
+	if len(validator) == 0 || level == "off" {
+		return nil
+	}
+	match, err := query.Filter(doc, validator)
+	if err != nil {
+		return fmt.Errorf("document validation error: %w", err)
+	}
+	if match {
+		return nil
+	}
+	if action == "warn" {
+		log.Printf("[WARN] document failed validation on collection %q (validationAction=warn)", info.Name)
+		return nil
+	}
+	return Errorf(ErrCodeDocumentValidationFailure, "Document failed validation")
+}
+
+// validateDocumentForUpdate checks doc against the validator for update/replace.
+// For validationLevel "strict", always validates. For "moderate", only validates
+// if the original document already matched the validator.
+func validateDocumentForUpdate(newDoc, oldDoc bson.Raw, info CollectionInfo, bypassValidation bool) error {
+	if bypassValidation || len(info.Options) == 0 {
+		return nil
+	}
+	validator, level, action := extractValidator(info)
+	if len(validator) == 0 || level == "off" {
+		return nil
+	}
+	if level == "moderate" {
+		// Only validate if the old doc was valid.
+		oldMatch, err := query.Filter(oldDoc, validator)
+		if err != nil || !oldMatch {
+			return nil // old doc was already invalid — skip validation
+		}
+	}
+	match, err := query.Filter(newDoc, validator)
+	if err != nil {
+		return fmt.Errorf("document validation error: %w", err)
+	}
+	if match {
+		return nil
+	}
+	if action == "warn" {
+		log.Printf("[WARN] document failed validation on collection %q (validationAction=warn)", info.Name)
+		return nil
+	}
+	return Errorf(ErrCodeDocumentValidationFailure, "Document failed validation")
+}
+
+// extractValidatorFromOptions reads the validator, validationLevel, and validationAction
+// from a raw Options bson document.
+func extractValidatorFromOptions(opts bson.Raw) (validator bson.Raw, level, action string) {
+	if len(opts) == 0 {
+		return nil, "", ""
+	}
+	if v, err := opts.LookupErr("validator"); err == nil {
+		if doc, ok := v.DocumentOK(); ok {
+			validator = bson.Raw(doc)
+		}
+	}
+	if v, err := opts.LookupErr("validationLevel"); err == nil {
+		if s, ok := v.StringValueOK(); ok {
+			level = s
+		}
+	}
+	if v, err := opts.LookupErr("validationAction"); err == nil {
+		if s, ok := v.StringValueOK(); ok {
+			action = s
+		}
+	}
+	return
+}
+
+// extractValidator reads the validator, validationLevel, and validationAction from
+// the collection's Options field. Defaults: level="strict", action="error".
+func extractValidator(info CollectionInfo) (validator bson.Raw, level, action string) {
+	validator, level, action = extractValidatorFromOptions(info.Options)
+	if level == "" {
+		level = "strict"
+	}
+	if action == "" {
+		action = "error"
+	}
+	return
 }
 
 // evictOldest removes the document with the lowest (oldest) key from bucket b within tx.
@@ -1582,6 +1686,10 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			if err != nil {
 				return err
 			}
+			// Validate upserted document (treated as insert).
+			if valErr := validateDocument(newDoc, collInfo, opts.BypassDocumentValidation); valErr != nil {
+				return valErr
+			}
 			key := encodeIDValue(newDoc.Lookup("_id"))
 			compressed, err := c.engine.compress(newDoc)
 			if err != nil {
@@ -1611,6 +1719,10 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 				if applyErr != nil {
 					return fmt.Errorf("apply update: %w", applyErr)
 				}
+			}
+			// Validate updated document against collection validator.
+			if valErr := validateDocumentForUpdate(newDoc, item.doc, collInfo, opts.BypassDocumentValidation); valErr != nil {
+				return valErr
 			}
 			// Reject updates that increase document size on a capped collection.
 			if collInfo.Capped && len(newDoc) > len(item.doc) {
@@ -1753,6 +1865,10 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 						return prepErr
 					}
 				}
+				// Validate upserted replacement (treated as insert).
+				if valErr := validateDocument(newDoc, collInfo, opts.BypassDocumentValidation); valErr != nil {
+					return valErr
+				}
 				upsertKey := encodeIDValue(newDoc.Lookup("_id"))
 				compressed, compErr := c.engine.compress(newDoc)
 				if compErr != nil {
@@ -1787,6 +1903,10 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 			if prepErr != nil {
 				return prepErr
 			}
+		}
+		// Validate replacement document against collection validator.
+		if valErr := validateDocumentForUpdate(newDoc, matchDoc, collInfo, opts.BypassDocumentValidation); valErr != nil {
+			return valErr
 		}
 		// Reject replacements that increase document size on a capped collection.
 		if collInfo.Capped && len(newDoc) > len(matchDoc) {
@@ -2332,6 +2452,10 @@ func (c *bboltCollection) findAndModify(
 				if upsertErr != nil {
 					return upsertErr
 				}
+				// Validate upserted document.
+				if valErr := validateDocument(newDoc, collInfo, opts.BypassDocumentValidation); valErr != nil {
+					return valErr
+				}
 				upsertKey := encodeIDValue(newDoc.Lookup("_id"))
 				compressed, compErr := c.engine.compress(newDoc)
 				if compErr != nil {
@@ -2379,6 +2503,11 @@ func (c *bboltCollection) findAndModify(
 		}
 		if applyErr != nil {
 			return applyErr
+		}
+
+		// Validate updated/replaced document against collection validator.
+		if valErr := validateDocumentForUpdate(newDoc, target.doc, collInfo, opts.BypassDocumentValidation); valErr != nil {
+			return valErr
 		}
 
 		// Reject size-growing updates/replacements on capped collections.

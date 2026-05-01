@@ -215,6 +215,21 @@ func (e *BBoltEngine) CreateCollection(db, coll string, opts CreateCollectionOpt
 		CappedSize: opts.Size,
 		CappedMax:  opts.Max,
 	}
+	// Store validator options in the Options field if a validator is set.
+	if len(opts.Validator) > 0 {
+		optDoc := bson.D{{Key: "validator", Value: bson.Raw(opts.Validator)}}
+		if opts.ValidationLevel != "" {
+			optDoc = append(optDoc, bson.E{Key: "validationLevel", Value: opts.ValidationLevel})
+		}
+		if opts.ValidationAction != "" {
+			optDoc = append(optDoc, bson.E{Key: "validationAction", Value: opts.ValidationAction})
+		}
+		raw, mErr := bson.Marshal(optDoc)
+		if mErr != nil {
+			return mErr
+		}
+		info.Options = raw
+	}
 	infoBytes, err := json.Marshal(info)
 	if err != nil {
 		return err
@@ -232,6 +247,62 @@ func (e *BBoltEngine) CreateCollection(db, coll string, opts CreateCollectionOpt
 		}
 		_, err = tx.CreateBucketIfNotExists([]byte(collBucket(coll)))
 		return err
+	})
+}
+
+// UpdateCollectionOptions updates the validator and validation settings for an
+// existing collection. Returns ErrCodeNamespaceNotFound if the collection does not exist.
+func (e *BBoltEngine) UpdateCollectionOptions(db, coll string, validator bson.Raw, level, action string) error {
+	boltDB, err := e.getDB(db)
+	if err != nil {
+		return err
+	}
+	return boltDB.Update(func(tx *bolt.Tx) error {
+		meta := tx.Bucket([]byte(bucketMetaCollections))
+		if meta == nil {
+			return Errorf(ErrCodeNamespaceNotFound, "collection %q not found", coll)
+		}
+		existing := meta.Get(metaCollKey(coll))
+		if existing == nil {
+			return Errorf(ErrCodeNamespaceNotFound, "collection %q not found", coll)
+		}
+		var info CollectionInfo
+		if err := json.Unmarshal(existing, &info); err != nil {
+			return err
+		}
+		// Merge new options on top of existing ones (preserve fields not in request).
+		existingValidator, existingLevel, existingAction := extractValidatorFromOptions(info.Options)
+		if len(validator) > 0 {
+			existingValidator = validator
+		}
+		if level != "" {
+			existingLevel = level
+		}
+		if action != "" {
+			existingAction = action
+		}
+		if len(existingValidator) > 0 || existingLevel != "" || existingAction != "" {
+			optDoc := bson.D{}
+			if len(existingValidator) > 0 {
+				optDoc = append(optDoc, bson.E{Key: "validator", Value: bson.Raw(existingValidator)})
+			}
+			if existingLevel != "" {
+				optDoc = append(optDoc, bson.E{Key: "validationLevel", Value: existingLevel})
+			}
+			if existingAction != "" {
+				optDoc = append(optDoc, bson.E{Key: "validationAction", Value: existingAction})
+			}
+			raw, mErr := bson.Marshal(optDoc)
+			if mErr != nil {
+				return mErr
+			}
+			info.Options = raw
+		}
+		infoBytes, mErr := json.Marshal(info)
+		if mErr != nil {
+			return mErr
+		}
+		return meta.Put(metaCollKey(coll), infoBytes)
 	})
 }
 

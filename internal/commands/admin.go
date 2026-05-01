@@ -24,10 +24,19 @@ func handleCreateCollection(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	size := lookupInt64Field(cmd, "size")
 	max := lookupInt64Field(cmd, "max")
 
+	validationLevel := lookupStringField(cmd, "validationLevel")
+	validationAction := lookupStringField(cmd, "validationAction")
+	if err := checkValidationOptions(validationLevel, validationAction); err != nil {
+		return nil, err
+	}
+
 	opts := storage.CreateCollectionOptions{
-		Capped: capped,
-		Size:   size,
-		Max:    max,
+		Capped:           capped,
+		Size:             size,
+		Max:              max,
+		Validator:        lookupRawField(cmd, "validator"),
+		ValidationLevel:  validationLevel,
+		ValidationAction: validationAction,
 	}
 
 	if err := ctx.Engine.CreateCollection(ctx.DB, collName, opts); err != nil {
@@ -40,6 +49,48 @@ func handleCreateCollection(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	return BuildOKResponse(), nil
+}
+
+// handleCollMod handles the "collMod" command — modifies collection options
+// such as the document validator, validationLevel, and validationAction.
+func handleCollMod(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
+	collVal, err := cmd.LookupErr("collMod")
+	if err != nil {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "collMod: missing 'collMod' field")
+	}
+	collName, ok := collVal.StringValueOK()
+	if !ok {
+		return nil, storage.Errorf(storage.ErrCodeBadValue, "collMod: 'collMod' must be a string")
+	}
+	if !ctx.Engine.HasCollection(ctx.DB, collName) {
+		return nil, storage.Errorf(storage.ErrCodeNamespaceNotFound,
+			"ns not found: %s.%s", ctx.DB, collName)
+	}
+	validator := lookupRawField(cmd, "validator")
+	level := lookupStringField(cmd, "validationLevel")
+	action := lookupStringField(cmd, "validationAction")
+	if err := checkValidationOptions(level, action); err != nil {
+		return nil, err
+	}
+
+	if err := ctx.Engine.UpdateCollectionOptions(ctx.DB, collName, validator, level, action); err != nil {
+		return nil, fmt.Errorf("collMod: %w", err)
+	}
+	return BuildOKResponse(), nil
+}
+
+// checkValidationOptions returns an error if validationLevel or validationAction
+// contain invalid values. Empty strings are allowed (means "use default").
+func checkValidationOptions(level, action string) error {
+	if level != "" && level != "off" && level != "strict" && level != "moderate" {
+		return storage.Errorf(storage.ErrCodeBadValue,
+			"invalid validationLevel %q: must be off, strict, or moderate", level)
+	}
+	if action != "" && action != "error" && action != "warn" {
+		return storage.Errorf(storage.ErrCodeBadValue,
+			"invalid validationAction %q: must be error or warn", action)
+	}
+	return nil
 }
 
 // handleDrop handles the "drop" command (drops a collection).

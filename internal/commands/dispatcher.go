@@ -100,6 +100,7 @@ func (d *Dispatcher) registerAll() {
 	// Admin / DDL
 	d.register("create", handleCreateCollection)
 	d.register("createcollection", handleCreateCollection)
+	d.register("collmod", handleCollMod)
 	d.register("drop", handleDrop)
 	d.register("dropdatabase", handleDropDatabase)
 	d.register("listdatabases", handleListDatabases)

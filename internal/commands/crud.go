@@ -367,11 +367,12 @@ func handleFindAndModify(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	opts := storage.FindAndModifyOptions{
-		Sort:       sort,
-		Projection: fields,
-		Upsert:     upsert,
-		ReturnNew:  returnNew,
-		Remove:     remove,
+		Sort:                     sort,
+		Projection:               fields,
+		Upsert:                   upsert,
+		ReturnNew:                returnNew,
+		Remove:                   remove,
+		BypassDocumentValidation: lookupBoolField(cmd, "bypassDocumentValidation"),
 	}
 
 	var doc bson.Raw
