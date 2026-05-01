@@ -1193,3 +1193,242 @@ func TestExprUnsetField(t *testing.T) {
 		}
 	})
 }
+
+// ─── $sortArray ───────────────────────────────────────────────────────────────
+
+func TestExprSortArray(t *testing.T) {
+	doc := makeDoc(t, bson.D{
+		{Key: "nums", Value: bson.A{int32(3), int32(1), int32(4), int32(1), int32(5)}},
+		{Key: "strs", Value: bson.A{"banana", "apple", "cherry"}},
+		{Key: "items", Value: bson.A{
+			bson.D{{Key: "name", Value: "c"}, {Key: "price", Value: int32(30)}},
+			bson.D{{Key: "name", Value: "a"}, {Key: "price", Value: int32(10)}},
+			bson.D{{Key: "name", Value: "b"}, {Key: "price", Value: int32(20)}},
+		}},
+		{Key: "empty", Value: bson.A{}},
+	})
+
+	t.Run("scalar ascending", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$nums"},
+			{Key: "sortBy", Value: int32(1)},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []int32{1, 1, 3, 4, 5}
+		for i, w := range want {
+			if toInt32(arr[i]) != w {
+				t.Errorf("index %d: got %v, want %v", i, arr[i], w)
+			}
+		}
+	})
+
+	t.Run("scalar descending", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$nums"},
+			{Key: "sortBy", Value: int32(-1)},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []int32{5, 4, 3, 1, 1}
+		for i, w := range want {
+			if toInt32(arr[i]) != w {
+				t.Errorf("index %d: got %v, want %v", i, arr[i], w)
+			}
+		}
+	})
+
+	t.Run("string ascending", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$strs"},
+			{Key: "sortBy", Value: int32(1)},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		wantStrs := []string{"apple", "banana", "cherry"}
+		for i, w := range wantStrs {
+			if arr[i] != w {
+				t.Errorf("index %d: got %v, want %v", i, arr[i], w)
+			}
+		}
+	})
+
+	t.Run("document sort by single field", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$items"},
+			{Key: "sortBy", Value: bson.D{{Key: "price", Value: int32(1)}}},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 3 {
+			t.Fatalf("expected 3 elements, got %d", len(arr))
+		}
+		names := extractField(t, arr, "name")
+		wantNames := []interface{}{"a", "b", "c"}
+		if !reflect.DeepEqual(names, wantNames) {
+			t.Errorf("got names %v, want %v", names, wantNames)
+		}
+	})
+
+	t.Run("document sort descending", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$items"},
+			{Key: "sortBy", Value: bson.D{{Key: "price", Value: int32(-1)}}},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		names := extractField(t, arr, "name")
+		wantNames := []interface{}{"c", "b", "a"}
+		if !reflect.DeepEqual(names, wantNames) {
+			t.Errorf("got names %v, want %v", names, wantNames)
+		}
+	})
+
+	t.Run("multi-field sort", func(t *testing.T) {
+		multiDoc := makeDoc(t, bson.D{
+			{Key: "data", Value: bson.A{
+				bson.D{{Key: "cat", Value: "b"}, {Key: "val", Value: int32(2)}},
+				bson.D{{Key: "cat", Value: "a"}, {Key: "val", Value: int32(3)}},
+				bson.D{{Key: "cat", Value: "a"}, {Key: "val", Value: int32(1)}},
+				bson.D{{Key: "cat", Value: "b"}, {Key: "val", Value: int32(1)}},
+			}},
+		})
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$data"},
+			{Key: "sortBy", Value: bson.D{
+				{Key: "cat", Value: int32(1)},
+				{Key: "val", Value: int32(1)},
+			}},
+		}}}
+		got := evalExprHelper(t, expr, multiDoc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		cats := extractField(t, arr, "cat")
+		vals := extractField(t, arr, "val")
+		wantCats := []interface{}{"a", "a", "b", "b"}
+		if !reflect.DeepEqual(cats, wantCats) {
+			t.Errorf("cats: got %v, want %v", cats, wantCats)
+		}
+		// Within "a", val should be 1, 3; within "b", val should be 1, 2
+		wantVals := []interface{}{int32(1), int32(3), int32(1), int32(2)}
+		for i, w := range wantVals {
+			if toInt32(vals[i]) != w {
+				t.Errorf("val[%d]: got %v, want %v", i, vals[i], w)
+			}
+		}
+	})
+
+	t.Run("empty array", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$empty"},
+			{Key: "sortBy", Value: int32(1)},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected empty array, got %d elements", len(arr))
+		}
+	})
+
+	t.Run("null input returns nil", func(t *testing.T) {
+		nullDoc := makeDoc(t, bson.D{{Key: "x", Value: nil}})
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$x"},
+			{Key: "sortBy", Value: int32(1)},
+		}}}
+		result, err := EvalExpr(expr, nullDoc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+	})
+
+	t.Run("missing input field returns nil", func(t *testing.T) {
+		emptyDoc := makeDoc(t, bson.D{})
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$nonexistent"},
+			{Key: "sortBy", Value: int32(1)},
+		}}}
+		result, err := EvalExpr(expr, emptyDoc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+	})
+
+	t.Run("error on missing input param", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "sortBy", Value: int32(1)},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for missing 'input'")
+		}
+	})
+
+	t.Run("error on missing sortBy param", func(t *testing.T) {
+		expr := bson.D{{Key: "$sortArray", Value: bson.D{
+			{Key: "input", Value: "$nums"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for missing 'sortBy'")
+		}
+	})
+}
+
+func extractField(t *testing.T, arr []interface{}, field string) []interface{} {
+	t.Helper()
+	result := make([]interface{}, len(arr))
+	for i, item := range arr {
+		switch d := item.(type) {
+		case bson.D:
+			for _, e := range d {
+				if e.Key == field {
+					result[i] = e.Value
+					break
+				}
+			}
+		default:
+			t.Fatalf("expected bson.D at index %d, got %T", i, item)
+		}
+	}
+	return result
+}
+
+func toInt32(v interface{}) int32 {
+	switch n := v.(type) {
+	case int32:
+		return n
+	case int64:
+		return int32(n)
+	case float64:
+		return int32(n)
+	default:
+		return 0
+	}
+}
