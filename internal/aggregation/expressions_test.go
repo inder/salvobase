@@ -883,3 +883,40 @@ func TestExprComparison(t *testing.T) {
 		})
 	}
 }
+
+// ─── $rand ──────────────────────────────────────────────────────────────────────
+
+func TestExprRand(t *testing.T) {
+	doc := makeDoc(t, bson.D{})
+
+	t.Run("returns float64 in [0,1)", func(t *testing.T) {
+		for i := 0; i < 100; i++ {
+			result := evalExprHelper(t, bson.D{{Key: "$rand", Value: bson.D{}}}, doc)
+			f, ok := result.(float64)
+			if !ok {
+				t.Fatalf("expected float64, got %T", result)
+			}
+			if f < 0 || f >= 1 {
+				t.Fatalf("$rand returned %v, want [0, 1)", f)
+			}
+		}
+	})
+
+	t.Run("produces varying values", func(t *testing.T) {
+		seen := make(map[float64]bool)
+		for i := 0; i < 10; i++ {
+			result := evalExprHelper(t, bson.D{{Key: "$rand", Value: bson.D{}}}, doc)
+			seen[result.(float64)] = true
+		}
+		if len(seen) < 2 {
+			t.Fatalf("$rand produced %d unique values in 10 calls, expected variation", len(seen))
+		}
+	})
+
+	t.Run("rejects non-document argument", func(t *testing.T) {
+		_, err := EvalExpr(bson.D{{Key: "$rand", Value: int32(1)}}, doc)
+		if err == nil {
+			t.Fatal("expected error for non-document $rand argument")
+		}
+	})
+}
