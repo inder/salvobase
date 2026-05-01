@@ -274,6 +274,10 @@ func evalOperatorExpr(op string, arg bson.RawValue, doc bson.Raw) (interface{}, 
 		return evalArrayToObject(arg, doc)
 	case "$sortArray":
 		return evalSortArray(arg, doc)
+	case "$firstN":
+		return evalFirstN(arg, doc)
+	case "$lastN":
+		return evalLastN(arg, doc)
 
 	// ── String ───────────────────────────────────────────────────────────────
 	case "$concat":
@@ -1533,6 +1537,82 @@ func evalSortArray(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 	}
 
 	return result, nil
+}
+
+// ─── $firstN / $lastN ────────────────────────────────────────────────────────
+
+func evalFirstNLastN(arg bson.RawValue, doc bson.Raw, takeLast bool) (interface{}, error) {
+	subDoc, ok := arg.DocumentOK()
+	if !ok {
+		opName := "$firstN"
+		if takeLast {
+			opName = "$lastN"
+		}
+		return nil, fmt.Errorf("%s requires a document argument with 'n' and 'input'", opName)
+	}
+
+	opName := "$firstN"
+	if takeLast {
+		opName = "$lastN"
+	}
+
+	nVal, err := subDoc.LookupErr("n")
+	if err != nil {
+		return nil, fmt.Errorf("%s requires 'n'", opName)
+	}
+	inputVal, err := subDoc.LookupErr("input")
+	if err != nil {
+		return nil, fmt.Errorf("%s requires 'input'", opName)
+	}
+
+	nEvaled, err := EvalExpr(nVal, doc)
+	if err != nil {
+		return nil, err
+	}
+	nFloat, ok := toFloat64Interface(nEvaled)
+	if !ok {
+		return nil, fmt.Errorf("%s: 'n' must be a positive integer", opName)
+	}
+	n := int(nFloat)
+	if nFloat != float64(n) || n < 0 {
+		return nil, fmt.Errorf("%s: 'n' must be a positive integer, got %v", opName, nEvaled)
+	}
+
+	inputEvaled, err := EvalExpr(inputVal, doc)
+	if err != nil {
+		return nil, err
+	}
+	if inputEvaled == nil {
+		return nil, nil
+	}
+	arr := toSlice(inputEvaled)
+	if arr == nil {
+		return nil, fmt.Errorf("%s: 'input' must be an array", opName)
+	}
+
+	if n >= len(arr) {
+		result := make([]interface{}, len(arr))
+		copy(result, arr)
+		return result, nil
+	}
+
+	if takeLast {
+		result := make([]interface{}, n)
+		copy(result, arr[len(arr)-n:])
+		return result, nil
+	}
+
+	result := make([]interface{}, n)
+	copy(result, arr[:n])
+	return result, nil
+}
+
+func evalFirstN(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	return evalFirstNLastN(arg, doc, false)
+}
+
+func evalLastN(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	return evalFirstNLastN(arg, doc, true)
 }
 
 func marshalToRawDoc(v interface{}) (bson.Raw, error) {
