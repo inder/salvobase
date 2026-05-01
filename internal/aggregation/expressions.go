@@ -194,8 +194,10 @@ func evalFieldRef(path string, doc bson.Raw) interface{} {
 	if !found {
 		return nil
 	}
-	result, _ := evalRawValue(val, doc)
-	return result
+	// Field values are data, not expressions. Use rawValToInterface to avoid
+	// treating $-prefixed strings as field references or embedded documents
+	// as operator expressions.
+	return rawValToInterface(val)
 }
 
 // evalOperatorExpr dispatches to the appropriate expression handler.
@@ -553,9 +555,53 @@ func toStringInterface(v interface{}) (string, bool) {
 	return "", false
 }
 
+// rawValToInterface converts a bson.RawValue to a Go value without expression
+// evaluation. Strings starting with "$" are returned as-is (not treated as
+// field references), and embedded documents are decoded literally (not
+// evaluated as operator expressions).
 func rawValToInterface(v bson.RawValue) interface{} {
-	result, _ := evalRawValue(v, nil)
-	return result
+	switch v.Type {
+	case bson.TypeString:
+		return v.StringValue()
+	case bson.TypeEmbeddedDocument:
+		elems, err := v.Document().Elements()
+		if err != nil {
+			return nil
+		}
+		result := make(bson.D, 0, len(elems))
+		for _, e := range elems {
+			result = append(result, bson.E{Key: e.Key(), Value: rawValToInterface(e.Value())})
+		}
+		return result
+	case bson.TypeArray:
+		vals, err := bson.RawArray(v.Value).Values()
+		if err != nil {
+			return nil
+		}
+		result := make([]interface{}, len(vals))
+		for i, rv := range vals {
+			result[i] = rawValToInterface(rv)
+		}
+		return result
+	case bson.TypeNull, bson.TypeUndefined:
+		return nil
+	case bson.TypeBoolean:
+		return v.Boolean()
+	case bson.TypeInt32:
+		return v.Int32()
+	case bson.TypeInt64:
+		return v.Int64()
+	case bson.TypeDouble:
+		return v.Double()
+	case bson.TypeDateTime:
+		return time.Unix(0, v.DateTime()*int64(time.Millisecond)).UTC()
+	case bson.TypeObjectID:
+		return v.ObjectID()
+	case bson.TypeDecimal128:
+		return v.Decimal128()
+	default:
+		return v
+	}
 }
 
 func interfaceToRawValue(v interface{}) bson.RawValue {
