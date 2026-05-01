@@ -2966,7 +2966,7 @@ func evalSetField(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
 }
 
 // evalUnsetField implements $unsetField — syntactic sugar for $setField with $$REMOVE.
-// Implemented independently (not delegating to evalSetField) to avoid synthesising
+// Implemented independently (not delegating to evalSetField) to avoid synthesizing
 // a bson.RawValue for the $$REMOVE value expression. The deletion logic is trivial
 // enough that duplication is preferable to the indirection.
 // { "$unsetField": { "field": "<fieldName>", "input": <expression> } }
