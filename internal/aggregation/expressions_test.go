@@ -1811,3 +1811,335 @@ func TestExprLiteral(t *testing.T) {
 		}
 	})
 }
+
+// ─── $maxN / $minN ──────────────────────────────────────────────────────────
+
+func TestExprMaxN(t *testing.T) {
+	doc := makeDoc(t, bson.D{
+		{Key: "scores", Value: bson.A{int32(30), int32(10), int32(50), int32(20), int32(40)}},
+		{Key: "empty", Value: bson.A{}},
+	})
+
+	t.Run("basic max 3", func(t *testing.T) {
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(50), int32(40), int32(30)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("max 1 returns largest", func(t *testing.T) {
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(1)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(50)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("n greater than array length returns sorted full array", func(t *testing.T) {
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(100)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(50), int32(40), int32(30), int32(20), int32(10)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("duplicates preserved", func(t *testing.T) {
+		dupDoc := makeDoc(t, bson.D{
+			{Key: "vals", Value: bson.A{int32(5), int32(5), int32(3), int32(5)}},
+		})
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$vals"},
+		}}}
+		got := evalExprHelper(t, expr, dupDoc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(5), int32(5), int32(5)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("mixed types uses MongoDB comparison order", func(t *testing.T) {
+		mixedDoc := makeDoc(t, bson.D{
+			{Key: "vals", Value: bson.A{int32(10), "hello", true, int32(5)}},
+		})
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$vals"},
+		}}}
+		got := evalExprHelper(t, expr, mixedDoc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		// MongoDB type order: Numbers < String < ... < Boolean
+		// Descending: true(bool) > "hello"(string) > 10(num) > 5(num)
+		want := []interface{}{true, "hello"}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("null input returns nil", func(t *testing.T) {
+		nullDoc := makeDoc(t, bson.D{{Key: "x", Value: nil}})
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$x"},
+		}}}
+		got := evalExprHelper(t, expr, nullDoc)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("empty array returns empty array", func(t *testing.T) {
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$empty"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected 0 elements, got %d", len(arr))
+		}
+	})
+
+	t.Run("error on n = 0", func(t *testing.T) {
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(0)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for n = 0")
+		}
+	})
+
+	t.Run("error on negative n", func(t *testing.T) {
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(-1)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for negative n")
+		}
+	})
+
+	t.Run("error on non-integer n", func(t *testing.T) {
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: 1.5},
+			{Key: "input", Value: "$scores"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for n = 1.5")
+		}
+	})
+
+	t.Run("error on non-array input", func(t *testing.T) {
+		strDoc := makeDoc(t, bson.D{{Key: "x", Value: "not-an-array"}})
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$x"},
+		}}}
+		_, err := EvalExpr(expr, strDoc)
+		if err == nil {
+			t.Fatal("expected error for non-array input")
+		}
+	})
+
+	t.Run("null elements in array sorted correctly", func(t *testing.T) {
+		nullDoc := makeDoc(t, bson.D{
+			{Key: "vals", Value: bson.A{int32(10), nil, int32(5)}},
+		})
+		expr := bson.D{{Key: "$maxN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$vals"},
+		}}}
+		got := evalExprHelper(t, expr, nullDoc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		// Descending: 10 > 5 > null
+		want := []interface{}{int32(10), int32(5)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+}
+
+func TestExprMinN(t *testing.T) {
+	doc := makeDoc(t, bson.D{
+		{Key: "scores", Value: bson.A{int32(30), int32(10), int32(50), int32(20), int32(40)}},
+		{Key: "empty", Value: bson.A{}},
+	})
+
+	t.Run("basic min 3", func(t *testing.T) {
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(10), int32(20), int32(30)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("min 1 returns smallest", func(t *testing.T) {
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(1)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(10)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("n greater than array length returns sorted full array", func(t *testing.T) {
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(100)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(10), int32(20), int32(30), int32(40), int32(50)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("duplicates preserved", func(t *testing.T) {
+		dupDoc := makeDoc(t, bson.D{
+			{Key: "vals", Value: bson.A{int32(5), int32(1), int32(1), int32(3)}},
+		})
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$vals"},
+		}}}
+		got := evalExprHelper(t, expr, dupDoc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		want := []interface{}{int32(1), int32(1), int32(3)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("mixed types uses MongoDB comparison order", func(t *testing.T) {
+		mixedDoc := makeDoc(t, bson.D{
+			{Key: "vals", Value: bson.A{int32(10), "hello", true, int32(5)}},
+		})
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$vals"},
+		}}}
+		got := evalExprHelper(t, expr, mixedDoc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		// Ascending: 5 < 10 < "hello" < true
+		want := []interface{}{int32(5), int32(10)}
+		if !reflect.DeepEqual(arr, want) {
+			t.Errorf("got %v, want %v", arr, want)
+		}
+	})
+
+	t.Run("null input returns nil", func(t *testing.T) {
+		nullDoc := makeDoc(t, bson.D{{Key: "x", Value: nil}})
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(2)},
+			{Key: "input", Value: "$x"},
+		}}}
+		got := evalExprHelper(t, expr, nullDoc)
+		if got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("empty array returns empty array", func(t *testing.T) {
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(3)},
+			{Key: "input", Value: "$empty"},
+		}}}
+		got := evalExprHelper(t, expr, doc)
+		arr, ok := got.([]interface{})
+		if !ok {
+			t.Fatalf("expected []interface{}, got %T", got)
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected 0 elements, got %d", len(arr))
+		}
+	})
+
+	t.Run("error on n = 0", func(t *testing.T) {
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(0)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for n = 0")
+		}
+	})
+
+	t.Run("error on negative n", func(t *testing.T) {
+		expr := bson.D{{Key: "$minN", Value: bson.D{
+			{Key: "n", Value: int32(-1)},
+			{Key: "input", Value: "$scores"},
+		}}}
+		_, err := EvalExpr(expr, doc)
+		if err == nil {
+			t.Fatal("expected error for negative n")
+		}
+	})
+}
