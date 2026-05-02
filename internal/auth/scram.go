@@ -1,4 +1,4 @@
-// Package auth implements SCRAM-SHA-256 authentication per RFC 5802.
+// Package auth implements SCRAM-SHA-256 and SCRAM-SHA-1 authentication per RFC 5802.
 package auth
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/inder/salvobase/internal/storage"
 )
 
-// Manager handles SCRAM-SHA-256 authentication conversations.
+// Manager handles SCRAM-SHA-256 and SCRAM-SHA-1 authentication conversations.
 // It is safe for concurrent use.
 type Manager struct {
 	users  storage.UserStore
@@ -63,8 +63,7 @@ func (m *Manager) cleanupLoop() {
 }
 
 // SASLStart handles the initial saslStart command.
-// mechanism must be "SCRAM-SHA-256" (SCRAM-SHA-1 is accepted for compat but
-// the server always uses SHA-256 credentials).
+// mechanism must be "SCRAM-SHA-256" or "SCRAM-SHA-1".
 // payload is the SCRAM client-first-message: n,,n=<username>,r=<nonce>
 // Returns (serverFirstMessage, conversationID, error).
 func (m *Manager) SASLStart(db, mechanism string, payload []byte) ([]byte, int32, error) {
@@ -73,15 +72,15 @@ func (m *Manager) SASLStart(db, mechanism string, payload []byte) ([]byte, int32
 		return nil, 0, fmt.Errorf("unsupported SASL mechanism: %s", mechanism)
 	}
 
+	useSHA1 := mech == "SCRAM-SHA-1"
+
 	// Parse the username from the client-first-message.
-	// Format: n,,n=<username>,r=<nonce>
-	// or: n,a=<authzid>,n=<username>,r=<nonce>
 	username, err := parseUsernameFromClientFirst(string(payload))
 	if err != nil {
 		return nil, 0, fmt.Errorf("SASL: failed to parse client-first-message: %w", err)
 	}
 
-	// Build credential lookup function that fetches SCRAM credentials for this db.
+	// Build credential lookup function that fetches the right SCRAM credentials.
 	credLookup := func(name string) (scram.StoredCredentials, error) {
 		user, ok, lookupErr := m.users.GetUser(db, name)
 		if lookupErr != nil {
@@ -89,6 +88,19 @@ func (m *Manager) SASLStart(db, mechanism string, payload []byte) ([]byte, int32
 		}
 		if !ok {
 			return scram.StoredCredentials{}, fmt.Errorf("authentication failed")
+		}
+		if useSHA1 {
+			if user.StoredKeySHA1 == nil {
+				return scram.StoredCredentials{}, fmt.Errorf("authentication failed")
+			}
+			return scram.StoredCredentials{
+				KeyFactors: scram.KeyFactors{
+					Salt:  string(user.SaltSHA1),
+					Iters: user.IterCountSHA1,
+				},
+				StoredKey: user.StoredKeySHA1,
+				ServerKey: user.ServerKeySHA1,
+			}, nil
 		}
 		return scram.StoredCredentials{
 			KeyFactors: scram.KeyFactors{
@@ -100,7 +112,11 @@ func (m *Manager) SASLStart(db, mechanism string, payload []byte) ([]byte, int32
 		}, nil
 	}
 
-	serverSCRAM, err := scram.SHA256.NewServer(credLookup)
+	hashGen := scram.SHA256
+	if useSHA1 {
+		hashGen = scram.SHA1
+	}
+	serverSCRAM, err := hashGen.NewServer(credLookup)
 	if err != nil {
 		return nil, 0, fmt.Errorf("SASL: failed to create SCRAM server: %w", err)
 	}

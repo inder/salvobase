@@ -325,18 +325,27 @@ type User struct {
 	ServerKey  []byte   `json:"serverKey"` // SCRAM-SHA-256 ServerKey
 	Salt       []byte   `json:"salt"`      // SCRAM-SHA-256 salt
 	IterCount  int      `json:"iterCount"` // SCRAM-SHA-256 iteration count
-	Roles      []Role   `json:"roles"`
-	CustomData bson.Raw `json:"customData,omitempty"`
+	// SCRAM-SHA-1 credentials (stored alongside SHA-256 for dual-mechanism support)
+	StoredKeySHA1 []byte   `json:"storedKeySHA1,omitempty"`
+	ServerKeySHA1 []byte   `json:"serverKeySHA1,omitempty"`
+	SaltSHA1      []byte   `json:"saltSHA1,omitempty"`
+	IterCountSHA1 int      `json:"iterCountSHA1"`
+	Roles         []Role   `json:"roles"`
+	CustomData    bson.Raw `json:"customData,omitempty"`
 }
 
 // UserUpdate is used to update mutable user fields.
 type UserUpdate struct {
-	StoredKey  []byte
-	ServerKey  []byte
-	Salt       []byte
-	IterCount  int
-	Roles      []Role
-	CustomData bson.Raw
+	StoredKey     []byte
+	ServerKey     []byte
+	Salt          []byte
+	IterCount     int
+	StoredKeySHA1 []byte
+	ServerKeySHA1 []byte
+	SaltSHA1      []byte
+	IterCountSHA1 int
+	Roles         []Role
+	CustomData    bson.Raw
 }
 
 // Role is a database role assignment.
