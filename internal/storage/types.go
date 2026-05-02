@@ -318,13 +318,13 @@ type MemStats struct {
 
 // User is a database user.
 type User struct {
-	ID         string   `json:"id"`
-	DB         string   `json:"db"`
-	Username   string   `json:"user"`
-	StoredKey  []byte   `json:"storedKey"` // SCRAM-SHA-256 StoredKey
-	ServerKey  []byte   `json:"serverKey"` // SCRAM-SHA-256 ServerKey
-	Salt       []byte   `json:"salt"`      // SCRAM-SHA-256 salt
-	IterCount  int      `json:"iterCount"` // SCRAM-SHA-256 iteration count
+	ID        string `json:"id"`
+	DB        string `json:"db"`
+	Username  string `json:"user"`
+	StoredKey []byte `json:"storedKey"` // SCRAM-SHA-256 StoredKey
+	ServerKey []byte `json:"serverKey"` // SCRAM-SHA-256 ServerKey
+	Salt      []byte `json:"salt"`      // SCRAM-SHA-256 salt
+	IterCount int    `json:"iterCount"` // SCRAM-SHA-256 iteration count
 	// SCRAM-SHA-1 credentials (stored alongside SHA-256 for dual-mechanism support)
 	StoredKeySHA1 []byte   `json:"storedKeySHA1,omitempty"`
 	ServerKeySHA1 []byte   `json:"serverKeySHA1,omitempty"`

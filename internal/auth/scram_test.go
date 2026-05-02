@@ -106,10 +106,10 @@ type mockUserStore struct {
 	users map[string]storage.User
 }
 
-func (m *mockUserStore) CreateUser(u storage.User) error          { return nil }
+func (m *mockUserStore) CreateUser(u storage.User) error                     { return nil }
 func (m *mockUserStore) UpdateUser(string, string, storage.UserUpdate) error { return nil }
-func (m *mockUserStore) DeleteUser(string, string) error          { return nil }
-func (m *mockUserStore) ListUsers(string) ([]storage.User, error) { return nil, nil }
+func (m *mockUserStore) DeleteUser(string, string) error                     { return nil }
+func (m *mockUserStore) ListUsers(string) ([]storage.User, error)            { return nil, nil }
 func (m *mockUserStore) HasUser(db, username string) (bool, error) {
 	_, ok := m.users[db+"."+username]
 	return ok, nil
@@ -331,9 +331,9 @@ func TestMechanismNegotiation(t *testing.T) {
 // TestParseUsernameFromClientFirst covers the username parser.
 func TestParseUsernameFromClientFirst(t *testing.T) {
 	tests := []struct {
-		input    string
-		want     string
-		wantErr  bool
+		input   string
+		want    string
+		wantErr bool
 	}{
 		{"n,,n=alice,r=rOprNGfwEbeRWgbNEkqO", "alice", false},
 		{"n,,n=bob=3Dspecial,r=nonce", "bob=special", false},
