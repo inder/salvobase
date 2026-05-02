@@ -2109,7 +2109,10 @@ func TestStageFillLOCFReverseSortOrder(t *testing.T) {
 
 	for i, doc := range result {
 		d := decodeResult(t, doc)
-		id := getFieldD(d, "_id").(int32)
+		id, ok := getFieldD(d, "_id").(int32)
+		if !ok {
+			t.Fatalf("result[%d]: _id is not int32: %T", i, getFieldD(d, "_id"))
+		}
 		v := getFieldD(d, "val")
 		want := expectedByID[id]
 		if v != want {
