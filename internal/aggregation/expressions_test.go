@@ -2392,6 +2392,71 @@ func TestExprDateFromParts(t *testing.T) {
 	})
 }
 
+// ─── Timestamp expressions ────────────────────────────────────────────────────
+
+func TestExprTsSecond(t *testing.T) {
+	doc := makeDoc(t, bson.D{{Key: "ts", Value: bson.Timestamp{T: 1704067200, I: 42}}})
+
+	tests := []struct {
+		name    string
+		expr    interface{}
+		want    interface{}
+		wantErr bool
+	}{
+		{"basic", bson.D{{Key: "$tsSecond", Value: "$ts"}}, int64(1704067200), false},
+		{"zero", bson.D{{Key: "$tsSecond", Value: bson.Timestamp{T: 0, I: 0}}}, int64(0), false},
+		{"max uint32", bson.D{{Key: "$tsSecond", Value: bson.Timestamp{T: 4294967295, I: 1}}}, int64(4294967295), false},
+		{"null input", bson.D{{Key: "$tsSecond", Value: nil}}, nil, false},
+		{"missing field", bson.D{{Key: "$tsSecond", Value: "$nonexistent"}}, nil, false},
+		{"wrong type string", bson.D{{Key: "$tsSecond", Value: "hello"}}, nil, true},
+		{"wrong type int", bson.D{{Key: "$tsSecond", Value: int32(42)}}, nil, true},
+		{"wrong type date", bson.D{{Key: "$tsSecond", Value: bson.DateTime(1704067200000)}}, nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := EvalExpr(tt.expr, doc)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestExprTsIncrement(t *testing.T) {
+	doc := makeDoc(t, bson.D{{Key: "ts", Value: bson.Timestamp{T: 1704067200, I: 42}}})
+
+	tests := []struct {
+		name    string
+		expr    interface{}
+		want    interface{}
+		wantErr bool
+	}{
+		{"basic", bson.D{{Key: "$tsIncrement", Value: "$ts"}}, int64(42), false},
+		{"zero increment", bson.D{{Key: "$tsIncrement", Value: bson.Timestamp{T: 100, I: 0}}}, int64(0), false},
+		{"max uint32", bson.D{{Key: "$tsIncrement", Value: bson.Timestamp{T: 0, I: 4294967295}}}, int64(4294967295), false},
+		{"null input", bson.D{{Key: "$tsIncrement", Value: nil}}, nil, false},
+		{"missing field", bson.D{{Key: "$tsIncrement", Value: "$nonexistent"}}, nil, false},
+		{"wrong type string", bson.D{{Key: "$tsIncrement", Value: "hello"}}, nil, true},
+		{"wrong type int", bson.D{{Key: "$tsIncrement", Value: int64(42)}}, nil, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := EvalExpr(tt.expr, doc)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
+
 // ─── Bitwise expressions ─────────────────────────────────────────────────────
 
 func TestExprBitAnd(t *testing.T) {
