@@ -157,7 +157,11 @@ func buildStage(spec bson.Raw, engine storage.Engine, db string) (Stage, error) 
 		return buildDensifyStage(densifyDoc)
 
 	case "$fill":
-		return nil, fmt.Errorf("$fill is not implemented")
+		fillDoc, ok := stageVal.DocumentOK()
+		if !ok {
+			return nil, fmt.Errorf("$fill requires a document")
+		}
+		return buildFillStage(fillDoc)
 
 	case "$geoNear":
 		return nil, fmt.Errorf("$geoNear is not implemented")
@@ -2429,6 +2433,378 @@ func (s *densifyStage) densifyPartition(docs []bson.Raw, partKey bson.D, lo, hi 
 	}
 
 	return result, nil
+}
+
+// ─── $fill ────────────────────────────────────────────────────────────────────
+
+type fillIndexedDoc struct {
+	idx int
+	doc bson.Raw
+}
+
+type fillOutputField struct {
+	field  string
+	method string      // "linear", "locf", or "" (value mode)
+	value  interface{} // used when method is "" — a bson.RawValue expression
+}
+
+type fillStage struct {
+	partitionBy       interface{} // expression (bson.RawValue) or nil
+	partitionByFields []string
+	sortBy            bson.Raw
+	output            []fillOutputField
+}
+
+func buildFillStage(spec bson.Raw) (*fillStage, error) {
+	s := &fillStage{}
+
+	// Parse partitionBy (expression).
+	if pbVal, err := spec.LookupErr("partitionBy"); err == nil {
+		s.partitionBy = pbVal
+	}
+
+	// Parse partitionByFields (array of strings).
+	if pbfVal, err := spec.LookupErr("partitionByFields"); err == nil {
+		if pbfVal.Type != bson.TypeArray {
+			return nil, fmt.Errorf("$fill partitionByFields must be an array")
+		}
+		arr := pbfVal.Array()
+		arrVals, _ := arr.Values()
+		for _, rv := range arrVals {
+			f, ok := rv.StringValueOK()
+			if !ok {
+				return nil, fmt.Errorf("$fill partitionByFields elements must be strings")
+			}
+			s.partitionByFields = append(s.partitionByFields, f)
+		}
+	}
+
+	// Parse sortBy (document).
+	if sbVal, err := spec.LookupErr("sortBy"); err == nil {
+		sbDoc, ok := sbVal.DocumentOK()
+		if !ok {
+			return nil, fmt.Errorf("$fill sortBy must be a document")
+		}
+		s.sortBy = sbDoc
+	}
+
+	// Parse output (required).
+	outVal, err := spec.LookupErr("output")
+	if err != nil {
+		return nil, fmt.Errorf("$fill requires 'output'")
+	}
+	outDoc, ok := outVal.DocumentOK()
+	if !ok {
+		return nil, fmt.Errorf("$fill output must be a document")
+	}
+
+	outElems, err := outDoc.Elements()
+	if err != nil {
+		return nil, fmt.Errorf("invalid $fill output: %w", err)
+	}
+
+	for _, elem := range outElems {
+		fieldName := elem.Key()
+		fieldVal := elem.Value()
+
+		fof := fillOutputField{field: fieldName}
+
+		fieldDoc, ok := fieldVal.DocumentOK()
+		if !ok {
+			return nil, fmt.Errorf("$fill output field '%s' must be a document", fieldName)
+		}
+
+		if mVal, mErr := fieldDoc.LookupErr("method"); mErr == nil {
+			mStr, ok := mVal.StringValueOK()
+			if !ok {
+				return nil, fmt.Errorf("$fill output '%s' method must be a string", fieldName)
+			}
+			if mStr != "linear" && mStr != "locf" {
+				return nil, fmt.Errorf("$fill output '%s' unknown method '%s'", fieldName, mStr)
+			}
+			if mStr == "linear" && len(s.sortBy) == 0 {
+				return nil, fmt.Errorf("$fill with method 'linear' requires sortBy")
+			}
+			if mStr == "locf" && len(s.sortBy) == 0 {
+				return nil, fmt.Errorf("$fill with method 'locf' requires sortBy")
+			}
+			fof.method = mStr
+		} else if vVal, vErr := fieldDoc.LookupErr("value"); vErr == nil {
+			fof.value = vVal
+		} else {
+			return nil, fmt.Errorf("$fill output '%s' requires 'method' or 'value'", fieldName)
+		}
+
+		s.output = append(s.output, fof)
+	}
+
+	if len(s.output) == 0 {
+		return nil, fmt.Errorf("$fill output must specify at least one field")
+	}
+
+	return s, nil
+}
+
+func (s *fillStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
+	if len(docs) == 0 {
+		return docs, nil
+	}
+
+	// Group documents by partition key, preserving original indices.
+	type partition struct {
+		key  string
+		docs []fillIndexedDoc
+	}
+
+	partMap := make(map[string]*partition)
+	var partOrder []string
+
+	for i, doc := range docs {
+		pk, err := s.partitionKeyStr(doc)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := partMap[pk]; !ok {
+			partMap[pk] = &partition{key: pk}
+			partOrder = append(partOrder, pk)
+		}
+		partMap[pk].docs = append(partMap[pk].docs, fillIndexedDoc{idx: i, doc: doc})
+	}
+
+	// Process each partition.
+	result := make([]bson.Raw, len(docs))
+	copy(result, docs)
+
+	for _, pkStr := range partOrder {
+		p := partMap[pkStr]
+
+		// Sort within partition if sortBy is specified.
+		// We embed a temporary index tag into each doc so that after
+		// SortDocuments reorders them, we can recover the original
+		// result-array index for each doc.
+		if len(s.sortBy) > 0 {
+			const tagKey = "__fill_sort_idx"
+			taggedDocs := make([]bson.Raw, len(p.docs))
+			for j, id := range p.docs {
+				d, err := rawToD(id.doc)
+				if err != nil {
+					return nil, err
+				}
+				d = append(d, bson.E{Key: tagKey, Value: int32(j)})
+				raw, err := dToRaw(d)
+				if err != nil {
+					return nil, err
+				}
+				taggedDocs[j] = raw
+			}
+			if err := query.SortDocuments(taggedDocs, s.sortBy); err != nil {
+				return nil, fmt.Errorf("$fill sort failed: %w", err)
+			}
+			origIndices := make([]int, len(p.docs))
+			for j := range p.docs {
+				origIndices[j] = p.docs[j].idx
+			}
+			sorted := make([]fillIndexedDoc, len(taggedDocs))
+			for j, raw := range taggedDocs {
+				d, err := rawToD(raw)
+				if err != nil {
+					return nil, err
+				}
+				tagVal, _ := getDFieldValue(d, tagKey)
+				origJ, _ := toFloat64Interface(tagVal)
+				d = unsetFieldD(d, tagKey)
+				cleanRaw, err := dToRaw(d)
+				if err != nil {
+					return nil, err
+				}
+				sorted[j] = fillIndexedDoc{
+					idx: origIndices[int(origJ)],
+					doc: cleanRaw,
+				}
+			}
+			p.docs = sorted
+		}
+
+		// Fill each output field.
+		for _, fof := range s.output {
+			var err error
+			switch fof.method {
+			case "locf":
+				err = s.fillLOCF(p.docs, fof.field, result)
+			case "linear":
+				err = s.fillLinear(p.docs, fof.field, result)
+			default:
+				err = s.fillValue(p.docs, fof.field, fof.value, result)
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (s *fillStage) partitionKeyStr(doc bson.Raw) (string, error) {
+	if s.partitionBy != nil {
+		val, err := EvalExpr(s.partitionBy, doc)
+		if err != nil {
+			return "", err
+		}
+		b, err := bson.Marshal(bson.D{{Key: "k", Value: val}})
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+
+	if len(s.partitionByFields) > 0 {
+		d, err := rawToD(doc)
+		if err != nil {
+			return "", err
+		}
+		pk := make(bson.D, 0, len(s.partitionByFields))
+		for _, f := range s.partitionByFields {
+			v, _ := getDFieldValue(d, f)
+			pk = append(pk, bson.E{Key: f, Value: v})
+		}
+		b, err := bson.Marshal(pk)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+
+	return "", nil // single partition
+}
+
+func (s *fillStage) isNull(doc bson.Raw, field string) bool {
+	d, err := rawToD(doc)
+	if err != nil {
+		return true
+	}
+	v, ok := getDFieldValue(d, field)
+	return !ok || v == nil
+}
+
+func (s *fillStage) fillValue(partDocs []fillIndexedDoc, field string, value interface{}, result []bson.Raw) error {
+	for _, id := range partDocs {
+		if !s.isNull(id.doc, field) {
+			continue
+		}
+		d, err := rawToD(result[id.idx])
+		if err != nil {
+			return err
+		}
+		val, err := EvalExpr(value, id.doc)
+		if err != nil {
+			return err
+		}
+		d = setFieldD(d, field, val)
+		raw, err := dToRaw(d)
+		if err != nil {
+			return err
+		}
+		result[id.idx] = raw
+	}
+	return nil
+}
+
+func (s *fillStage) fillLOCF(partDocs []fillIndexedDoc, field string, result []bson.Raw) error {
+	var lastKnown interface{}
+	hasLast := false
+
+	for _, id := range partDocs {
+		if !s.isNull(id.doc, field) {
+			d, err := rawToD(id.doc)
+			if err != nil {
+				return err
+			}
+			lastKnown, _ = getDFieldValue(d, field)
+			hasLast = true
+			continue
+		}
+		if !hasLast {
+			continue
+		}
+		d, err := rawToD(result[id.idx])
+		if err != nil {
+			return err
+		}
+		d = setFieldD(d, field, lastKnown)
+		raw, err := dToRaw(d)
+		if err != nil {
+			return err
+		}
+		result[id.idx] = raw
+	}
+	return nil
+}
+
+func (s *fillStage) fillLinear(partDocs []fillIndexedDoc, field string, result []bson.Raw) error {
+	// Collect (position, value) pairs for non-null entries.
+	type point struct {
+		pos int     // index within partDocs
+		val float64 // numeric value
+	}
+	var known []point
+	for i, id := range partDocs {
+		if s.isNull(id.doc, field) {
+			continue
+		}
+		d, err := rawToD(id.doc)
+		if err != nil {
+			return err
+		}
+		v, _ := getDFieldValue(d, field)
+		f, ok := toFloat64Interface(v)
+		if !ok {
+			continue
+		}
+		known = append(known, point{pos: i, val: f})
+	}
+
+	if len(known) < 2 {
+		return nil // not enough points to interpolate
+	}
+
+	// For each null, find surrounding known points and interpolate.
+	ki := 0
+	for i, id := range partDocs {
+		if !s.isNull(id.doc, field) {
+			continue
+		}
+		// Advance ki so known[ki] is the last point <= i.
+		for ki < len(known)-1 && known[ki+1].pos <= i {
+			ki++
+		}
+		// Need a point before and after.
+		if ki >= len(known)-1 || known[ki].pos >= i {
+			// No bracket — before first or after last known.
+			continue
+		}
+		lo := known[ki]
+		hi := known[ki+1]
+		if hi.pos <= lo.pos {
+			continue
+		}
+		// Linear interpolation.
+		frac := float64(i-lo.pos) / float64(hi.pos-lo.pos)
+		interpolated := lo.val + frac*(hi.val-lo.val)
+
+		d, err := rawToD(result[id.idx])
+		if err != nil {
+			return err
+		}
+		d = setFieldD(d, field, interpolated)
+		raw, err := dToRaw(d)
+		if err != nil {
+			return err
+		}
+		result[id.idx] = raw
+	}
+
+	return nil
 }
 
 // ─── bson.D helpers (imported from query package via exported wrappers) ───────

@@ -1,6 +1,7 @@
 package aggregation
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -1892,6 +1893,387 @@ func TestStageDensify(t *testing.T) {
 		_, err = buildDensifyStage(spec)
 		if err == nil {
 			t.Error("expected error for fractional step with date unit")
+		}
+	})
+}
+
+// ─── $fill tests ──────────────────────���───────────────────────────────────────
+
+func TestStageFillValue(t *testing.T) {
+	docs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "score", Value: int32(80)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "score", Value: nil}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "score", Value: int32(95)}}),
+	}
+
+	stageRaw := makeStageRaw(t, "$fill", bson.D{
+		{Key: "output", Value: bson.D{
+			{Key: "score", Value: bson.D{{Key: "value", Value: int32(0)}}},
+		}},
+	})
+
+	stage, err := buildStage(stageRaw, nil, "")
+	if err != nil {
+		t.Fatalf("buildStage: %v", err)
+	}
+
+	result, err := stage.Process(docs)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if len(result) != 4 {
+		t.Fatalf("expected 4 docs, got %d", len(result))
+	}
+
+	// Doc 0: score=80 unchanged.
+	d0 := decodeResult(t, result[0])
+	if v := getFieldD(d0, "score"); v != int32(80) {
+		t.Errorf("doc 0 score: got %v, want 80", v)
+	}
+
+	// Doc 1: missing → filled with 0.
+	d1 := decodeResult(t, result[1])
+	if v := getFieldD(d1, "score"); v != int32(0) {
+		t.Errorf("doc 1 score: got %v (%T), want 0", v, v)
+	}
+
+	// Doc 2: null → filled with 0.
+	d2 := decodeResult(t, result[2])
+	if v := getFieldD(d2, "score"); v != int32(0) {
+		t.Errorf("doc 2 score: got %v (%T), want 0", v, v)
+	}
+
+	// Doc 3: score=95 unchanged.
+	d3 := decodeResult(t, result[3])
+	if v := getFieldD(d3, "score"); v != int32(95) {
+		t.Errorf("doc 3 score: got %v, want 95", v)
+	}
+}
+
+func TestStageFillLOCF(t *testing.T) {
+	docs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "ts", Value: int32(1)}, {Key: "val", Value: int32(10)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "ts", Value: int32(2)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "ts", Value: int32(3)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "ts", Value: int32(4)}, {Key: "val", Value: int32(40)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(5)}, {Key: "ts", Value: int32(5)}}),
+	}
+
+	stageRaw := makeStageRaw(t, "$fill", bson.D{
+		{Key: "sortBy", Value: bson.D{{Key: "ts", Value: int32(1)}}},
+		{Key: "output", Value: bson.D{
+			{Key: "val", Value: bson.D{{Key: "method", Value: "locf"}}},
+		}},
+	})
+
+	stage, err := buildStage(stageRaw, nil, "")
+	if err != nil {
+		t.Fatalf("buildStage: %v", err)
+	}
+
+	result, err := stage.Process(docs)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	expected := []interface{}{int32(10), int32(10), int32(10), int32(40), int32(40)}
+	for i, doc := range result {
+		d := decodeResult(t, doc)
+		v := getFieldD(d, "val")
+		if v != expected[i] {
+			t.Errorf("doc %d val: got %v (%T), want %v", i, v, v, expected[i])
+		}
+	}
+}
+
+func TestStageFillLinear(t *testing.T) {
+	docs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "ts", Value: int32(1)}, {Key: "val", Value: float64(0)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "ts", Value: int32(2)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "ts", Value: int32(3)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "ts", Value: int32(4)}, {Key: "val", Value: float64(30)}}),
+	}
+
+	stageRaw := makeStageRaw(t, "$fill", bson.D{
+		{Key: "sortBy", Value: bson.D{{Key: "ts", Value: int32(1)}}},
+		{Key: "output", Value: bson.D{
+			{Key: "val", Value: bson.D{{Key: "method", Value: "linear"}}},
+		}},
+	})
+
+	stage, err := buildStage(stageRaw, nil, "")
+	if err != nil {
+		t.Fatalf("buildStage: %v", err)
+	}
+
+	result, err := stage.Process(docs)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	// Expect linear interpolation: 0, 10, 20, 30
+	expected := []float64{0, 10, 20, 30}
+	for i, doc := range result {
+		d := decodeResult(t, doc)
+		v := getFieldD(d, "val")
+		f, ok := toFloat64Interface(v)
+		if !ok {
+			t.Errorf("doc %d: val not numeric: %v (%T)", i, v, v)
+			continue
+		}
+		if math.Abs(f-expected[i]) > 0.001 {
+			t.Errorf("doc %d val: got %f, want %f", i, f, expected[i])
+		}
+	}
+}
+
+func TestStageFillPartitioned(t *testing.T) {
+	docs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "group", Value: "a"}, {Key: "ts", Value: int32(1)}, {Key: "val", Value: int32(10)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "group", Value: "a"}, {Key: "ts", Value: int32(2)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "group", Value: "b"}, {Key: "ts", Value: int32(1)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "group", Value: "b"}, {Key: "ts", Value: int32(2)}, {Key: "val", Value: int32(99)}}),
+	}
+
+	stageRaw := makeStageRaw(t, "$fill", bson.D{
+		{Key: "partitionByFields", Value: bson.A{"group"}},
+		{Key: "sortBy", Value: bson.D{{Key: "ts", Value: int32(1)}}},
+		{Key: "output", Value: bson.D{
+			{Key: "val", Value: bson.D{{Key: "method", Value: "locf"}}},
+		}},
+	})
+
+	stage, err := buildStage(stageRaw, nil, "")
+	if err != nil {
+		t.Fatalf("buildStage: %v", err)
+	}
+
+	result, err := stage.Process(docs)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	// Group a: [10, 10(filled)], Group b: [nil(no prior), 99]
+	d1 := decodeResult(t, result[1])
+	if v := getFieldD(d1, "val"); v != int32(10) {
+		t.Errorf("doc 1 (group a, ts 2): got %v, want 10", v)
+	}
+
+	// Doc 2 (group b, ts 1): no prior value → stays null/missing.
+	d2 := decodeResult(t, result[2])
+	v2 := getFieldD(d2, "val")
+	if v2 != nil {
+		t.Errorf("doc 2 (group b, ts 1): got %v, want nil (no prior in partition)", v2)
+	}
+
+	d3 := decodeResult(t, result[3])
+	if v := getFieldD(d3, "val"); v != int32(99) {
+		t.Errorf("doc 3 (group b, ts 2): got %v, want 99", v)
+	}
+}
+
+func TestStageFillLOCFReverseSortOrder(t *testing.T) {
+	// Documents arrive in REVERSE sort order — exercises the index remapping logic.
+	docs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "ts", Value: int32(5)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "ts", Value: int32(4)}, {Key: "val", Value: int32(40)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "ts", Value: int32(3)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "ts", Value: int32(2)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(5)}, {Key: "ts", Value: int32(1)}, {Key: "val", Value: int32(10)}}),
+	}
+
+	stageRaw := makeStageRaw(t, "$fill", bson.D{
+		{Key: "sortBy", Value: bson.D{{Key: "ts", Value: int32(1)}}},
+		{Key: "output", Value: bson.D{
+			{Key: "val", Value: bson.D{{Key: "method", Value: "locf"}}},
+		}},
+	})
+
+	stage, err := buildStage(stageRaw, nil, "")
+	if err != nil {
+		t.Fatalf("buildStage: %v", err)
+	}
+
+	result, err := stage.Process(docs)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	// After sorting by ts ascending: ts=1(val=10), ts=2(nil), ts=3(nil), ts=4(val=40), ts=5(nil)
+	// LOCF: 10, 10, 10, 40, 40
+	// But result order matches input order (by _id), so:
+	// _id=1 (ts=5) → 40, _id=2 (ts=4) → 40, _id=3 (ts=3) → 10, _id=4 (ts=2) → 10, _id=5 (ts=1) → 10
+	expectedByID := map[int32]int32{1: 40, 2: 40, 3: 10, 4: 10, 5: 10}
+
+	for i, doc := range result {
+		d := decodeResult(t, doc)
+		id := getFieldD(d, "_id").(int32)
+		v := getFieldD(d, "val")
+		want := expectedByID[id]
+		if v != want {
+			t.Errorf("result[%d] _id=%d: val got %v (%T), want %d", i, id, v, v, want)
+		}
+	}
+}
+
+func TestStageFillLinearEdges(t *testing.T) {
+	// Nulls before first and after last known value should NOT be filled.
+	docs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "ts", Value: int32(1)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "ts", Value: int32(2)}, {Key: "val", Value: float64(10)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(3)}, {Key: "ts", Value: int32(3)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(4)}, {Key: "ts", Value: int32(4)}, {Key: "val", Value: float64(30)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(5)}, {Key: "ts", Value: int32(5)}}),
+	}
+
+	stageRaw := makeStageRaw(t, "$fill", bson.D{
+		{Key: "sortBy", Value: bson.D{{Key: "ts", Value: int32(1)}}},
+		{Key: "output", Value: bson.D{
+			{Key: "val", Value: bson.D{{Key: "method", Value: "linear"}}},
+		}},
+	})
+
+	stage, err := buildStage(stageRaw, nil, "")
+	if err != nil {
+		t.Fatalf("buildStage: %v", err)
+	}
+
+	result, err := stage.Process(docs)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	// Doc 0 (ts=1): before first known → stays nil.
+	d0 := decodeResult(t, result[0])
+	if v := getFieldD(d0, "val"); v != nil {
+		t.Errorf("doc 0: expected nil (before first known), got %v", v)
+	}
+
+	// Doc 2 (ts=3): between known 10 and 30 → interpolated to 20.
+	d2 := decodeResult(t, result[2])
+	f2, ok := toFloat64Interface(getFieldD(d2, "val"))
+	if !ok || math.Abs(f2-20) > 0.001 {
+		t.Errorf("doc 2: expected 20, got %v", getFieldD(d2, "val"))
+	}
+
+	// Doc 4 (ts=5): after last known → stays nil.
+	d4 := decodeResult(t, result[4])
+	if v := getFieldD(d4, "val"); v != nil {
+		t.Errorf("doc 4: expected nil (after last known), got %v", v)
+	}
+}
+
+func TestStageFillNoNulls(t *testing.T) {
+	docs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(1)}, {Key: "val", Value: int32(10)}}),
+		makeRaw(t, bson.D{{Key: "_id", Value: int32(2)}, {Key: "val", Value: int32(20)}}),
+	}
+
+	stageRaw := makeStageRaw(t, "$fill", bson.D{
+		{Key: "output", Value: bson.D{
+			{Key: "val", Value: bson.D{{Key: "value", Value: int32(0)}}},
+		}},
+	})
+
+	stage, err := buildStage(stageRaw, nil, "")
+	if err != nil {
+		t.Fatalf("buildStage: %v", err)
+	}
+
+	result, err := stage.Process(docs)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	// No nulls → no-op.
+	d0 := decodeResult(t, result[0])
+	if v := getFieldD(d0, "val"); v != int32(10) {
+		t.Errorf("doc 0: got %v, want 10", v)
+	}
+	d1 := decodeResult(t, result[1])
+	if v := getFieldD(d1, "val"); v != int32(20) {
+		t.Errorf("doc 1: got %v, want 20", v)
+	}
+}
+
+func TestStageFillEmptyInput(t *testing.T) {
+	stageRaw := makeStageRaw(t, "$fill", bson.D{
+		{Key: "output", Value: bson.D{
+			{Key: "val", Value: bson.D{{Key: "value", Value: int32(0)}}},
+		}},
+	})
+
+	stage, err := buildStage(stageRaw, nil, "")
+	if err != nil {
+		t.Fatalf("buildStage: %v", err)
+	}
+
+	result, err := stage.Process(nil)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if len(result) != 0 {
+		t.Errorf("expected 0 docs, got %d", len(result))
+	}
+}
+
+func TestStageFillBuildErrors(t *testing.T) {
+	t.Run("missing output", func(t *testing.T) {
+		spec, _ := bson.Marshal(bson.D{{Key: "sortBy", Value: bson.D{{Key: "ts", Value: 1}}}})
+		_, err := buildFillStage(bson.Raw(spec))
+		if err == nil {
+			t.Error("expected error for missing output")
+		}
+	})
+
+	t.Run("unknown method", func(t *testing.T) {
+		spec, _ := bson.Marshal(bson.D{
+			{Key: "output", Value: bson.D{
+				{Key: "val", Value: bson.D{{Key: "method", Value: "bogus"}}},
+			}},
+		})
+		_, err := buildFillStage(bson.Raw(spec))
+		if err == nil {
+			t.Error("expected error for unknown method")
+		}
+	})
+
+	t.Run("locf without sortBy", func(t *testing.T) {
+		spec, _ := bson.Marshal(bson.D{
+			{Key: "output", Value: bson.D{
+				{Key: "val", Value: bson.D{{Key: "method", Value: "locf"}}},
+			}},
+		})
+		_, err := buildFillStage(bson.Raw(spec))
+		if err == nil {
+			t.Error("expected error for locf without sortBy")
+		}
+	})
+
+	t.Run("linear without sortBy", func(t *testing.T) {
+		spec, _ := bson.Marshal(bson.D{
+			{Key: "output", Value: bson.D{
+				{Key: "val", Value: bson.D{{Key: "method", Value: "linear"}}},
+			}},
+		})
+		_, err := buildFillStage(bson.Raw(spec))
+		if err == nil {
+			t.Error("expected error for linear without sortBy")
+		}
+	})
+
+	t.Run("no method or value", func(t *testing.T) {
+		spec, _ := bson.Marshal(bson.D{
+			{Key: "output", Value: bson.D{
+				{Key: "val", Value: bson.D{{Key: "foo", Value: "bar"}}},
+			}},
+		})
+		_, err := buildFillStage(bson.Raw(spec))
+		if err == nil {
+			t.Error("expected error when neither method nor value specified")
 		}
 	})
 }
