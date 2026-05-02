@@ -377,6 +377,12 @@ func evalOperatorExpr(op string, arg bson.RawValue, doc bson.Raw) (interface{}, 
 	case "$dateFromParts":
 		return evalDateFromParts(arg, doc)
 
+	// ── Timestamp ────────────────────────────────────────────────────────────
+	case "$tsSecond":
+		return evalTsComponent(arg, doc, true)
+	case "$tsIncrement":
+		return evalTsComponent(arg, doc, false)
+
 	// ── Comparison ───────────────────────────────────────────────────────────
 	case "$cmp":
 		return evalCmpExpr(arg, doc)
@@ -2831,6 +2837,36 @@ func mongoDateFormat(t time.Time, format string) string {
 		result = strings.ReplaceAll(result, k, v)
 	}
 	return result
+}
+
+// ─── Timestamp expressions ────────────────────────────────────────────────────
+
+// evalTsComponent extracts the seconds (second=true) or increment (second=false)
+// component from a BSON Timestamp value.
+func evalTsComponent(arg bson.RawValue, doc bson.Raw, second bool) (interface{}, error) {
+	val, err := EvalExpr(arg, doc)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return nil, nil
+	}
+	rv := interfaceToRawValue(val)
+	if rv.Type == bson.TypeNull {
+		return nil, nil
+	}
+	if rv.Type != bson.TypeTimestamp {
+		name := "$tsSecond"
+		if !second {
+			name = "$tsIncrement"
+		}
+		return nil, fmt.Errorf("%s requires a timestamp input, got %s", name, query.BsonTypeName(rv.Type))
+	}
+	t, i := rv.Timestamp()
+	if second {
+		return int64(t), nil
+	}
+	return int64(i), nil
 }
 
 // ─── Comparison expressions ───────────────────────────────────────────────────
