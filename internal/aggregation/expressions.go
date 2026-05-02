@@ -437,6 +437,16 @@ func evalOperatorExpr(op string, arg bson.RawValue, doc bson.Raw) (interface{}, 
 	case "$allElementsTrue":
 		return evalAnyAllElementsTrue(arg, doc, true)
 
+	// ── Bitwise ─────────────────────────────────────────────────────────────
+	case "$bitAnd":
+		return evalBitwise(arg, doc, "$bitAnd")
+	case "$bitOr":
+		return evalBitwise(arg, doc, "$bitOr")
+	case "$bitXor":
+		return evalBitwise(arg, doc, "$bitXor")
+	case "$bitNot":
+		return evalBitNot(arg, doc)
+
 	// ── Miscellaneous ────────────────────────────────────────────────────────
 	case "$rand":
 		if arg.Type != bson.TypeEmbeddedDocument {
@@ -3621,6 +3631,111 @@ func appendField(doc bson.Raw, key string, val bson.RawValue) bson.Raw {
 		return doc
 	}
 	return bson.Raw(raw)
+}
+
+// ─── Bitwise expressions ─────────────────────────────────────────────────────
+
+// toInt64ForBitwise converts a value to int64 for bitwise operations.
+// Returns (value, isNull, error). Only int32 and int64 are accepted.
+func toInt64ForBitwise(v interface{}, op string) (int64, bool, error) {
+	if v == nil {
+		return 0, true, nil
+	}
+	switch n := v.(type) {
+	case int32:
+		return int64(n), false, nil
+	case int64:
+		return n, false, nil
+	default:
+		return 0, false, fmt.Errorf("%s only supports int types, got %T", op, v)
+	}
+}
+
+// evalBitwise implements $bitAnd, $bitOr, $bitXor (variadic, 2+ args).
+// Type-checks all arguments before null-propagating (matches MongoDB behavior).
+func evalBitwise(arg bson.RawValue, doc bson.Raw, op string) (interface{}, error) {
+	args, err := evalArgs(arg, doc)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) < 2 {
+		return nil, fmt.Errorf("%s requires at least 2 arguments, got %d", op, len(args))
+	}
+
+	// First pass: type-check all args and detect nulls.
+	vals := make([]int64, len(args))
+	hasNull := false
+	allInt32 := true
+	for i, a := range args {
+		v, isNull, err := toInt64ForBitwise(a, op)
+		if err != nil {
+			return nil, err
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		vals[i] = v
+		if _, ok := a.(int32); !ok {
+			allInt32 = false
+		}
+	}
+	if hasNull {
+		return nil, nil
+	}
+
+	// Second pass: compute the result.
+	result := vals[0]
+	for i := 1; i < len(vals); i++ {
+		switch op {
+		case "$bitAnd":
+			result &= vals[i]
+		case "$bitOr":
+			result |= vals[i]
+		case "$bitXor":
+			result ^= vals[i]
+		}
+	}
+
+	if allInt32 {
+		return int32(result), nil
+	}
+	return result, nil
+}
+
+// evalBitNot implements $bitNot (unary, exactly 1 argument).
+func evalBitNot(arg bson.RawValue, doc bson.Raw) (interface{}, error) {
+	// $bitNot accepts a single expression, not necessarily in an array
+	var val interface{}
+	var err error
+	if arg.Type == bson.TypeArray {
+		args, err := evalArgs(arg, doc)
+		if err != nil {
+			return nil, err
+		}
+		if len(args) != 1 {
+			return nil, fmt.Errorf("$bitNot requires exactly 1 argument, got %d", len(args))
+		}
+		val = args[0]
+	} else {
+		val, err = EvalExpr(arg, doc)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	n, isNull, err := toInt64ForBitwise(val, "$bitNot")
+	if err != nil {
+		return nil, err
+	}
+	if isNull {
+		return nil, nil
+	}
+
+	if _, ok := val.(int32); ok {
+		return ^int32(n), nil
+	}
+	return ^n, nil
 }
 
 // big.Int wrapper for Decimal128 (simplified)
