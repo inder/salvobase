@@ -70,6 +70,18 @@ func (s *userStore) UpdateUser(db, username string, update UserUpdate) error {
 		if update.IterCount != 0 {
 			u.IterCount = update.IterCount
 		}
+		if update.StoredKeySHA1 != nil {
+			u.StoredKeySHA1 = update.StoredKeySHA1
+		}
+		if update.ServerKeySHA1 != nil {
+			u.ServerKeySHA1 = update.ServerKeySHA1
+		}
+		if update.SaltSHA1 != nil {
+			u.SaltSHA1 = update.SaltSHA1
+		}
+		if update.IterCountSHA1 != 0 {
+			u.IterCountSHA1 = update.IterCountSHA1
+		}
 		if update.Roles != nil {
 			u.Roles = update.Roles
 		}

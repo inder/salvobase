@@ -151,15 +151,24 @@ func handleCreateUser(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, fmt.Errorf("createUser: failed to hash password: %w", err)
 	}
 
+	storedKeySHA1, serverKeySHA1, saltSHA1, iterCountSHA1, err := auth.HashPasswordSHA1(password)
+	if err != nil {
+		return nil, fmt.Errorf("createUser: failed to hash password (SHA-1): %w", err)
+	}
+
 	user := storage.User{
-		ID:        uuid.New().String(),
-		DB:        ctx.DB,
-		Username:  username,
-		StoredKey: storedKey,
-		ServerKey: serverKey,
-		Salt:      salt,
-		IterCount: iterCount,
-		Roles:     roles,
+		ID:            uuid.New().String(),
+		DB:            ctx.DB,
+		Username:      username,
+		StoredKey:     storedKey,
+		ServerKey:     serverKey,
+		Salt:          salt,
+		IterCount:     iterCount,
+		StoredKeySHA1: storedKeySHA1,
+		ServerKeySHA1: serverKeySHA1,
+		SaltSHA1:      saltSHA1,
+		IterCountSHA1: iterCountSHA1,
+		Roles:         roles,
 	}
 
 	if err := ctx.Engine.Users().CreateUser(user); err != nil {
@@ -209,7 +218,7 @@ func handleUpdateUser(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 
 	update := storage.UserUpdate{}
 
-	// Update password if provided.
+	// Update password if provided — regenerate both SHA-256 and SHA-1 credentials.
 	if password := lookupStringField(cmd, "pwd"); password != "" {
 		storedKey, serverKey, salt, iterCount, err := auth.HashPassword(password)
 		if err != nil {
@@ -219,6 +228,15 @@ func handleUpdateUser(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		update.ServerKey = serverKey
 		update.Salt = salt
 		update.IterCount = iterCount
+
+		storedKeySHA1, serverKeySHA1, saltSHA1, iterCountSHA1, err := auth.HashPasswordSHA1(password)
+		if err != nil {
+			return nil, fmt.Errorf("updateUser: failed to hash password (SHA-1): %w", err)
+		}
+		update.StoredKeySHA1 = storedKeySHA1
+		update.ServerKeySHA1 = serverKeySHA1
+		update.SaltSHA1 = saltSHA1
+		update.IterCountSHA1 = iterCountSHA1
 	}
 
 	// Update roles if provided.

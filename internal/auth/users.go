@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // SCRAM-SHA-1 requires SHA-1 per RFC 5802
 	"crypto/sha256"
 
 	"golang.org/x/crypto/pbkdf2"
@@ -32,6 +33,32 @@ func HashPassword(password string) (storedKey, serverKey, salt []byte, iterCount
 
 	// ServerKey := HMAC(SaltedPassword, "Server Key")
 	serverKeyHMAC := hmac.New(sha256.New, saltedPassword)
+	serverKeyHMAC.Write([]byte("Server Key"))
+	serverKey = serverKeyHMAC.Sum(nil)
+
+	return storedKey, serverKey, salt, iterCount, nil
+}
+
+// HashPasswordSHA1 derives SCRAM-SHA-1 stored credentials from a plaintext password.
+// Uses SHA-1 per RFC 5802 — required for older MongoDB drivers.
+// Note: SHA-1 collision weaknesses do not apply to SCRAM's HMAC-SHA-1 usage (PRF context).
+func HashPasswordSHA1(password string) (storedKey, serverKey, salt []byte, iterCount int, err error) {
+	iterCount = 10000
+	salt = make([]byte, 16)
+	if _, err = rand.Read(salt); err != nil {
+		return nil, nil, nil, 0, err
+	}
+
+	saltedPassword := pbkdf2.Key([]byte(password), salt, iterCount, 20, sha1.New) //nolint:gosec
+
+	clientKeyHMAC := hmac.New(sha1.New, saltedPassword) //nolint:gosec
+	clientKeyHMAC.Write([]byte("Client Key"))
+	clientKeyBytes := clientKeyHMAC.Sum(nil)
+
+	storedKeyArr := sha1.Sum(clientKeyBytes) //nolint:gosec
+	storedKey = storedKeyArr[:]
+
+	serverKeyHMAC := hmac.New(sha1.New, saltedPassword) //nolint:gosec
 	serverKeyHMAC.Write([]byte("Server Key"))
 	serverKey = serverKeyHMAC.Sum(nil)
 

@@ -53,6 +53,25 @@ func handleHello(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		d = append(d, bson.E{Key: "ismaster", Value: true})
 	}
 
+	// Advertise supported SASL mechanisms when the client sends saslSupportedMechs.
+	// Format: "db.username" — drivers use this to pick the auth mechanism.
+	// Per MongoDB spec, look up the user and return only mechanisms they have credentials for.
+	if saslField := lookupStringField(cmd, "saslSupportedMechs"); saslField != "" {
+		mechs := bson.A{}
+		if parts := strings.SplitN(saslField, ".", 2); len(parts) == 2 {
+			user, ok, err := ctx.Engine.Users().GetUser(parts[0], parts[1])
+			if err == nil && ok {
+				if user.StoredKey != nil {
+					mechs = append(mechs, "SCRAM-SHA-256")
+				}
+				if user.StoredKeySHA1 != nil {
+					mechs = append(mechs, "SCRAM-SHA-1")
+				}
+			}
+		}
+		d = append(d, bson.E{Key: "saslSupportedMechs", Value: mechs})
+	}
+
 	d = append(d, bson.E{Key: "ok", Value: float64(1)})
 	return marshalResponse(d), nil
 }
