@@ -1,6 +1,7 @@
 package aggregation
 
 import (
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -2389,4 +2390,148 @@ func TestExprDateFromParts(t *testing.T) {
 			t.Fatalf("round-trip failed: got %v, want %v", got, ts)
 		}
 	})
+}
+
+// ─── Bitwise expressions ─────────────────────────────────────────────────────
+
+func TestExprBitAnd(t *testing.T) {
+	doc := makeDoc(t, bson.D{{Key: "a", Value: int32(0b1100)}, {Key: "b", Value: int32(0b1010)}})
+
+	tests := []struct {
+		name    string
+		expr    interface{}
+		want    interface{}
+		wantErr bool
+	}{
+		{"int32 basic", bson.D{{Key: "$bitAnd", Value: bson.A{"$a", "$b"}}}, int32(0b1000), false},
+		{"int32 literals", bson.D{{Key: "$bitAnd", Value: bson.A{int32(0xFF), int32(0x0F)}}}, int32(0x0F), false},
+		{"int64", bson.D{{Key: "$bitAnd", Value: bson.A{int64(0xFF00), int64(0x0FF0)}}}, int64(0x0F00), false},
+		{"mixed int32+int64", bson.D{{Key: "$bitAnd", Value: bson.A{int32(0xFF), int64(0x0F)}}}, int64(0x0F), false},
+		{"variadic 3 args", bson.D{{Key: "$bitAnd", Value: bson.A{int32(0xFF), int32(0x0F), int32(0x03)}}}, int32(0x03), false},
+		{"null propagation", bson.D{{Key: "$bitAnd", Value: bson.A{int32(5), nil}}}, nil, false},
+		{"all zeros", bson.D{{Key: "$bitAnd", Value: bson.A{int32(0), int32(0)}}}, int32(0), false},
+		{"all ones", bson.D{{Key: "$bitAnd", Value: bson.A{int32(-1), int32(-1)}}}, int32(-1), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := EvalExpr(tt.expr, doc)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result != tt.want {
+				t.Errorf("got %v (%T), want %v (%T)", result, result, tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestExprBitOr(t *testing.T) {
+	doc := makeDoc(t, bson.D{})
+
+	tests := []struct {
+		name string
+		expr interface{}
+		want interface{}
+	}{
+		{"basic", bson.D{{Key: "$bitOr", Value: bson.A{int32(0b1100), int32(0b0011)}}}, int32(0b1111)},
+		{"int64", bson.D{{Key: "$bitOr", Value: bson.A{int64(0), int64(0xFF)}}}, int64(0xFF)},
+		{"variadic", bson.D{{Key: "$bitOr", Value: bson.A{int32(1), int32(2), int32(4)}}}, int32(7)},
+		{"null", bson.D{{Key: "$bitOr", Value: bson.A{nil, int32(5)}}}, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalExprHelper(t, tt.expr, doc)
+			if got != tt.want {
+				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestExprBitXor(t *testing.T) {
+	doc := makeDoc(t, bson.D{})
+
+	tests := []struct {
+		name string
+		expr interface{}
+		want interface{}
+	}{
+		{"basic", bson.D{{Key: "$bitXor", Value: bson.A{int32(0b1100), int32(0b1010)}}}, int32(0b0110)},
+		{"same value", bson.D{{Key: "$bitXor", Value: bson.A{int32(42), int32(42)}}}, int32(0)},
+		{"int64", bson.D{{Key: "$bitXor", Value: bson.A{int64(0xFF), int64(0x0F)}}}, int64(0xF0)},
+		{"variadic", bson.D{{Key: "$bitXor", Value: bson.A{int32(1), int32(3), int32(2)}}}, int32(0)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalExprHelper(t, tt.expr, doc)
+			if got != tt.want {
+				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestExprBitNot(t *testing.T) {
+	doc := makeDoc(t, bson.D{})
+
+	tests := []struct {
+		name string
+		expr interface{}
+		want interface{}
+	}{
+		{"int32", bson.D{{Key: "$bitNot", Value: int32(0)}}, int32(-1)},
+		{"int32 -1", bson.D{{Key: "$bitNot", Value: int32(-1)}}, int32(0)},
+		{"int32 max", bson.D{{Key: "$bitNot", Value: int32(0x7FFFFFFF)}}, int32(-0x80000000)},
+		{"int64", bson.D{{Key: "$bitNot", Value: int64(0)}}, int64(-1)},
+		{"int64 specific", bson.D{{Key: "$bitNot", Value: int64(0xFF)}}, int64(-256)},
+		{"int64 max", bson.D{{Key: "$bitNot", Value: int64(math.MaxInt64)}}, int64(math.MinInt64)},
+		{"int64 min", bson.D{{Key: "$bitNot", Value: int64(math.MinInt64)}}, int64(math.MaxInt64)},
+		{"null", bson.D{{Key: "$bitNot", Value: nil}}, nil},
+		{"array form", bson.D{{Key: "$bitNot", Value: bson.A{int32(0)}}}, int32(-1)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalExprHelper(t, tt.expr, doc)
+			if got != tt.want {
+				t.Errorf("got %v (%T), want %v (%T)", got, got, tt.want, tt.want)
+			}
+		})
+	}
+}
+
+func TestExprBitwiseErrors(t *testing.T) {
+	doc := makeDoc(t, bson.D{})
+
+	tests := []struct {
+		name string
+		expr interface{}
+	}{
+		{"bitAnd with double", bson.D{{Key: "$bitAnd", Value: bson.A{float64(1.5), int32(1)}}}},
+		{"bitOr with string", bson.D{{Key: "$bitOr", Value: bson.A{int32(1), "hello"}}}},
+		{"bitXor with bool", bson.D{{Key: "$bitXor", Value: bson.A{int32(1), true}}}},
+		{"bitNot with double", bson.D{{Key: "$bitNot", Value: float64(1.0)}}},
+		{"bitAnd too few args", bson.D{{Key: "$bitAnd", Value: bson.A{int32(1)}}}},
+		{"bitNot too many args", bson.D{{Key: "$bitNot", Value: bson.A{int32(1), int32(2)}}}},
+		{"bitAnd null before bad type", bson.D{{Key: "$bitAnd", Value: bson.A{nil, float64(1.5)}}}},
+		{"bitOr bad type after null", bson.D{{Key: "$bitOr", Value: bson.A{nil, "bad"}}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := EvalExpr(tt.expr, doc)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
 }
