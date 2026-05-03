@@ -330,6 +330,395 @@ func TestStageGroup(t *testing.T) {
 			t.Fatalf("expected 2 groups, got %d", len(result))
 		}
 	})
+
+	// ─── $percentile tests ───────────────────────────────────────────────
+
+	t.Run("$percentile basic", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "p50", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{0.5}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "p50").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", getFieldD(d, "p50"))
+		}
+		if len(arr) != 1 {
+			t.Fatalf("expected 1 percentile value, got %d", len(arr))
+		}
+		// values are 10,20,30,40,50 → median is 30
+		got := toFloatT(t, arr[0])
+		if got != 30.0 {
+			t.Errorf("expected p50=30, got %v", got)
+		}
+	})
+
+	t.Run("$percentile multiple p values", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "pcts", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{0.0, 0.25, 0.5, 0.75, 1.0}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "pcts").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", getFieldD(d, "pcts"))
+		}
+		if len(arr) != 5 {
+			t.Fatalf("expected 5 percentile values, got %d", len(arr))
+		}
+		// p=0: 10, p=0.25: 20, p=0.5: 30, p=0.75: 40, p=1.0: 50
+		expected := []float64{10, 20, 30, 40, 50}
+		for i, exp := range expected {
+			got := toFloatT(t, arr[i])
+			if got != exp {
+				t.Errorf("percentile[%d]: expected %v, got %v", i, exp, got)
+			}
+		}
+	})
+
+	t.Run("$percentile grouped", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: "$cat"},
+			{Key: "p50", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{0.5}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 2 {
+			t.Fatalf("expected 2 groups, got %d", len(result))
+		}
+		// Group "a": values 10,30,50 → p50=30
+		d0 := decodeResult(t, result[0])
+		arr0, ok := getFieldD(d0, "p50").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for group a, got %T", getFieldD(d0, "p50"))
+		}
+		if toFloatT(t, arr0[0]) != 30.0 {
+			t.Errorf("expected p50=30 for group a, got %v", arr0[0])
+		}
+		// Group "b": values 20,40 → p50=30 (interpolation: 20 + 0.5*(40-20) = 30)
+		d1 := decodeResult(t, result[1])
+		arr1, ok := getFieldD(d1, "p50").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A for group b, got %T", getFieldD(d1, "p50"))
+		}
+		if toFloatT(t, arr1[0]) != 30.0 {
+			t.Errorf("expected p50=30 for group b, got %v", arr1[0])
+		}
+	})
+
+	t.Run("$percentile empty group", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "p50", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{0.5}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process([]bson.Raw{})
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 0 {
+			t.Fatalf("expected 0 groups for empty input, got %d", len(result))
+		}
+	})
+
+	t.Run("$percentile null values skipped", func(t *testing.T) {
+		nullDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(10)}}),
+			makeRaw(t, bson.D{{Key: "val", Value: nil}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(20)}}),
+			makeRaw(t, bson.D{{Key: "other", Value: "no val field"}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(30)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "p50", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{0.5}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(nullDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "p50").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", getFieldD(d, "p50"))
+		}
+		// Only 10, 20, 30 → p50=20
+		if toFloatT(t, arr[0]) != 20.0 {
+			t.Errorf("expected p50=20, got %v", arr[0])
+		}
+	})
+
+	t.Run("$percentile single value", func(t *testing.T) {
+		singleDoc := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(42)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "p50", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{0.5}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(singleDoc)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "p50").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", getFieldD(d, "p50"))
+		}
+		if toFloatT(t, arr[0]) != 42.0 {
+			t.Errorf("expected p50=42, got %v", arr[0])
+		}
+	})
+
+	t.Run("$percentile invalid p out of range", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "p", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{1.5}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		_, err := stage.Process(docs)
+		if err == nil {
+			t.Fatal("expected error for p > 1, got nil")
+		}
+	})
+
+	t.Run("$percentile missing p field", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "p", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		_, err := stage.Process(docs)
+		if err == nil {
+			t.Fatal("expected error for missing p field, got nil")
+		}
+	})
+
+	t.Run("$percentile all non-numeric input", func(t *testing.T) {
+		strDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: "hello"}}),
+			makeRaw(t, bson.D{{Key: "val", Value: "world"}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "p50", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{0.5}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(strDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		if getFieldD(d, "p50") != nil {
+			t.Errorf("expected nil for all non-numeric values, got %v", getFieldD(d, "p50"))
+		}
+	})
+
+	t.Run("$percentile invalid p negative", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "p", Value: bson.D{{Key: "$percentile", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "p", Value: bson.A{-0.1}},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		_, err := stage.Process(docs)
+		if err == nil {
+			t.Fatal("expected error for p < 0, got nil")
+		}
+	})
+
+	// ─── $median tests ───────────────────────────────────────────────────
+
+	t.Run("$median basic", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "med", Value: bson.D{{Key: "$median", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		med := toFloatT(t, getFieldD(d, "med"))
+		// values 10,20,30,40,50 → median is 30
+		if med != 30.0 {
+			t.Errorf("expected median=30, got %v", med)
+		}
+	})
+
+	t.Run("$median returns single value not array", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "med", Value: bson.D{{Key: "$median", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		val := getFieldD(d, "med")
+		if _, isArr := val.(bson.A); isArr {
+			t.Errorf("$median should return a single value, not an array")
+		}
+	})
+
+	t.Run("$median even count interpolation", func(t *testing.T) {
+		evenDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: int32(10)}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(20)}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(30)}}),
+			makeRaw(t, bson.D{{Key: "val", Value: int32(40)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "med", Value: bson.D{{Key: "$median", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(evenDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		med := toFloatT(t, getFieldD(d, "med"))
+		// 4 values: rank = 0.5 * 3 = 1.5 → interpolate between sorted[1]=20 and sorted[2]=30 → 25
+		if med != 25.0 {
+			t.Errorf("expected median=25 for even count, got %v", med)
+		}
+	})
+
+	t.Run("$median null handling", func(t *testing.T) {
+		nullDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "val", Value: nil}}),
+			makeRaw(t, bson.D{{Key: "val", Value: nil}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "med", Value: bson.D{{Key: "$median", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(nullDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		if getFieldD(d, "med") != nil {
+			t.Errorf("expected nil for all-null values, got %v", getFieldD(d, "med"))
+		}
+	})
+
+	t.Run("$median grouped", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: "$cat"},
+			{Key: "med", Value: bson.D{{Key: "$median", Value: bson.D{
+				{Key: "input", Value: "$val"},
+				{Key: "method", Value: "approximate"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 2 {
+			t.Fatalf("expected 2 groups, got %d", len(result))
+		}
+		// Group "a": 10,30,50 → median=30
+		d0 := decodeResult(t, result[0])
+		if toFloatT(t, getFieldD(d0, "med")) != 30.0 {
+			t.Errorf("expected median=30 for group a, got %v", getFieldD(d0, "med"))
+		}
+		// Group "b": 20,40 → median=30 (interpolation)
+		d1 := decodeResult(t, result[1])
+		if toFloatT(t, getFieldD(d1, "med")) != 30.0 {
+			t.Errorf("expected median=30 for group b, got %v", getFieldD(d1, "med"))
+		}
+	})
+
+	t.Run("$median method omitted defaults to approximate", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "med", Value: bson.D{{Key: "$median", Value: bson.D{
+				{Key: "input", Value: "$val"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(docs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		med := toFloatT(t, getFieldD(d, "med"))
+		if med != 30.0 {
+			t.Errorf("expected median=30, got %v", med)
+		}
+	})
 }
 
 // ─── $unwind tests ────────────────────────────────────────────────────────────
