@@ -719,6 +719,321 @@ func TestStageGroup(t *testing.T) {
 			t.Errorf("expected median=30, got %v", med)
 		}
 	})
+
+	// ─── $top / $topN / $bottom / $bottomN tests ───────────────────────
+
+	// Docs with score field for sort-based accumulators.
+	scoreDocs := []bson.Raw{
+		makeRaw(t, bson.D{{Key: "team", Value: "a"}, {Key: "player", Value: "alice"}, {Key: "score", Value: int32(80)}}),
+		makeRaw(t, bson.D{{Key: "team", Value: "a"}, {Key: "player", Value: "bob"}, {Key: "score", Value: int32(95)}}),
+		makeRaw(t, bson.D{{Key: "team", Value: "a"}, {Key: "player", Value: "carol"}, {Key: "score", Value: int32(70)}}),
+		makeRaw(t, bson.D{{Key: "team", Value: "b"}, {Key: "player", Value: "dave"}, {Key: "score", Value: int32(60)}}),
+		makeRaw(t, bson.D{{Key: "team", Value: "b"}, {Key: "player", Value: "eve"}, {Key: "score", Value: int32(90)}}),
+	}
+
+	t.Run("$top basic descending sort", func(t *testing.T) {
+		// $top with sortBy: {score: -1} → highest score
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "best", Value: bson.D{{Key: "$top", Value: bson.D{
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(scoreDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		if getFieldD(d, "best") != "bob" {
+			t.Errorf("expected best=bob (score 95), got %v", getFieldD(d, "best"))
+		}
+	})
+
+	t.Run("$top ascending sort", func(t *testing.T) {
+		// $top with sortBy: {score: 1} → lowest score
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "worst", Value: bson.D{{Key: "$top", Value: bson.D{
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(scoreDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		if getFieldD(d, "worst") != "dave" {
+			t.Errorf("expected worst=dave (score 60), got %v", getFieldD(d, "worst"))
+		}
+	})
+
+	t.Run("$bottom basic descending sort", func(t *testing.T) {
+		// $bottom with sortBy: {score: -1} → last after desc sort = lowest
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "last", Value: bson.D{{Key: "$bottom", Value: bson.D{
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(scoreDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		if getFieldD(d, "last") != "dave" {
+			t.Errorf("expected last=dave (lowest score 60 after desc sort), got %v", getFieldD(d, "last"))
+		}
+	})
+
+	t.Run("$topN with n=3", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "top3", Value: bson.D{{Key: "$topN", Value: bson.D{
+				{Key: "n", Value: int32(3)},
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(scoreDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "top3").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", getFieldD(d, "top3"))
+		}
+		if len(arr) != 3 {
+			t.Fatalf("expected 3 elements, got %d", len(arr))
+		}
+		// Desc sort: bob(95), eve(90), alice(80)
+		expected := []string{"bob", "eve", "alice"}
+		for i, want := range expected {
+			if arr[i] != want {
+				t.Errorf("top3[%d]: expected %s, got %v", i, want, arr[i])
+			}
+		}
+	})
+
+	t.Run("$bottomN with n=2", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "bottom2", Value: bson.D{{Key: "$bottomN", Value: bson.D{
+				{Key: "n", Value: int32(2)},
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(scoreDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "bottom2").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", getFieldD(d, "bottom2"))
+		}
+		if len(arr) != 2 {
+			t.Fatalf("expected 2 elements, got %d", len(arr))
+		}
+		// Desc sort: ..., carol(70), dave(60) → bottom 2
+		expected := []string{"carol", "dave"}
+		for i, want := range expected {
+			if arr[i] != want {
+				t.Errorf("bottom2[%d]: expected %s, got %v", i, want, arr[i])
+			}
+		}
+	})
+
+	t.Run("$top grouped by team", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: "$team"},
+			{Key: "mvp", Value: bson.D{{Key: "$top", Value: bson.D{
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(scoreDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 2 {
+			t.Fatalf("expected 2 groups, got %d", len(result))
+		}
+		// Team "a": alice(80), bob(95), carol(70) → top desc = bob
+		d0 := decodeResult(t, result[0])
+		if getFieldD(d0, "mvp") != "bob" {
+			t.Errorf("expected team a mvp=bob, got %v", getFieldD(d0, "mvp"))
+		}
+		// Team "b": dave(60), eve(90) → top desc = eve
+		d1 := decodeResult(t, result[1])
+		if getFieldD(d1, "mvp") != "eve" {
+			t.Errorf("expected team b mvp=eve, got %v", getFieldD(d1, "mvp"))
+		}
+	})
+
+	t.Run("$topN multi-field sortBy", func(t *testing.T) {
+		// Add name as tiebreaker: sort by score desc, then player asc
+		multiDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "player", Value: "alice"}, {Key: "score", Value: int32(90)}}),
+			makeRaw(t, bson.D{{Key: "player", Value: "bob"}, {Key: "score", Value: int32(90)}}),
+			makeRaw(t, bson.D{{Key: "player", Value: "carol"}, {Key: "score", Value: int32(80)}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "top2", Value: bson.D{{Key: "$topN", Value: bson.D{
+				{Key: "n", Value: int32(2)},
+				{Key: "sortBy", Value: bson.D{
+					{Key: "score", Value: int32(-1)},
+					{Key: "player", Value: int32(1)},
+				}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(multiDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "top2").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", getFieldD(d, "top2"))
+		}
+		// score desc: alice(90), bob(90), carol(80)
+		// tiebreaker player asc: alice before bob
+		if arr[0] != "alice" || arr[1] != "bob" {
+			t.Errorf("expected [alice, bob], got %v", arr)
+		}
+	})
+
+	t.Run("$topN n larger than group", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "all", Value: bson.D{{Key: "$topN", Value: bson.D{
+				{Key: "n", Value: int32(100)},
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(scoreDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		arr, ok := getFieldD(d, "all").(bson.A)
+		if !ok {
+			t.Fatalf("expected bson.A, got %T", getFieldD(d, "all"))
+		}
+		if len(arr) != 5 {
+			t.Errorf("expected 5 elements (capped at group size), got %d", len(arr))
+		}
+	})
+
+	t.Run("$top empty group returns nil", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "best", Value: bson.D{{Key: "$top", Value: bson.D{
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process([]bson.Raw{})
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 0 {
+			t.Errorf("expected 0 groups for empty input, got %d", len(result))
+		}
+	})
+
+	t.Run("$topN empty group returns empty array", func(t *testing.T) {
+		// Empty input → no groups at all, so this just verifies no crash
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "top3", Value: bson.D{{Key: "$topN", Value: bson.D{
+				{Key: "n", Value: int32(3)},
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process([]bson.Raw{})
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if len(result) != 0 {
+			t.Errorf("expected 0 groups for empty input, got %d", len(result))
+		}
+	})
+
+	t.Run("$topN invalid n zero", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "top", Value: bson.D{{Key: "$topN", Value: bson.D{
+				{Key: "n", Value: int32(0)},
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		_, err := stage.Process(scoreDocs)
+		if err == nil {
+			t.Fatal("expected error for n=0, got nil")
+		}
+	})
+
+	t.Run("$topN invalid n negative", func(t *testing.T) {
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "top", Value: bson.D{{Key: "$topN", Value: bson.D{
+				{Key: "n", Value: int32(-1)},
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		_, err := stage.Process(scoreDocs)
+		if err == nil {
+			t.Fatal("expected error for negative n, got nil")
+		}
+	})
+
+	t.Run("$top null sort keys", func(t *testing.T) {
+		nullDocs := []bson.Raw{
+			makeRaw(t, bson.D{{Key: "player", Value: "alice"}, {Key: "score", Value: int32(80)}}),
+			makeRaw(t, bson.D{{Key: "player", Value: "bob"}}), // missing score → null
+			makeRaw(t, bson.D{{Key: "player", Value: "carol"}, {Key: "score", Value: nil}}),
+		}
+		spec := makeRaw(t, bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "best", Value: bson.D{{Key: "$top", Value: bson.D{
+				{Key: "sortBy", Value: bson.D{{Key: "score", Value: int32(-1)}}},
+				{Key: "output", Value: "$player"},
+			}}}},
+		})
+		stage := &groupStage{spec: spec}
+		result, err := stage.Process(nullDocs)
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		d := decodeResult(t, result[0])
+		// Descending: alice(80) is the highest non-null → should be first
+		if getFieldD(d, "best") != "alice" {
+			t.Errorf("expected best=alice (highest non-null score), got %v", getFieldD(d, "best"))
+		}
+	})
 }
 
 // ─── $unwind tests ────────────────────────────────────────────────────────────
