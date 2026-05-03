@@ -5,9 +5,82 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
+
+// opMsgBufBuckets defines the size tiers (in bytes) that WriteOpMsg pulls
+// response buffers from. A request asking for N bytes is rounded up to the
+// smallest bucket that fits, then served from that bucket's sync.Pool. Sizes
+// above the largest bucket fall through to a one-shot allocation.
+//
+// The buckets are tuned to MongoDB driver workloads:
+//   - 512   — single-document responses (ping, getMore acks, hello)
+//   - 4096  — typical find/aggregate single-batch results
+//   - 16384 — larger batched responses (bulk inserts, multi-doc aggregates)
+//   - 65536 — wide aggregate frames before we'd rather not waste pool memory
+var opMsgBufBuckets = [...]int{512, 4096, 16384, 65536}
+
+// opMsgBufPools is one sync.Pool per bucket in opMsgBufBuckets, sharing the
+// same index. Buffers are stored as *[]byte so the pool sees a fixed-size
+// pointer and the underlying array does not escape. The array is populated by
+// init() — sync.Pool contains a noCopy guard, so we cannot return it from a
+// composite-literal helper.
+var opMsgBufPools [len(opMsgBufBuckets)]sync.Pool
+
+func init() {
+	for i, size := range opMsgBufBuckets {
+		size := size // capture by value for the closure
+		opMsgBufPools[i].New = func() any {
+			b := make([]byte, size)
+			return &b
+		}
+	}
+}
+
+// getOpMsgBuf returns a buffer of at least n bytes, plus a handle that the
+// caller must hand back to putOpMsgBuf. The returned slice has len == cap ==
+// bucket size; callers slice down to n before writing it out.
+//
+// If n exceeds the largest bucket, the function allocates a fresh slice and
+// returns a nil handle — putOpMsgBuf is a no-op in that case and the GC
+// reclaims the buffer.
+//
+// The handle is the same *[]byte the pool returned. We thread that exact
+// pointer back through Put() so the pool reuses the existing 24-byte slice
+// header and we don't allocate a fresh one on Put.
+func getOpMsgBuf(n int) ([]byte, *[]byte) {
+	for i, size := range opMsgBufBuckets {
+		if n <= size {
+			bp, ok := opMsgBufPools[i].Get().(*[]byte)
+			if !ok || bp == nil {
+				b := make([]byte, size)
+				bp = &b
+			}
+			return *bp, bp
+		}
+	}
+	return make([]byte, n), nil
+}
+
+// putOpMsgBuf returns buf to its pool. handle must be the *[]byte returned by
+// getOpMsgBuf; a nil handle means the buffer was an over-bucket allocation
+// and should not be pooled.
+func putOpMsgBuf(handle *[]byte) {
+	if handle == nil {
+		return
+	}
+	// Pick the right pool by the buffer's capacity. The bucket array is small
+	// and sorted, so a linear scan beats a map lookup.
+	c := cap(*handle)
+	for i, size := range opMsgBufBuckets {
+		if c == size {
+			opMsgBufPools[i].Put(handle)
+			return
+		}
+	}
+}
 
 // OpMsgMessage represents an OP_MSG wire protocol message (opcode 2013).
 // OP_MSG is the primary message format used by MongoDB 3.6+ drivers.
@@ -199,7 +272,13 @@ func readDocumentSequence(r io.Reader) (DocumentSeq, error) {
 func WriteOpMsg(w io.Writer, requestID, responseTo int32, flagBits uint32, body bson.Raw) error {
 	msgLen := int32(HeaderSize + 4 + 1 + len(body))
 
-	buf := make([]byte, int(msgLen))
+	buf, handle := getOpMsgBuf(int(msgLen))
+	defer putOpMsgBuf(handle)
+
+	// Slice down to the actual message length — getOpMsgBuf may have returned
+	// a larger bucket. We only Write buf, never the original full-size slice,
+	// otherwise trailing garbage past msgLen would hit the wire.
+	buf = buf[:msgLen]
 	offset := 0
 
 	// Header
