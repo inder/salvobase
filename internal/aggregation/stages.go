@@ -471,7 +471,7 @@ func (s *groupStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 
 		// Accumulate
 		for i, spec := range accSpecs {
-			val, err := EvalExpr(spec.expr, doc)
+			val, err := evalAccumulatorInput(spec.op, spec.expr, doc)
 			if err != nil {
 				return nil, err
 			}
@@ -506,6 +506,26 @@ func (s *groupStage) Process(docs []bson.Raw) ([]bson.Raw, error) {
 	}
 
 	return result, nil
+}
+
+// evalAccumulatorInput evaluates the per-document input for an accumulator.
+// For most accumulators this is just EvalExpr(expr, doc). For $percentile and
+// $median the expression is a document {input: <expr>, p: [...], method: "..."}
+// and only the "input" sub-expression should be evaluated per document.
+func evalAccumulatorInput(op string, expr bson.RawValue, doc bson.Raw) (interface{}, error) {
+	switch op {
+	case "$percentile", "$median":
+		if expr.Type != bson.TypeEmbeddedDocument {
+			return nil, fmt.Errorf("%s requires a document argument", op)
+		}
+		inputVal, err := expr.Document().LookupErr("input")
+		if err != nil {
+			return nil, fmt.Errorf("%s requires an 'input' field", op)
+		}
+		return EvalExpr(inputVal, doc)
+	default:
+		return EvalExpr(expr, doc)
+	}
 }
 
 func accumulate(acc *groupAccumulator, val interface{}, doc bson.Raw) error {
@@ -549,6 +569,11 @@ func accumulate(acc *groupAccumulator, val interface{}, doc bson.Raw) error {
 	case "$count":
 		acc.values = append(acc.values, int32(1))
 	case "$stdDevPop", "$stdDevSamp":
+		if val == nil {
+			return nil
+		}
+		acc.values = append(acc.values, val)
+	case "$percentile", "$median":
 		if val == nil {
 			return nil
 		}
@@ -664,6 +689,12 @@ func finalizeAccumulator(acc *groupAccumulator) (interface{}, error) {
 
 	case "$stdDevSamp":
 		return calcStdDev(acc.values, false), nil
+
+	case "$percentile":
+		return calcPercentile(acc.values, acc.expr)
+
+	case "$median":
+		return calcMedian(acc.values, acc.expr)
 	}
 	return nil, fmt.Errorf("unknown accumulator: %s", acc.op)
 }
@@ -700,6 +731,136 @@ func calcStdDev(values []interface{}, population bool) interface{} {
 		denom -= 1
 	}
 	return math.Sqrt(variance / denom)
+}
+
+// calcPercentile computes percentile values from collected numeric values.
+// expr is the full $percentile spec: {input: ..., p: [...], method: "approximate"}.
+// Returns a bson.A of float64 values, one per requested percentile.
+func calcPercentile(values []interface{}, expr bson.RawValue) (interface{}, error) {
+	pVals, err := parsePercentileP(expr)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateMethod(expr); err != nil {
+		return nil, err
+	}
+
+	nums := extractSortedFloats(values)
+	if len(nums) == 0 {
+		return nil, nil
+	}
+
+	result := make(bson.A, len(pVals))
+	for i, p := range pVals {
+		result[i] = interpolatePercentile(nums, p)
+	}
+	return result, nil
+}
+
+// calcMedian computes the 50th percentile (median).
+// expr is the full $median spec: {input: ..., method: "approximate"}.
+// Returns a single float64 value (not an array).
+func calcMedian(values []interface{}, expr bson.RawValue) (interface{}, error) {
+	if err := validateMethod(expr); err != nil {
+		return nil, err
+	}
+
+	nums := extractSortedFloats(values)
+	if len(nums) == 0 {
+		return nil, nil
+	}
+	return interpolatePercentile(nums, 0.5), nil
+}
+
+// parsePercentileP extracts and validates the p array from a $percentile spec.
+func parsePercentileP(expr bson.RawValue) ([]float64, error) {
+	if expr.Type != bson.TypeEmbeddedDocument {
+		return nil, fmt.Errorf("$percentile requires a document argument")
+	}
+	doc := expr.Document()
+	pRaw, err := doc.LookupErr("p")
+	if err != nil {
+		return nil, fmt.Errorf("$percentile requires a 'p' field")
+	}
+	if pRaw.Type != bson.TypeArray {
+		return nil, fmt.Errorf("$percentile 'p' must be an array")
+	}
+	pArr, ok := pRaw.ArrayOK()
+	if !ok {
+		return nil, fmt.Errorf("$percentile 'p' must be an array")
+	}
+	vals, err := pArr.Values()
+	if err != nil {
+		return nil, fmt.Errorf("$percentile failed to parse 'p' array: %v", err)
+	}
+	if len(vals) == 0 {
+		return nil, fmt.Errorf("$percentile 'p' must not be empty")
+	}
+	pVals := make([]float64, len(vals))
+	for i, e := range vals {
+		v, ok := toFloat64Interface(rawValToInterface(e))
+		if !ok {
+			return nil, fmt.Errorf("$percentile 'p' values must be numeric")
+		}
+		if v < 0 || v > 1 {
+			return nil, fmt.Errorf("$percentile 'p' values must be between 0 and 1, got %v", v)
+		}
+		pVals[i] = v
+	}
+	return pVals, nil
+}
+
+// validateMethod checks the method field on $percentile/$median specs.
+func validateMethod(expr bson.RawValue) error {
+	if expr.Type != bson.TypeEmbeddedDocument {
+		return nil
+	}
+	doc := expr.Document()
+	methodRaw, err := doc.LookupErr("method")
+	if err != nil {
+		// method is optional, defaults to approximate
+		return nil
+	}
+	method, ok := methodRaw.StringValueOK()
+	if !ok {
+		return fmt.Errorf("$percentile/$median 'method' must be a string")
+	}
+	if method != "approximate" {
+		return fmt.Errorf("$percentile/$median method '%s' is not supported", method)
+	}
+	return nil
+}
+
+// extractSortedFloats extracts numeric values as float64 and returns them sorted.
+func extractSortedFloats(values []interface{}) []float64 {
+	var nums []float64
+	for _, v := range values {
+		n, ok := toFloat64Interface(v)
+		if ok {
+			nums = append(nums, n)
+		}
+	}
+	sort.Float64s(nums)
+	return nums
+}
+
+// interpolatePercentile computes a percentile from sorted data using linear interpolation.
+// MongoDB uses T-Digest for approximate percentiles; this uses linear interpolation which
+// produces identical results for small datasets but may diverge on large ones.
+func interpolatePercentile(sorted []float64, p float64) float64 {
+	n := len(sorted)
+	if n == 1 {
+		return sorted[0]
+	}
+	// Use linear interpolation (same as numpy/MongoDB approximate)
+	rank := p * float64(n-1)
+	lo := int(rank)
+	hi := lo + 1
+	if hi >= n {
+		return sorted[n-1]
+	}
+	frac := rank - float64(lo)
+	return sorted[lo]*(1-frac) + sorted[hi]*frac
 }
 
 // ─── $sort ────────────────────────────────────────────────────────────────────
@@ -1474,7 +1635,7 @@ func applyBucketOutput(outputSpec bson.Raw, docs []bson.Raw) (bson.D, error) {
 		expr := accElems[0].Value()
 		acc := &groupAccumulator{op: op, expr: expr}
 		for _, doc := range docs {
-			val, err := EvalExpr(expr, doc)
+			val, err := evalAccumulatorInput(op, expr, doc)
 			if err != nil {
 				continue
 			}
