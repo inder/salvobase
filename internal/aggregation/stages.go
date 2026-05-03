@@ -523,6 +523,11 @@ func evalAccumulatorInput(op string, expr bson.RawValue, doc bson.Raw) (interfac
 			return nil, fmt.Errorf("%s requires an 'input' field", op)
 		}
 		return EvalExpr(inputVal, doc)
+	case "$top", "$topN", "$bottom", "$bottomN":
+		// These accumulate entire documents; the output expression is
+		// evaluated at finalization time. Return nil here — the raw doc
+		// is captured in accumulate() via the doc parameter.
+		return nil, nil
 	default:
 		return EvalExpr(expr, doc)
 	}
@@ -578,6 +583,9 @@ func accumulate(acc *groupAccumulator, val interface{}, doc bson.Raw) error {
 			return nil
 		}
 		acc.values = append(acc.values, val)
+	case "$top", "$topN", "$bottom", "$bottomN":
+		// Store the raw document for sort + output evaluation at finalize time.
+		acc.values = append(acc.values, doc)
 	default:
 		return fmt.Errorf("unknown accumulator: %s", acc.op)
 	}
@@ -695,6 +703,15 @@ func finalizeAccumulator(acc *groupAccumulator) (interface{}, error) {
 
 	case "$median":
 		return calcMedian(acc.values, acc.expr)
+
+	case "$top":
+		return calcTopBottom(acc.values, acc.expr, true)
+	case "$bottom":
+		return calcTopBottom(acc.values, acc.expr, false)
+	case "$topN":
+		return calcTopBottomN(acc.values, acc.expr, true)
+	case "$bottomN":
+		return calcTopBottomN(acc.values, acc.expr, false)
 	}
 	return nil, fmt.Errorf("unknown accumulator: %s", acc.op)
 }
@@ -861,6 +878,150 @@ func interpolatePercentile(sorted []float64, p float64) float64 {
 	}
 	frac := rank - float64(lo)
 	return sorted[lo]*(1-frac) + sorted[hi]*frac
+}
+
+// ─── $top / $topN / $bottom / $bottomN helpers ───────────────────────────────
+
+// parseTopBottomSpec extracts sortBy and output from a $top/$bottom spec document.
+func parseTopBottomSpec(expr bson.RawValue) (sortByRaw bson.Raw, outputExpr bson.RawValue, err error) {
+	if expr.Type != bson.TypeEmbeddedDocument {
+		return nil, bson.RawValue{}, fmt.Errorf("$top/$bottom requires a document argument")
+	}
+	doc := expr.Document()
+
+	sortByVal, err := doc.LookupErr("sortBy")
+	if err != nil {
+		return nil, bson.RawValue{}, fmt.Errorf("$top/$bottom requires a 'sortBy' field")
+	}
+	if sortByVal.Type != bson.TypeEmbeddedDocument {
+		return nil, bson.RawValue{}, fmt.Errorf("$top/$bottom 'sortBy' must be a document")
+	}
+	sortByRaw = sortByVal.Document()
+
+	outputExpr, err = doc.LookupErr("output")
+	if err != nil {
+		return nil, bson.RawValue{}, fmt.Errorf("$top/$bottom requires an 'output' field")
+	}
+
+	return sortByRaw, outputExpr, nil
+}
+
+// parseTopBottomNSpec extracts n, sortBy and output from a $topN/$bottomN spec.
+func parseTopBottomNSpec(expr bson.RawValue) (n int64, sortByRaw bson.Raw, outputExpr bson.RawValue, err error) {
+	if expr.Type != bson.TypeEmbeddedDocument {
+		return 0, nil, bson.RawValue{}, fmt.Errorf("$topN/$bottomN requires a document argument")
+	}
+	doc := expr.Document()
+
+	nVal, lookupErr := doc.LookupErr("n")
+	if lookupErr != nil {
+		return 0, nil, bson.RawValue{}, fmt.Errorf("$topN/$bottomN requires an 'n' field")
+	}
+	nFloat, ok := toFloat64Interface(rawValToInterface(nVal))
+	if !ok {
+		return 0, nil, bson.RawValue{}, fmt.Errorf("$topN/$bottomN 'n' must be numeric")
+	}
+	n = int64(nFloat)
+	// Note: float64 has 53-bit mantissa, so int64 values > 2^53 may round.
+	// In practice n is always small; this matches MongoDB's own precision limits.
+	if n <= 0 || nFloat != float64(n) {
+		return 0, nil, bson.RawValue{}, fmt.Errorf("$topN/$bottomN 'n' must be a positive integer, got %v", nFloat)
+	}
+
+	sortByRaw, outputExpr, err = parseTopBottomSpec(expr)
+	return n, sortByRaw, outputExpr, err
+}
+
+// evalOutputForDocs evaluates the output expression against each sorted document.
+func evalOutputForDocs(docs []bson.Raw, outputExpr bson.RawValue) (bson.A, error) {
+	result := make(bson.A, len(docs))
+	for i, doc := range docs {
+		val, err := EvalExpr(outputExpr, doc)
+		if err != nil {
+			return nil, err
+		}
+		result[i] = val
+	}
+	return result, nil
+}
+
+// calcTopBottom returns the top or bottom element from accumulated documents.
+// top=true picks the first element after sorting ascending by sortBy (lowest sort key).
+// MongoDB $top returns the doc with the *highest* sort value when sortBy is descending,
+// which is equivalent to sorting ascending-by-spec and taking the first.
+func calcTopBottom(values []interface{}, expr bson.RawValue, top bool) (interface{}, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	sortByRaw, outputExpr, err := parseTopBottomSpec(expr)
+	if err != nil {
+		return nil, err
+	}
+
+	docs := valuesToDocs(values)
+	// Sort docs by sortBy spec (direction is embedded in the spec).
+	// For $top, take first; for $bottom, take last.
+	if err := query.SortDocuments(docs, sortByRaw); err != nil {
+		return nil, err
+	}
+
+	var pick bson.Raw
+	if top {
+		pick = docs[0]
+	} else {
+		pick = docs[len(docs)-1]
+	}
+
+	val, err := EvalExpr(outputExpr, pick)
+	if err != nil {
+		return nil, err
+	}
+	return val, nil
+}
+
+// calcTopBottomN returns an array of the top or bottom N elements.
+func calcTopBottomN(values []interface{}, expr bson.RawValue, top bool) (interface{}, error) {
+	if len(values) == 0 {
+		return bson.A{}, nil
+	}
+
+	n, sortByRaw, outputExpr, err := parseTopBottomNSpec(expr)
+	if err != nil {
+		return nil, err
+	}
+
+	docs := valuesToDocs(values)
+	if err := query.SortDocuments(docs, sortByRaw); err != nil {
+		return nil, err
+	}
+
+	count := int64(len(docs))
+	if n > count {
+		n = count
+	}
+
+	var selected []bson.Raw
+	if top {
+		selected = docs[:n]
+	} else {
+		selected = docs[count-n:]
+	}
+
+	return evalOutputForDocs(selected, outputExpr)
+}
+
+// valuesToDocs converts []interface{} (containing bson.Raw) to []bson.Raw.
+func valuesToDocs(values []interface{}) []bson.Raw {
+	docs := make([]bson.Raw, len(values))
+	for i, v := range values {
+		raw, ok := v.(bson.Raw)
+		if !ok {
+			panic(fmt.Sprintf("valuesToDocs: expected bson.Raw, got %T", v))
+		}
+		docs[i] = raw
+	}
+	return docs
 }
 
 // ─── $sort ────────────────────────────────────────────────────────────────────
