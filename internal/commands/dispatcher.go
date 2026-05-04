@@ -59,7 +59,7 @@ func (c *Context) runReleases() {
 }
 
 // marshalBufPool holds *[]byte slice handles reused as scratch for response
-// marshalling. Each command's response goes through marshalResponse which
+// marshaling. Each command's response goes through marshalResponse which
 // pulls a slice, appends its BSON encoding via bsoncore, and returns a
 // bson.Raw aliasing those bytes. The slice is held until the wire layer
 // has copied the bytes (wire.WriteOpMsg copies into its own outer pool
@@ -538,7 +538,13 @@ func lookupRawField(doc bson.Raw, key string) bson.Raw {
 // allocation; the buffer is returned to the pool eagerly and no release is
 // registered for that document.
 func marshalResponse(ctx *Context, d bson.D) bson.Raw {
-	bp := marshalBufPool.Get().(*[]byte)
+	bp, ok := marshalBufPool.Get().(*[]byte)
+	if !ok || bp == nil {
+		// Defensive: pool only stores *[]byte from New, but a two-value
+		// assertion satisfies errcheck and guards against future pool reuse.
+		fresh := make([]byte, 0, 512)
+		bp = &fresh
+	}
 	encoded, err := appendBSONDoc((*bp)[:0], d)
 	if err != nil {
 		// Cold path: drop the pool slice and fall back to a fresh allocation

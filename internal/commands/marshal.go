@@ -79,7 +79,7 @@ func appendElement(dst []byte, key string, val any) ([]byte, error) {
 		return bsoncore.AppendArrayEnd(dst, idx)
 	case bson.Raw:
 		// Already-encoded subdocument (common in cursor responses where the
-		// storage layer hands us pre-marshalled rows).
+		// storage layer hands us pre-marshaled rows).
 		return bsoncore.AppendDocumentElement(dst, key, v), nil
 	default:
 		// Unknown type: fall back to bson.Marshal of a single-element doc and

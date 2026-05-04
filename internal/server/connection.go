@@ -230,7 +230,7 @@ func (c *Connection) handleOpGetMore(msg *wire.OpGetMoreMessage) error {
 	// Extract the cursor from the getMore response for the OP_REPLY format.
 	// OP_REPLY requires cursorID and documents directly. The bson.Raw values
 	// in `docs` alias `resp` (which itself aliases a pooled marshal buffer),
-	// so release must run only after WriteOpReply has finished serialising.
+	// so release must run only after WriteOpReply has finished serializing.
 	// WriteOpReply writes doc bytes directly to the underlying net.Conn — no
 	// intermediate copy — so the safety invariant is that the kernel has
 	// consumed the bytes during the syscall. Once Write returns, the pooled
