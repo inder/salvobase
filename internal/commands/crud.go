@@ -82,7 +82,7 @@ func handleFind(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		firstBatch[i] = d
 	}
 
-	resp := marshalResponse(bson.D{
+	resp := marshalResponse(ctx, bson.D{
 		{Key: "cursor", Value: bson.D{
 			{Key: "id", Value: cursorID},
 			{Key: "ns", Value: ns},
@@ -161,7 +161,7 @@ func handleInsert(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 
 	if insertErr != nil {
 		if me, ok := insertErr.(*storage.MongoError); ok && me.Code == storage.ErrCodeDuplicateKey {
-			resp := marshalResponse(bson.D{
+			resp := marshalResponse(ctx, bson.D{
 				{Key: "n", Value: n},
 				{Key: "writeErrors", Value: bson.A{bson.D{
 					{Key: "index", Value: int32(0)},
@@ -175,7 +175,7 @@ func handleInsert(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, insertErr
 	}
 
-	resp := marshalResponse(bson.D{
+	resp := marshalResponse(ctx, bson.D{
 		{Key: "n", Value: int32(len(docs))},
 		{Key: "ok", Value: float64(1)},
 	})
@@ -268,7 +268,7 @@ func handleUpdate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		d = append(d, bson.E{Key: "upserted", Value: upsertedDocs})
 	}
 	d = append(d, bson.E{Key: "ok", Value: float64(1)})
-	return marshalResponse(d), nil
+	return marshalResponse(ctx, d), nil
 }
 
 // handleDelete handles the "delete" command.
@@ -328,7 +328,7 @@ func handleDelete(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		totalDeleted += n
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "n", Value: totalDeleted},
 		{Key: "ok", Value: float64(1)},
 	}), nil
@@ -407,7 +407,7 @@ func handleFindAndModify(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		valueField = doc
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "value", Value: valueField},
 		{Key: "lastErrorObject", Value: lastErrorObj},
 		{Key: "ok", Value: float64(1)},
@@ -437,7 +437,7 @@ func handleCount(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, fmt.Errorf("count: %w", err)
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "n", Value: n},
 		{Key: "ok", Value: float64(1)},
 	}), nil
@@ -478,7 +478,7 @@ func handleDistinct(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	bsonValues := make(bson.A, len(values))
 	copy(bsonValues, values)
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "values", Value: bsonValues},
 		{Key: "ok", Value: float64(1)},
 	}), nil

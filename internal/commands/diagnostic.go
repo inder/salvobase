@@ -20,7 +20,7 @@ var serverStartTime = time.Now()
 var processObjectID = bson.NewObjectID()
 
 // handlePing handles the "ping" command.
-func handlePing(_ *Context, _ bson.Raw) (bson.Raw, error) {
+func handlePing(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
@@ -73,12 +73,12 @@ func handleHello(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	d = append(d, bson.E{Key: "ok", Value: float64(1)})
-	return marshalResponse(d), nil
+	return marshalResponse(ctx, d), nil
 }
 
 // handleBuildInfo handles the "buildInfo"/"buildinfo" command.
-func handleBuildInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
-	return marshalResponse(bson.D{
+func handleBuildInfo(ctx *Context, _ bson.Raw) (bson.Raw, error) {
+	return marshalResponse(ctx, bson.D{
 		{Key: "version", Value: "7.0.0-salvobase"},
 		{Key: "gitVersion", Value: "salvobase-dev"},
 		{Key: "modules", Value: bson.A{}},
@@ -109,7 +109,7 @@ func handleServerStatus(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	uptime := int64(time.Since(serverStartTime).Seconds())
 	now := time.Now().UTC()
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "host", Value: stats.Host},
 		{Key: "version", Value: "7.0.0-salvobase"},
 		{Key: "process", Value: "salvobase"},
@@ -147,7 +147,7 @@ func handleDBStats(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 		return nil, fmt.Errorf("dbStats: %w", err)
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "db", Value: stats.DB},
 		{Key: "collections", Value: stats.Collections},
 		{Key: "views", Value: stats.Views},
@@ -187,7 +187,7 @@ func handleCollStats(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		indexSizes = append(indexSizes, bson.E{Key: name, Value: size})
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "ns", Value: stats.NS},
 		{Key: "count", Value: stats.Count},
 		{Key: "size", Value: stats.Size},
@@ -203,15 +203,15 @@ func handleCollStats(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 
 // handleWhatsmyuri handles the "whatsmyuri" command.
 func handleWhatsmyuri(ctx *Context, _ bson.Raw) (bson.Raw, error) {
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "you", Value: ctx.RemoteAddr},
 		{Key: "ok", Value: float64(1)},
 	}), nil
 }
 
 // handleGetLastError handles the legacy "getLastError"/"getlasterror" command.
-func handleGetLastError(_ *Context, _ bson.Raw) (bson.Raw, error) {
-	return marshalResponse(bson.D{
+func handleGetLastError(ctx *Context, _ bson.Raw) (bson.Raw, error) {
+	return marshalResponse(ctx, bson.D{
 		{Key: "n", Value: int32(0)},
 		{Key: "err", Value: nil},
 		{Key: "ok", Value: float64(1)},
@@ -241,7 +241,7 @@ func handleConnectionStatus(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 		}
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "authInfo", Value: bson.D{
 			{Key: "authenticatedUsers", Value: authenticatedUsers},
 			{Key: "authenticatedUserRoles", Value: authenticatedUserRoles},
@@ -251,12 +251,12 @@ func handleConnectionStatus(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 }
 
 // handleFeatures handles the "features" command.
-func handleFeatures(_ *Context, _ bson.Raw) (bson.Raw, error) {
+func handleFeatures(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
 // handleLogout handles the "logout" command.
-func handleLogout(_ *Context, _ bson.Raw) (bson.Raw, error) {
+func handleLogout(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
@@ -295,7 +295,7 @@ func handleDataSize(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 	millis := time.Since(start).Milliseconds()
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "size", Value: stats.Size},
 		{Key: "numObjects", Value: stats.Count},
 		{Key: "millis", Value: millis},
@@ -335,7 +335,7 @@ func handleValidate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		keysPerIndex = append(keysPerIndex, bson.E{Key: idx.Name, Value: stats.Count})
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "ns", Value: ctx.DB + "." + collName},
 		{Key: "nInvalidDocuments", Value: int64(0)},
 		{Key: "nrecords", Value: stats.Count},
@@ -372,7 +372,7 @@ func handleCompact(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, fmt.Errorf("compact: %w", err)
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "bytesFreed", Value: stats.StorageSize},
 		{Key: "ok", Value: float64(1)},
 	}), nil
@@ -380,7 +380,7 @@ func handleCompact(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 
 // handleHostInfo handles the "hostInfo" command.
 // Returns system hardware and OS information.
-func handleHostInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
+func handleHostInfo(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	hostname, _ := os.Hostname()
 	now := time.Now().UTC()
 
@@ -396,7 +396,7 @@ func handleHostInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
 		osType = "Unknown"
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "system", Value: bson.D{
 			{Key: "currentTime", Value: bson.DateTime(now.UnixMilli())},
 			{Key: "hostname", Value: hostname},
@@ -418,13 +418,13 @@ func handleHostInfo(_ *Context, _ bson.Raw) (bson.Raw, error) {
 
 // handleGetCmdLineOpts handles the "getCmdLineOpts" command.
 // Returns the command-line arguments used to start the server and a parsed options document.
-func handleGetCmdLineOpts(_ *Context, _ bson.Raw) (bson.Raw, error) {
+func handleGetCmdLineOpts(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	argv := bson.A{}
 	for _, arg := range os.Args {
 		argv = append(argv, arg)
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "argv", Value: argv},
 		{Key: "parsed", Value: bson.D{}},
 		{Key: "ok", Value: float64(1)},
@@ -434,8 +434,8 @@ func handleGetCmdLineOpts(_ *Context, _ bson.Raw) (bson.Raw, error) {
 // handleCurrentOp handles the "currentOp" command.
 // Returns in-progress operations. Salvobase does not track per-operation state,
 // so "inprog" is always empty — matching MongoDB's response when idle.
-func handleCurrentOp(_ *Context, _ bson.Raw) (bson.Raw, error) {
-	return marshalResponse(bson.D{
+func handleCurrentOp(ctx *Context, _ bson.Raw) (bson.Raw, error) {
+	return marshalResponse(ctx, bson.D{
 		{Key: "inprog", Value: bson.A{}},
 		{Key: "ok", Value: float64(1)},
 	}), nil
@@ -445,7 +445,7 @@ func handleCurrentOp(_ *Context, _ bson.Raw) (bson.Raw, error) {
 // Terminates a running operation identified by its opid.
 // Salvobase does not track per-operation state, so this is a no-op that
 // returns success — matching MongoDB's behavior when the op is not found.
-func handleKillOp(_ *Context, cmd bson.Raw) (bson.Raw, error) {
+func handleKillOp(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	opVal, err := cmd.LookupErr("killOp")
 	if err != nil {
 		opVal, _ = cmd.LookupErr("killop")
@@ -533,5 +533,5 @@ func handleExplain(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		explainDoc = append(explainDoc, bson.E{Key: "ok", Value: float64(1)})
 	}
 
-	return marshalResponse(explainDoc), nil
+	return marshalResponse(ctx, explainDoc), nil
 }

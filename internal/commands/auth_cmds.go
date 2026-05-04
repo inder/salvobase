@@ -50,7 +50,7 @@ func handleSASLStart(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, storage.Errorf(storage.ErrCodeAuthenticationFailed, "SASL authentication failed: %v", err)
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "conversationId", Value: convID},
 		{Key: "done", Value: false},
 		{Key: "payload", Value: bson.Binary{Data: serverFirst}},
@@ -110,7 +110,7 @@ func handleSASLContinue(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		}
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "conversationId", Value: convID},
 		{Key: "done", Value: done},
 		{Key: "payload", Value: bson.Binary{Data: serverMsg}},
@@ -340,7 +340,7 @@ func handleUsersInfo(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		})
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "users", Value: userDocs},
 		{Key: "ok", Value: float64(1)},
 	}), nil
@@ -553,7 +553,7 @@ func handleRolesInfo(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		roleDocs = bson.A{}
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "roles", Value: roleDocs},
 		{Key: "ok", Value: float64(1)},
 	}), nil

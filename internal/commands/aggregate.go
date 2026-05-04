@@ -115,7 +115,7 @@ func handleAggregate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 				resp[0].Value = cursorDoc
 			}
 		}
-		return marshalResponse(resp), nil
+		return marshalResponse(ctx, resp), nil
 	}
 
 	docs, exhausted, err := cursor.NextBatch(int(batchSize))
@@ -137,7 +137,7 @@ func handleAggregate(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		firstBatch[i] = d
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "cursor", Value: bson.D{
 			{Key: "id", Value: cursorID},
 			{Key: "ns", Value: ns},

@@ -154,7 +154,7 @@ func handleGetParameter(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 
 	result = append(result, bson.E{Key: "ok", Value: float64(1)})
-	return marshalResponse(result), nil
+	return marshalResponse(ctx, result), nil
 }
 
 // handleSetParameter handles the "setParameter" command.

@@ -97,7 +97,7 @@ func handleCreateIndexes(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 
 	numAfter := numBefore + int32(len(newIndexNames))
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "createdCollectionAutomatically", Value: createdAutomatically},
 		{Key: "numIndexesBefore", Value: numBefore},
 		{Key: "numIndexesAfter", Value: numAfter},
@@ -167,7 +167,7 @@ func handleDropIndexes(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, storage.Errorf(storage.ErrCodeBadValue, "dropIndexes: 'index' must be a string or document")
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "nIndexesWas", Value: numBefore},
 		{Key: "ok", Value: float64(1)},
 	}), nil
@@ -227,7 +227,7 @@ func handleListIndexes(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		firstBatch[i] = d
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "cursor", Value: bson.D{
 			{Key: "id", Value: int64(0)},
 			{Key: "ns", Value: ns + ".$cmd.listIndexes"},
@@ -294,7 +294,7 @@ func handleReIndex(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		}
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "nIndexesWas", Value: int32(len(indexes))},
 		{Key: "ok", Value: float64(1)},
 	}), nil

@@ -136,7 +136,7 @@ func (c *Connection) handleOpMsg(msg *wire.OpMsgMessage) error {
 
 	// Dispatch the command.
 	start := time.Now()
-	resp := c.server.dispatcher.Dispatch(ctx, cleanCmd)
+	resp, release := c.server.dispatcher.Dispatch(ctx, cleanCmd)
 	elapsed := time.Since(start)
 
 	// Update auth state if SASL just completed.
@@ -152,7 +152,12 @@ func (c *Connection) handleOpMsg(msg *wire.OpMsgMessage) error {
 		metricOpsTotal.WithLabelValues(cmdName).Inc()
 	}
 
-	return wire.WriteOpMsg(c.conn, newRequestID(), msg.Hdr.RequestID, 0, resp)
+	// Write the response, then release the response buffer back to the pool.
+	// WriteOpMsg copies bytes into its own outer-buffer pool, so release after
+	// the write returns is safe regardless of write success.
+	writeErr := wire.WriteOpMsg(c.conn, newRequestID(), msg.Hdr.RequestID, 0, resp)
+	release()
+	return writeErr
 }
 
 // handleOpQuery handles a legacy OP_QUERY message.
@@ -173,7 +178,7 @@ func (c *Connection) handleOpQuery(msg *wire.OpQueryMessage) error {
 	ctx := c.buildContext(db)
 
 	start := time.Now()
-	resp := c.server.dispatcher.Dispatch(ctx, cmd)
+	resp, release := c.server.dispatcher.Dispatch(ctx, cmd)
 	elapsed := time.Since(start)
 
 	// Update auth state.
@@ -188,7 +193,9 @@ func (c *Connection) handleOpQuery(msg *wire.OpQueryMessage) error {
 		metricOpsTotal.WithLabelValues(cmdName).Inc()
 	}
 
-	return wire.WriteOpReply(c.conn, newRequestID(), msg.Hdr.RequestID, 0, 0, 0, []bson.Raw{resp})
+	writeErr := wire.WriteOpReply(c.conn, newRequestID(), msg.Hdr.RequestID, 0, 0, 0, []bson.Raw{resp})
+	release()
+	return writeErr
 }
 
 // handleOpGetMore handles a legacy OP_GETMORE message by converting it to
@@ -218,12 +225,20 @@ func (c *Connection) handleOpGetMore(msg *wire.OpGetMoreMessage) error {
 	}
 
 	ctx := c.buildContext(db)
-	resp := c.server.dispatcher.Dispatch(ctx, cmdRaw)
+	resp, release := c.server.dispatcher.Dispatch(ctx, cmdRaw)
 
 	// Extract the cursor from the getMore response for the OP_REPLY format.
-	// OP_REPLY requires cursorID and documents directly.
+	// OP_REPLY requires cursorID and documents directly. The bson.Raw values
+	// in `docs` alias `resp` (which itself aliases a pooled marshal buffer),
+	// so release must run only after WriteOpReply has finished serialising.
+	// WriteOpReply writes doc bytes directly to the underlying net.Conn — no
+	// intermediate copy — so the safety invariant is that the kernel has
+	// consumed the bytes during the syscall. Once Write returns, the pooled
+	// buffer is no longer needed and release is safe.
 	cursorID, docs := extractCursorFromGetMoreResponse(resp)
-	return wire.WriteOpReply(c.conn, newRequestID(), msg.Hdr.RequestID, 0, cursorID, 0, docs)
+	writeErr := wire.WriteOpReply(c.conn, newRequestID(), msg.Hdr.RequestID, 0, cursorID, 0, docs)
+	release()
+	return writeErr
 }
 
 // handleOpKillCursors handles a legacy OP_KILL_CURSORS message.
@@ -265,8 +280,11 @@ func (c *Connection) handleOpDelete(msg *wire.OpDeleteMessage) error {
 	}
 
 	ctx := c.buildContext(db)
-	c.server.dispatcher.Dispatch(ctx, cmdRaw)
-	// OP_DELETE has no response.
+	_, release := c.server.dispatcher.Dispatch(ctx, cmdRaw)
+	// OP_DELETE has no response — but we still must release any pooled
+	// buffer the dispatcher acquired for the (discarded) response, otherwise
+	// every legacy delete leaks a slice from marshalBufPool until GC.
+	release()
 	return nil
 }
 

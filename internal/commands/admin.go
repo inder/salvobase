@@ -113,7 +113,7 @@ func handleDrop(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, fmt.Errorf("drop: %w", err)
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "ns", Value: ctx.DB + "." + collName},
 		{Key: "nIndexesWas", Value: int32(1)},
 		{Key: "ok", Value: float64(1)},
@@ -124,7 +124,7 @@ func handleDrop(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 func handleDropDatabase(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	if !ctx.Engine.HasDatabase(ctx.DB) {
 		// Dropping a non-existent database is a no-op in MongoDB.
-		return marshalResponse(bson.D{
+		return marshalResponse(ctx, bson.D{
 			{Key: "dropped", Value: ctx.DB},
 			{Key: "ok", Value: float64(1)},
 		}), nil
@@ -134,7 +134,7 @@ func handleDropDatabase(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		return nil, fmt.Errorf("dropDatabase: %w", err)
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "dropped", Value: ctx.DB},
 		{Key: "ok", Value: float64(1)},
 	}), nil
@@ -183,7 +183,7 @@ func handleListDatabases(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	}
 	d = append(d, bson.E{Key: "ok", Value: float64(1)})
 
-	return marshalResponse(d), nil
+	return marshalResponse(ctx, d), nil
 }
 
 // handleListCollections handles the "listCollections" command.
@@ -240,7 +240,7 @@ func handleListCollections(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		firstBatch[i] = d
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "cursor", Value: bson.D{
 			{Key: "id", Value: int64(0)},
 			{Key: "ns", Value: ns},
