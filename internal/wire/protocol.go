@@ -48,9 +48,15 @@ func readInt64(r io.Reader) (int64, error) {
 // When r implements io.ByteReader (e.g. *bufio.Reader), it uses ReadByte()
 // to read from an internal buffer, avoiding one syscall per character.
 // Falls back to reading one byte at a time via io.ReadFull for plain readers.
+//
+// The result buffer starts at 64 bytes of capacity so that typical OP_MSG
+// section identifiers (e.g. "documents", "updates", "deletes") and OP_QUERY
+// fully-qualified collection names ("db.collection") fit without intermediate
+// slice growth. Strings longer than 64 bytes still grow correctly.
 func readCString(r io.Reader) (string, error) {
+	const initialCap = 64
 	if br, ok := r.(io.ByteReader); ok {
-		var result []byte
+		result := make([]byte, 0, initialCap)
 		for {
 			b, err := br.ReadByte()
 			if err != nil {
@@ -63,7 +69,7 @@ func readCString(r io.Reader) (string, error) {
 		}
 		return string(result), nil
 	}
-	var result []byte
+	result := make([]byte, 0, initialCap)
 	buf := make([]byte, 1)
 	for {
 		if _, err := io.ReadFull(r, buf); err != nil {
