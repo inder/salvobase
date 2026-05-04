@@ -129,7 +129,8 @@ func (s *Server) handleRESTRequest(w http.ResponseWriter, r *http.Request) {
 		RuntimeCfg: s.dispatcher.RuntimeConfig(),
 	}
 
-	resp := s.dispatcher.Dispatch(ctx, cmdRaw)
+	resp, release := s.dispatcher.Dispatch(ctx, cmdRaw)
+	defer release()
 
 	// Convert BSON response to extended JSON.
 	jsonBytes, err := bson.MarshalExtJSON(resp, false, false)

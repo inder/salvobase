@@ -80,7 +80,7 @@ func handleGetMore(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 				cursorDoc = append(cursorDoc, bson.E{Key: "postBatchResumeToken", Value: tokenD})
 			}
 		}
-		return marshalResponse(bson.D{
+		return marshalResponse(ctx, bson.D{
 			{Key: "cursor", Value: cursorDoc},
 			{Key: "ok", Value: float64(1)},
 		}), nil
@@ -106,7 +106,7 @@ func handleGetMore(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		nextBatch[i] = d
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "cursor", Value: bson.D{
 			{Key: "id", Value: returnedCursorID},
 			{Key: "ns", Value: ns},
@@ -169,7 +169,7 @@ func handleKillCursors(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 		notFound = bson.A{}
 	}
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "cursorsKilled", Value: killed},
 		{Key: "cursorsNotFound", Value: notFound},
 		{Key: "cursorsAlive", Value: bson.A{}},
@@ -179,7 +179,7 @@ func handleKillCursors(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 }
 
 // handleEndSessions handles the "endSessions" command (no-op stub).
-func handleEndSessions(_ *Context, _ bson.Raw) (bson.Raw, error) {
+func handleEndSessions(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
@@ -194,7 +194,7 @@ func handleStartSession(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	}
 	ctx.Session = session
 
-	return marshalResponse(bson.D{
+	return marshalResponse(ctx, bson.D{
 		{Key: "id", Value: bson.D{
 			{Key: "id", Value: bson.Binary{Subtype: 0x04, Data: sessionBytes}},
 		}},
@@ -205,12 +205,12 @@ func handleStartSession(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 
 // handleCommitTransaction handles the "commitTransaction" command.
 // Stub — Salvobase is single-node with auto-commit semantics.
-func handleCommitTransaction(_ *Context, _ bson.Raw) (bson.Raw, error) {
+func handleCommitTransaction(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
 // handleAbortTransaction handles the "abortTransaction" command.
 // Stub — Salvobase is single-node with auto-commit semantics.
-func handleAbortTransaction(_ *Context, _ bson.Raw) (bson.Raw, error) {
+func handleAbortTransaction(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }

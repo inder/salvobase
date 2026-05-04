@@ -5,6 +5,7 @@ package commands
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -29,7 +30,56 @@ type Context struct {
 	RemoteAddr string
 	// RuntimeCfg provides access to runtime-modifiable server parameters.
 	RuntimeCfg *RuntimeConfig
+
+	// pendingRelease holds slice handles pulled from marshalBufPool whose
+	// bson.Raw has been returned from this command and must remain valid
+	// until the wire layer has copied the bytes. Dispatch hands runReleases
+	// back to the server; the server invokes it after WriteOpMsg returns.
+	// We store *[]byte (slice headers) so that an append-driven growth in
+	// appendBSONDoc, which produces a new underlying array, is the slice
+	// we put back — not the original empty one.
+	pendingRelease []*[]byte
 }
+
+// addReleaseBuf registers a pooled slice handle to be returned when the
+// command's response has been written.
+func (c *Context) addReleaseBuf(bp *[]byte) {
+	c.pendingRelease = append(c.pendingRelease, bp)
+}
+
+// runReleases returns every pending buffer to its pool and clears the list
+// so the Context can be reused on the next command.
+func (c *Context) runReleases() {
+	for _, bp := range c.pendingRelease {
+		if cap(*bp) < marshalBufMaxCap {
+			marshalBufPool.Put(bp)
+		}
+	}
+	c.pendingRelease = c.pendingRelease[:0]
+}
+
+// marshalBufPool holds *[]byte slice handles reused as scratch for response
+// marshaling. Each command's response goes through marshalResponse which
+// pulls a slice, appends its BSON encoding via bsoncore, and returns a
+// bson.Raw aliasing those bytes. The slice is held until the wire layer
+// has copied the bytes (wire.WriteOpMsg copies into its own outer pool
+// buffer at op_msg.go:303), at which point Context.runReleases returns
+// it to the pool.
+//
+// Initial capacity (512 B) is sized for the most common command on a
+// steady-state connection — a hello/ismaster response. The pool grows
+// naturally for larger payloads and is capped at marshalBufMaxCap on Put.
+var marshalBufPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 0, 512)
+		return &b
+	},
+}
+
+// marshalBufMaxCap is the size threshold above which a buffer is dropped on
+// the floor instead of returned to the pool. Mirrors the driver's own bson
+// marshal pool: pinning a 16MiB+ buffer in steady state would waste memory.
+const marshalBufMaxCap = 16 * 1024 * 1024
 
 // Session represents a client session (for transactions and logical sessions).
 type Session struct {
@@ -181,23 +231,32 @@ func (d *Dispatcher) registerAll() {
 
 // Dispatch finds and executes the handler for the given command document.
 // The command name is the first key in the document.
+//
+// Returns the response bson.Raw and a release function. The bson.Raw may
+// alias a buffer pulled from marshalBufPool; the caller MUST invoke the
+// release function exactly once after the response has been consumed
+// (typically wire.WriteOpMsg, which copies the bytes into its own pool).
+// The release function is always non-nil and safe to call even if the
+// response was a fresh allocation (e.g. an error path).
+//
 // Always returns a valid BSON document with at least "ok" set.
-func (d *Dispatcher) Dispatch(ctx *Context, cmd bson.Raw) bson.Raw {
+func (d *Dispatcher) Dispatch(ctx *Context, cmd bson.Raw) (bson.Raw, func()) {
+	release := ctx.runReleases
 	cmdName, err := extractCommandName(cmd)
 	if err != nil {
-		return BuildErrorResponse(storage.ErrCodeBadValue, "empty or invalid command document")
+		return BuildErrorResponse(storage.ErrCodeBadValue, "empty or invalid command document"), release
 	}
 
 	handler, ok := d.handlers[cmdName]
 	if !ok {
-		return BuildErrorResponse(int32(59), fmt.Sprintf("no such command: '%s'", cmdName))
+		return BuildErrorResponse(int32(59), fmt.Sprintf("no such command: '%s'", cmdName)), release
 	}
 
 	// Auth check (skip for auth commands themselves and when noAuth is set).
 	if !ctx.NoAuth && !isAuthExempt(cmdName) {
 		if !d.checkAuth(ctx, cmdName) {
 			return BuildErrorResponse(storage.ErrCodeUnauthorized,
-				fmt.Sprintf("not authorized on %s to execute command %s", ctx.DB, cmdName))
+				fmt.Sprintf("not authorized on %s to execute command %s", ctx.DB, cmdName)), release
 		}
 	}
 
@@ -214,20 +273,23 @@ func (d *Dispatcher) Dispatch(ctx *Context, cmd bson.Raw) bson.Raw {
 		if me, ok := handlerErr.(*storage.MongoError); ok {
 			code = me.Code
 		}
-		return BuildErrorResponse(code, handlerErr.Error())
+		return BuildErrorResponse(code, handlerErr.Error()), release
 	}
 
 	// Ensure the response has "ok": 1.0 if not already set.
 	if resp != nil {
 		if _, err := resp.LookupErr("ok"); err != nil {
-			// Prepend ok: 1.0 to the response.
+			// Prepend ok: 1.0 to the response. prependOK reads from the
+			// (possibly pooled) input before writing the new doc, so it is
+			// safe even when the input aliases a pool buffer that will be
+			// returned by `release`.
 			resp = prependOK(resp)
 		}
 	} else {
 		resp = BuildOKResponse()
 	}
 
-	return resp
+	return resp, release
 }
 
 // isAuthExempt returns true for commands that must work before authentication.
@@ -460,12 +522,34 @@ func lookupRawField(doc bson.Raw, key string) bson.Raw {
 	return raw
 }
 
-// marshalResponse marshals a bson.D to bson.Raw. Panics on marshal failure
-// (which should never happen for well-formed documents).
-func marshalResponse(d bson.D) bson.Raw {
-	raw, err := bson.Marshal(d)
+// marshalResponse marshals a bson.D into a buffer pulled from marshalBufPool
+// and returns a bson.Raw aliasing that buffer's bytes. The buffer is released
+// when ctx.runReleases is invoked (Dispatch returns runReleases as the
+// release function — the server invokes it after wire.WriteOpMsg has copied
+// the response onto the wire).
+//
+// Ownership: the returned bson.Raw remains valid until release runs. Any
+// reader (e.g. prependOK, integration helpers) must finish reading before
+// the release fires. The dispatcher orchestrates this: prependOK reads the
+// pooled raw and writes a fresh allocation, so its own output does not need
+// to alias the same buffer.
+//
+// On the cold marshal-error path the function falls back to a fresh
+// allocation; the buffer is returned to the pool eagerly and no release is
+// registered for that document.
+func marshalResponse(ctx *Context, d bson.D) bson.Raw {
+	bp, ok := marshalBufPool.Get().(*[]byte)
+	if !ok || bp == nil {
+		// Defensive: pool only stores *[]byte from New, but a two-value
+		// assertion satisfies errcheck and guards against future pool reuse.
+		fresh := make([]byte, 0, 512)
+		bp = &fresh
+	}
+	encoded, err := appendBSONDoc((*bp)[:0], d)
 	if err != nil {
-		// This should never happen; log and return an error doc.
+		// Cold path: drop the pool slice and fall back to a fresh allocation
+		// so callers see a stable bson.Raw without a pending release.
+		marshalBufPool.Put(bp)
 		errDoc, _ := bson.Marshal(bson.D{
 			{Key: "ok", Value: float64(0)},
 			{Key: "errmsg", Value: fmt.Sprintf("internal marshal error: %v", err)},
@@ -473,5 +557,11 @@ func marshalResponse(d bson.D) bson.Raw {
 		})
 		return errDoc
 	}
-	return raw
+	// appendBSONDoc may have outgrown the pool slice's backing array — in
+	// that case `encoded` points at a fresh, larger allocation. Update the
+	// pool handle so the larger slice is what we return to the pool, not
+	// the original 512B starter buffer.
+	*bp = encoded
+	ctx.addReleaseBuf(bp)
+	return bson.Raw(encoded)
 }
