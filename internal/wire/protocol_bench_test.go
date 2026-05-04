@@ -29,7 +29,9 @@ func BenchmarkReadCString(b *testing.B) {
 			br := bufio.NewReader(rdr)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				rdr.Seek(0, io.SeekStart)
+				if _, err := rdr.Seek(0, io.SeekStart); err != nil {
+					b.Fatal(err)
+				}
 				br.Reset(rdr)
 				if _, err := readCString(br); err != nil {
 					b.Fatal(err)
@@ -42,7 +44,9 @@ func BenchmarkReadCString(b *testing.B) {
 			plain := struct{ io.Reader }{rdr}
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				rdr.Seek(0, io.SeekStart)
+				if _, err := rdr.Seek(0, io.SeekStart); err != nil {
+					b.Fatal(err)
+				}
 				if _, err := readCString(plain); err != nil {
 					b.Fatal(err)
 				}
