@@ -65,13 +65,17 @@ func (c *bboltCollection) prepareInsertDoc(rawDoc bson.Raw) (preparedInsert, err
 		if err != nil {
 			return preparedInsert{}, fmt.Errorf("prepareInsertDoc: prepend _id: %w", err)
 		}
+		// Build the key directly from the OID we just generated — skips a
+		// Lookup on the freshly-prepended doc plus the appendIDKey type
+		// switch and ObjectIDOK decode, which are equivalent to this copy.
+		p.key = append(make([]byte, 0, 12), p.id[:]...)
 	} else {
 		if oid2, ok := idVal.ObjectIDOK(); ok {
 			p.id = oid2
 		}
 		p.finalDoc = rawDoc
+		p.key = encodeIDValue(idVal)
 	}
-	p.key = encodeIDValue(p.finalDoc.Lookup("_id"))
 	var err error
 	p.compressed, err = c.engine.compress(p.finalDoc)
 	if err != nil {

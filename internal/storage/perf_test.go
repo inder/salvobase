@@ -519,3 +519,72 @@ func benchmarkInsertManyNoIndexN(b *testing.B, n int) {
 
 func BenchmarkInsertManyNoIndex_100(b *testing.B)  { benchmarkInsertManyNoIndexN(b, 100) }
 func BenchmarkInsertManyNoIndex_1000(b *testing.B) { benchmarkInsertManyNoIndexN(b, 1000) }
+
+// BenchmarkPrepareInsertDoc_NoID exercises the new-OID branch of prepareInsertDoc,
+// which is the YCSB workload-A profile (driver does not supply _id). Tracks the
+// removal of the redundant Lookup("_id") + ObjectIDOK decode after prependID.
+func BenchmarkPrepareInsertDoc_NoID(b *testing.B) {
+	dir := b.TempDir()
+	e, err := NewBBoltEngine(dir, "none", false)
+	if err != nil {
+		b.Fatalf("NewBBoltEngine: %v", err)
+	}
+	defer e.Close()
+
+	coll, err := e.Collection("bench", "prep")
+	if err != nil {
+		b.Fatalf("Collection: %v", err)
+	}
+	bc, ok := coll.(*bboltCollection)
+	if !ok {
+		b.Fatalf("expected *bboltCollection, got %T", coll)
+	}
+
+	doc := mustMarshal(bson.D{
+		{Key: "name", Value: "user"},
+		{Key: "age", Value: int32(42)},
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := bc.prepareInsertDoc(doc); err != nil {
+			b.Fatalf("prepareInsertDoc: %v", err)
+		}
+	}
+}
+
+// BenchmarkPrepareInsertDoc_WithID exercises the explicit-_id branch of
+// prepareInsertDoc to guard against regression on the alternate path.
+func BenchmarkPrepareInsertDoc_WithID(b *testing.B) {
+	dir := b.TempDir()
+	e, err := NewBBoltEngine(dir, "none", false)
+	if err != nil {
+		b.Fatalf("NewBBoltEngine: %v", err)
+	}
+	defer e.Close()
+
+	coll, err := e.Collection("bench", "prep")
+	if err != nil {
+		b.Fatalf("Collection: %v", err)
+	}
+	bc, ok := coll.(*bboltCollection)
+	if !ok {
+		b.Fatalf("expected *bboltCollection, got %T", coll)
+	}
+
+	oid := bson.NewObjectID()
+	doc := mustMarshal(bson.D{
+		{Key: "_id", Value: oid},
+		{Key: "name", Value: "user"},
+		{Key: "age", Value: int32(42)},
+	})
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := bc.prepareInsertDoc(doc); err != nil {
+			b.Fatalf("prepareInsertDoc: %v", err)
+		}
+	}
+}
