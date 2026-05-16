@@ -1630,11 +1630,12 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 				if err != nil {
 					return err
 				}
-				kc := make([]byte, len(idKey))
-				copy(kc, idKey)
+				// idKey is already a freshly-allocated, caller-owned slice (encodeIDValue
+				// passes nil dst to appendIDKey). raw may alias the mmap-backed bucket
+				// value when compression is "none", so it must still be copied.
 				dc := make([]byte, len(raw))
 				copy(dc, raw)
-				toUpdate = append(toUpdate, docToUpdate{key: kc, doc: bson.Raw(dc)})
+				toUpdate = append(toUpdate, docToUpdate{key: idKey, doc: bson.Raw(dc)})
 			}
 		} else if plan, planOK := c.chooseIndex(tx, filter); planOK {
 			// Secondary index scan within the write transaction.
@@ -1647,12 +1648,11 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 				return scanErr
 			}
 			for _, doc := range idxDocs {
+				// idKey is freshly allocated by encodeIDValue; no extra copy needed.
 				idKey := encodeIDValue(doc.Lookup("_id"))
-				kc := make([]byte, len(idKey))
-				copy(kc, idKey)
 				dc := make([]byte, len(doc))
 				copy(dc, doc)
-				toUpdate = append(toUpdate, docToUpdate{kc, dc})
+				toUpdate = append(toUpdate, docToUpdate{idKey, dc})
 			}
 		} else if err := b.ForEach(func(k, v []byte) error {
 			raw, err := c.engine.decompress(v)
@@ -2111,11 +2111,12 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 				if err != nil {
 					return err
 				}
-				kc := make([]byte, len(idKey))
-				copy(kc, idKey)
+				// idKey is already a freshly-allocated, caller-owned slice; no extra copy.
+				// raw may alias the mmap-backed bucket value when compression is "none",
+				// so it must still be copied.
 				dc := make([]byte, len(raw))
 				copy(dc, raw)
-				toDelete = append(toDelete, docInfo{key: kc, doc: bson.Raw(dc)})
+				toDelete = append(toDelete, docInfo{key: idKey, doc: bson.Raw(dc)})
 			}
 		} else if plan, planOK := c.chooseIndex(tx, filter); planOK {
 			// Secondary index scan within the write transaction.
@@ -2128,12 +2129,11 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 				return scanErr
 			}
 			for _, doc := range idxDocs {
+				// idKey is freshly allocated by encodeIDValue; no extra copy needed.
 				idKey := encodeIDValue(doc.Lookup("_id"))
-				kc := make([]byte, len(idKey))
-				copy(kc, idKey)
 				dc := make([]byte, len(doc))
 				copy(dc, doc)
-				toDelete = append(toDelete, docInfo{kc, dc})
+				toDelete = append(toDelete, docInfo{idKey, dc})
 			}
 		} else if err := b.ForEach(func(k, v []byte) error {
 			raw, err := c.engine.decompress(v)
