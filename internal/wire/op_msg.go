@@ -191,6 +191,27 @@ func readDocumentSequence(r io.Reader) (DocumentSeq, error) {
 	}
 	seq.Identifier = identifier
 
+	// Pre-size seq.Documents from the bytes left in the sequence. Without this,
+	// the loop below starts from a nil slice and append doubles capacity each
+	// time it overflows — for a 100-doc bulk insert that's ~7 grow-and-copy
+	// events. Estimating count from remaining/128 gets close to the true count
+	// for typical small documents (32–512 bytes) and slightly over-allocates
+	// for tiny ones; a floor of 4 avoids wasting memory on near-empty sequences.
+	// A ceiling of 1024 bounds the pathological case where a malformed frame
+	// claims more remaining bytes than will actually hold documents — capping
+	// the slice-header allocation at ~24 KiB regardless of declared size while
+	// still eliminating regrowth for any legitimate MongoDB bulk-insert batch
+	// (drivers cap at 100k docs but rarely send more than a few thousand).
+	// The per-slot cost is the bson.Raw slice header (24 bytes), so even
+	// over-estimating by 2× is cheap compared to the avoided memcpys.
+	estDocs := int(lr.N / 128)
+	if estDocs < 4 {
+		estDocs = 4
+	} else if estDocs > 1024 {
+		estDocs = 1024
+	}
+	seq.Documents = make([]bson.Raw, 0, estDocs)
+
 	// Read BSON documents until the sequence is exhausted.
 	for lr.N > 0 {
 		doc, err := readBSONDoc(lr)
