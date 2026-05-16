@@ -535,7 +535,10 @@ func BenchmarkPrepareInsertDoc_NoID(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Collection: %v", err)
 	}
-	bc := coll.(*bboltCollection)
+	bc, ok := coll.(*bboltCollection)
+	if !ok {
+		b.Fatalf("expected *bboltCollection, got %T", coll)
+	}
 
 	doc := mustMarshal(bson.D{
 		{Key: "name", Value: "user"},
@@ -565,7 +568,10 @@ func BenchmarkPrepareInsertDoc_WithID(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Collection: %v", err)
 	}
-	bc := coll.(*bboltCollection)
+	bc, ok := coll.(*bboltCollection)
+	if !ok {
+		b.Fatalf("expected *bboltCollection, got %T", coll)
+	}
 
 	oid := bson.NewObjectID()
 	doc := mustMarshal(bson.D{
