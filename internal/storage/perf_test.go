@@ -481,3 +481,41 @@ func benchmarkCollScanN(b *testing.B, n int) {
 
 func BenchmarkCollScan_100(b *testing.B)  { benchmarkCollScanN(b, 100) }
 func BenchmarkCollScan_1000(b *testing.B) { benchmarkCollScanN(b, 1000) }
+
+// benchmarkInsertManyNoIndexN measures a batched insert of n documents into a
+// collection with no secondary indexes. This is the YCSB workload-A profile
+// and exercises the lifted insertIntoIndexes fast path: the per-doc loop
+// performs zero meta-bucket cursor scans.
+func benchmarkInsertManyNoIndexN(b *testing.B, n int) {
+	b.Helper()
+	dir := b.TempDir()
+	e, err := NewBBoltEngine(dir, "none", false)
+	if err != nil {
+		b.Fatalf("NewBBoltEngine: %v", err)
+	}
+	defer e.Close()
+
+	coll, err := e.Collection("bench", "bulk")
+	if err != nil {
+		b.Fatalf("Collection: %v", err)
+	}
+
+	docs := make([]bson.Raw, n)
+	for i := 0; i < n; i++ {
+		docs[i] = mustMarshal(bson.D{
+			{Key: "name", Value: "user"},
+			{Key: "age", Value: int32(i)},
+		})
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := coll.InsertMany(docs, InsertOptions{Ordered: true}); err != nil {
+			b.Fatalf("InsertMany: %v", err)
+		}
+	}
+}
+
+func BenchmarkInsertManyNoIndex_100(b *testing.B)  { benchmarkInsertManyNoIndexN(b, 100) }
+func BenchmarkInsertManyNoIndex_1000(b *testing.B) { benchmarkInsertManyNoIndexN(b, 1000) }
