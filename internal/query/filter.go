@@ -1068,7 +1068,7 @@ func getFieldAll(doc bson.Raw, path string) []bson.RawValue {
 		if err2 != nil {
 			return nil
 		}
-		var out []bson.RawValue
+		out := make([]bson.RawValue, 0, len(arrVals))
 		for _, elem := range arrVals {
 			if elem.Type == bson.TypeEmbeddedDocument {
 				out = append(out, getFieldAll(elem.Document(), rest)...)
