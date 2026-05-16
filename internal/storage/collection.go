@@ -2368,11 +2368,17 @@ func (c *bboltCollection) Distinct(field string, filter bson.Raw) ([]interface{}
 }
 
 func lookupDotPath(doc bson.Raw, path string) bson.RawValue {
-	parts := splitPath(path)
-	if len(parts) == 0 {
+	if path == "" {
 		return bson.RawValue{}
 	}
-	return lookupParts(doc, parts)
+	if strings.IndexByte(path, '.') < 0 {
+		rv, err := doc.LookupErr(path)
+		if err != nil {
+			return bson.RawValue{}
+		}
+		return rv
+	}
+	return lookupParts(doc, strings.Split(path, "."))
 }
 
 func lookupParts(doc bson.Raw, parts []string) bson.RawValue {
@@ -2388,22 +2394,6 @@ func lookupParts(doc bson.Raw, parts []string) bson.RawValue {
 		return lookupParts(sub, parts[1:])
 	}
 	return bson.RawValue{}
-}
-
-func splitPath(path string) []string {
-	if path == "" {
-		return nil
-	}
-	result := []string{}
-	start := 0
-	for i := 0; i < len(path); i++ {
-		if path[i] == '.' {
-			result = append(result, path[start:i])
-			start = i + 1
-		}
-	}
-	result = append(result, path[start:])
-	return result
 }
 
 // ─── FindOneAnd* ──────────────────────────────────────────────────────────────
