@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"sync"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
@@ -14,14 +13,12 @@ import (
 // startingFrom(4) + numberReturned(4) = 36.
 const opReplyHdrSize = HeaderSize + 4 + 8 + 4 + 4
 
-// opReplyHdrPool pools the fixed-size header buffer used by WriteOpReply so
-// that high-throughput query paths avoid a 36-byte allocation per response.
-var opReplyHdrPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, opReplyHdrSize)
-		return &b
-	},
-}
+// opReplyBufBuckets mirrors opMsgBufBuckets — OP_REPLY responses ride the same
+// driver-frame size distribution as OP_MSG, so sharing the tier shape keeps
+// pool behavior predictable across the two write paths.
+var opReplyBufBuckets = [...]int{512, 4096, 16384, 65536}
+
+var opReplyBufPool = newBucketBufPool(opReplyBufBuckets[:])
 
 // OpReplyMessage represents an OP_REPLY wire protocol message (opcode 1).
 // OP_REPLY is the server-to-client response format used with legacy OP_QUERY.
@@ -34,7 +31,8 @@ type OpReplyMessage struct {
 	Documents      []bson.Raw
 }
 
-// WriteOpReply encodes and writes an OP_REPLY message to w.
+// WriteOpReply encodes and writes an OP_REPLY message to w in a single
+// w.Write call, regardless of how many documents are in docs.
 //
 // Wire layout:
 //
@@ -52,55 +50,48 @@ func WriteOpReply(
 	startingFrom int32,
 	docs []bson.Raw,
 ) error {
-	// Calculate the total document bytes so we can set messageLength correctly.
 	docBytes := 0
 	for _, d := range docs {
 		docBytes += len(d)
 	}
 
-	// messageLength = header(16) + responseFlags(4) + cursorID(8) +
-	//                 startingFrom(4) + numberReturned(4) + docs
 	msgLen := int32(opReplyHdrSize + docBytes)
 
-	// Borrow a pooled buffer for the fixed-size header portion.
-	bp, ok := opReplyHdrPool.Get().(*[]byte)
-	if !ok {
-		b := make([]byte, opReplyHdrSize)
-		bp = &b
-	}
-	hdrBuf := *bp // aliases the pooled array; do not retain beyond this function
-	defer opReplyHdrPool.Put(bp)
+	buf, handle := opReplyBufPool.Get(int(msgLen))
+	defer opReplyBufPool.Put(handle)
 
+	// Slice down to the exact message length — Get may have returned a larger
+	// bucket. Writing the full bucket would put trailing garbage on the wire.
+	buf = buf[:msgLen]
 	offset := 0
 
 	// Header
-	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(msgLen))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(msgLen))
 	offset += 4
-	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(requestID))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(requestID))
 	offset += 4
-	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(responseTo))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(responseTo))
 	offset += 4
-	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(OpReply))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(OpReply))
 	offset += 4
 
 	// Response fields
-	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(responseFlags))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(responseFlags))
 	offset += 4
-	binary.LittleEndian.PutUint64(hdrBuf[offset:], uint64(cursorID))
+	binary.LittleEndian.PutUint64(buf[offset:], uint64(cursorID))
 	offset += 8
-	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(startingFrom))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(startingFrom))
 	offset += 4
-	binary.LittleEndian.PutUint32(hdrBuf[offset:], uint32(len(docs)))
+	binary.LittleEndian.PutUint32(buf[offset:], uint32(len(docs)))
+	offset += 4
 
-	if _, err := w.Write(hdrBuf); err != nil {
-		return fmt.Errorf("WriteOpReply header: %w", err)
+	// Documents
+	for _, doc := range docs {
+		offset += copy(buf[offset:], doc)
 	}
 
-	for i, doc := range docs {
-		if _, err := w.Write(doc); err != nil {
-			return fmt.Errorf("WriteOpReply document %d: %w", i, err)
-		}
+	if _, err := w.Write(buf); err != nil {
+		return fmt.Errorf("WriteOpReply: %w", err)
 	}
-
 	return nil
 }
