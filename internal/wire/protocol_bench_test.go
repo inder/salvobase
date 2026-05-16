@@ -68,7 +68,7 @@ func BenchmarkReadDocumentSequence(b *testing.B) {
 	cases := []struct {
 		name    string
 		docs    int
-		docSize int // approximate marshalled doc size in bytes
+		docSize int // approximate marshaled doc size in bytes
 	}{
 		{"batch_10x64B", 10, 64},
 		{"batch_100x128B", 100, 128},
