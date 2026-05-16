@@ -1507,12 +1507,79 @@ func tryFastSetOnly(doc bson.Raw, update bson.Raw) (bson.Raw, bool) {
 		}
 	}
 
+	n := len(setElems)
+
+	// Inline fast path for small $set operations (≤8 fields — the overwhelmingly
+	// common case). Replaces two map allocations (newVals + usedKeys) with a
+	// stack-allocated key+flag array and a linear scan. Storing only string keys
+	// (no []byte val) keeps the array on the stack; value bytes are copied
+	// directly into dst at the point of use.
+	const maxInlineSet = 8
+	if n <= maxInlineSet {
+		var keys [maxInlineSet]string
+		var used [maxInlineSet]bool
+		for i := 0; i < n; i++ {
+			keys[i] = setElems[i].Key()
+		}
+
+		docElems, err := doc.Elements()
+		if err != nil {
+			return nil, false
+		}
+
+		dst := make([]byte, 4, len(doc)+len(setDoc))
+		for _, e := range docElems {
+			key := e.Key()
+			matched := -1
+			for i := 0; i < n; i++ {
+				if keys[i] == key {
+					matched = i
+					break
+				}
+			}
+			if matched >= 0 {
+				used[matched] = true
+				rv := setElems[matched].Value()
+				// Copy rv.Value: sub-slice of the wire read buffer; must be owned
+				// before the transaction outlives this call.
+				valCopy := make([]byte, len(rv.Value))
+				copy(valCopy, rv.Value)
+				dst = append(dst, byte(rv.Type))
+				dst = append(dst, key...)
+				dst = append(dst, 0x00)
+				dst = append(dst, valCopy...)
+			} else {
+				dst = append(dst, []byte(e)...)
+			}
+		}
+		// Append $set fields not already present in the document.
+		for i := 0; i < n; i++ {
+			if !used[i] {
+				rv := setElems[i].Value()
+				valCopy := make([]byte, len(rv.Value))
+				copy(valCopy, rv.Value)
+				dst = append(dst, byte(rv.Type))
+				dst = append(dst, keys[i]...)
+				dst = append(dst, 0x00)
+				dst = append(dst, valCopy...)
+			}
+		}
+		dst = append(dst, 0x00) // BSON document null terminator
+		sz := uint32(len(dst))
+		dst[0] = byte(sz)
+		dst[1] = byte(sz >> 8)
+		dst[2] = byte(sz >> 16)
+		dst[3] = byte(sz >> 24)
+		return bson.Raw(dst), true
+	}
+
+	// Map-based fallback for >maxInlineSet fields (rare in practice).
 	// Build a lookup: field name → (type byte, raw value bytes).
 	type setVal struct {
 		typ byte
 		val []byte
 	}
-	newVals := make(map[string]setVal, len(setElems))
+	newVals := make(map[string]setVal, n)
 	for _, e := range setElems {
 		rv := e.Value()
 		// Copy rv.Value: it is a sub-slice of the update document, which may be
@@ -1533,7 +1600,7 @@ func tryFastSetOnly(doc bson.Raw, update bson.Raw) (bson.Raw, bool) {
 	// Allocate output: existing doc length + headroom for any new fields.
 	dst := make([]byte, 4, len(doc)+len(setDoc))
 
-	usedKeys := make(map[string]bool, len(setElems))
+	usedKeys := make(map[string]bool, n)
 	for _, e := range docElems {
 		key := e.Key()
 		if nv, ok := newVals[key]; ok {
@@ -1564,11 +1631,11 @@ func tryFastSetOnly(doc bson.Raw, update bson.Raw) (bson.Raw, bool) {
 	}
 
 	dst = append(dst, 0x00) // BSON document null terminator
-	n := uint32(len(dst))
-	dst[0] = byte(n)
-	dst[1] = byte(n >> 8)
-	dst[2] = byte(n >> 16)
-	dst[3] = byte(n >> 24)
+	sz := uint32(len(dst))
+	dst[0] = byte(sz)
+	dst[1] = byte(sz >> 8)
+	dst[2] = byte(sz >> 16)
+	dst[3] = byte(sz >> 24)
 
 	return bson.Raw(dst), true
 }
