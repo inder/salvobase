@@ -1142,9 +1142,10 @@ func (c *bboltCollection) rangeIndexScanTx(
 	// If no lower bound and no prefix, seekKey is empty — we start from the bucket start.
 
 	// outerPrefix is the part of the key we always require: the equality fields portion.
-	// We stop scanning when the key no longer starts with this prefix.
-	outerPrefix := make([]byte, len(plan.prefix))
-	copy(outerPrefix, plan.prefix)
+	// We stop scanning when the key no longer starts with this prefix. plan.prefix is
+	// already an owned heap allocation produced by encodeEqualityPrefix (see index.go),
+	// and we only read it below — no defensive copy needed.
+	outerPrefix := plan.prefix
 
 	// rangeOffset is the offset in the index key where the range field encoded bytes start.
 	rangeOffset := len(plan.prefix)
@@ -1259,8 +1260,9 @@ func (c *bboltCollection) rangeIndexScanUniqueTx(
 		seekKey = append(seekKey, plan.loBound...)
 	}
 
-	outerPrefix := make([]byte, len(plan.prefix))
-	copy(outerPrefix, plan.prefix)
+	// plan.prefix is already an owned heap allocation (see encodeEqualityPrefix in
+	// index.go) and is only read in the loop below. No defensive copy needed.
+	outerPrefix := plan.prefix
 
 	rangeOffset := len(plan.prefix)
 	if len(plan.prefix) > 0 {
