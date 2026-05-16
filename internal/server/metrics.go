@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/http/pprof"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -48,6 +50,14 @@ func (s *Server) startHTTPServer() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":1,"status":"healthy"}`))
 	})
+
+	// pprof endpoints — loopback-only to prevent CPU-exhaustion DoS from remote callers.
+	mux.HandleFunc("/debug/pprof/", loopbackOnly(pprof.Index))
+	mux.HandleFunc("/debug/pprof/profile", loopbackOnly(pprof.Profile))
+	mux.HandleFunc("/debug/pprof/symbol", loopbackOnly(pprof.Symbol))
+	mux.HandleFunc("/debug/pprof/trace", loopbackOnly(pprof.Trace))
+	mux.Handle("/debug/pprof/mutex", loopbackOnlyH(pprof.Handler("mutex")))
+	mux.Handle("/debug/pprof/allocs", loopbackOnlyH(pprof.Handler("allocs")))
 
 	// REST API.
 	s.registerRESTAPI(mux)
@@ -157,4 +167,22 @@ func (s *Server) handleRESTRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(statusCode)
 	_, _ = w.Write(jsonBytes)
+}
+
+// loopbackOnly wraps an http.HandlerFunc so it only accepts requests from loopback addresses.
+// pprof endpoints can block for 30s+ — guard them against remote callers.
+func loopbackOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || !net.ParseIP(host).IsLoopback() {
+			http.Error(w, "forbidden: pprof is localhost-only", http.StatusForbidden)
+			return
+		}
+		h(w, r)
+	}
+}
+
+// loopbackOnlyH wraps an http.Handler (for pprof.Handler("mutex") style handlers).
+func loopbackOnlyH(h http.Handler) http.Handler {
+	return http.HandlerFunc(loopbackOnly(h.ServeHTTP))
 }
