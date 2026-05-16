@@ -138,9 +138,66 @@ func encodeIndexKeyFromRaw(v bson.RawValue) []byte {
 
 // ─── Index insert/remove ──────────────────────────────────────────────────────
 
+// idxEntry caches a (spec, bucket) pair for one secondary index, scoped to a tx.
+// Used by the batched insert/update/delete paths to avoid re-scanning the meta
+// bucket once per document.
+type idxEntry struct {
+	spec   IndexSpec
+	bucket *bolt.Bucket
+}
+
+// collectIndexEntries returns the live (spec, bucket) pairs for every secondary
+// index on coll within tx. Returns nil when the collection has no secondary
+// indexes — that's the fast path that lets batched callers skip per-doc cursor
+// scans of the meta bucket entirely.
+func (e *BBoltEngine) collectIndexEntries(tx *bolt.Tx, coll string) []idxEntry {
+	meta := tx.Bucket([]byte(bucketMetaIndexes))
+	if meta == nil {
+		return nil
+	}
+	prefix := metaIdxPrefix(coll)
+	var entries []idxEntry
+	c := meta.Cursor()
+	for k, v := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, v = c.Next() {
+		var spec IndexSpec
+		if err := json.Unmarshal(v, &spec); err != nil {
+			continue
+		}
+		idxB := tx.Bucket([]byte(idxBucket(coll, spec.Name)))
+		if idxB == nil {
+			continue
+		}
+		entries = append(entries, idxEntry{spec: spec, bucket: idxB})
+	}
+	return entries
+}
+
+// insertDocIntoCollectedIndexes inserts doc into every pre-collected secondary
+// index. When entries is empty (the no-index fast path) this is a zero-cost
+// no-op.
+func insertDocIntoCollectedIndexes(entries []idxEntry, idBytes []byte, doc bson.Raw) error {
+	for _, e := range entries {
+		if err := insertDocIntoIndex(e.bucket, e.spec, doc, idBytes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeDocFromCollectedIndexes removes doc from every pre-collected secondary
+// index. Errors are swallowed to match the existing removeFromIndexes contract.
+func removeDocFromCollectedIndexes(entries []idxEntry, idBytes []byte, doc bson.Raw) {
+	for _, e := range entries {
+		removeDocFromIndex(e.bucket, e.spec, doc, idBytes)
+	}
+}
+
 // insertIntoIndexes adds a document to all secondary indexes of a collection.
 // The _id_ index is implicit (stored in the main collection bucket) and not managed here.
 // idBytes is the encoded _id key (from encodeIDValue).
+//
+// Single-doc helper. Batched callers should use collectIndexEntries +
+// insertDocIntoCollectedIndexes to avoid one cursor seek per document.
 func (e *BBoltEngine) insertIntoIndexes(tx *bolt.Tx, db, coll string, idBytes []byte, doc bson.Raw) error {
 	meta := tx.Bucket([]byte(bucketMetaIndexes))
 	if meta == nil {

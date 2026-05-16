@@ -123,6 +123,9 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 		}
 		// Read collection metadata once for capped enforcement.
 		collInfo, _ := getCollectionInfoTx(tx, c.coll)
+		// Collect secondary-index buckets once so the per-doc loop below does
+		// not re-scan the meta bucket for every insert.
+		idxEntries := c.engine.collectIndexEntries(tx, c.coll)
 		for i, r := range results {
 			if r.err != nil {
 				if opts.Ordered {
@@ -162,7 +165,7 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 			if putErr := b.Put(r.prep.key, r.prep.compressed); putErr != nil {
 				return putErr
 			}
-			if idxErr := c.engine.insertIntoIndexes(tx, c.db, c.coll, r.prep.key, r.prep.finalDoc); idxErr != nil {
+			if idxErr := insertDocIntoCollectedIndexes(idxEntries, r.prep.key, r.prep.finalDoc); idxErr != nil {
 				return idxErr
 			}
 			results[i].succeeded = true
@@ -1711,6 +1714,10 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 		}
 
 		result.MatchedCount = int64(len(toUpdate))
+		// Collect secondary-index buckets once so the per-doc loop below does
+		// not re-scan the meta bucket for every matched document (2N → 1 cursor
+		// scans per tx).
+		idxEntries := c.engine.collectIndexEntries(tx, c.coll)
 		for _, item := range toUpdate {
 			newDoc, fastOK := tryFastSetOnly(item.doc, update)
 			if !fastOK {
@@ -1736,7 +1743,7 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			}
 			// Remove old document from indexes
 			oldKey := encodeIDValue(item.doc.Lookup("_id"))
-			c.engine.removeFromIndexes(tx, c.db, c.coll, oldKey, item.doc) //nolint:errcheck
+			removeDocFromCollectedIndexes(idxEntries, oldKey, item.doc)
 			// If key changed (shouldn't for _id updates but handle it)
 			if string(item.key) != string(newKey) {
 				if err := b.Delete(item.key); err != nil {
@@ -1746,7 +1753,7 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			if err := b.Put(newKey, compressed); err != nil {
 				return err
 			}
-			c.engine.insertIntoIndexes(tx, c.db, c.coll, newKey, newDoc) //nolint:errcheck
+			insertDocIntoCollectedIndexes(idxEntries, newKey, newDoc) //nolint:errcheck
 			result.ModifiedCount++
 
 			// Compute field-level diff for change stream updateDescription.
@@ -2161,12 +2168,15 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 			return err
 		}
 
+		// Collect secondary-index buckets once for the delete loop below
+		// (N → 1 meta-bucket cursor scans per tx).
+		idxEntries := c.engine.collectIndexEntries(tx, c.coll)
 		for _, item := range toDelete {
 			if err := b.Delete(item.key); err != nil {
 				return err
 			}
 			idKey := encodeIDValue(item.doc.Lookup("_id"))
-			c.engine.removeFromIndexes(tx, c.db, c.coll, idKey, item.doc) //nolint:errcheck
+			removeDocFromCollectedIndexes(idxEntries, idKey, item.doc)
 			deleted++
 			deletedDocs = append(deletedDocs, item.doc)
 		}
