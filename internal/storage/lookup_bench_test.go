@@ -7,7 +7,7 @@ import (
 )
 
 func BenchmarkLookupDotPathTopLevel(b *testing.B) {
-	doc, _ := bson.Marshal(bson.D{{"name", "Alice"}, {"age", 30}, {"_id", "x"}})
+	doc, _ := bson.Marshal(bson.D{{Key: "name", Value: "Alice"}, {Key: "age", Value: 30}, {Key: "_id", Value: "x"}})
 	raw := bson.Raw(doc)
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -17,7 +17,7 @@ func BenchmarkLookupDotPathTopLevel(b *testing.B) {
 }
 
 func BenchmarkLookupDotPathNested(b *testing.B) {
-	doc, _ := bson.Marshal(bson.D{{"address", bson.D{{"city", "NYC"}}}})
+	doc, _ := bson.Marshal(bson.D{{Key: "address", Value: bson.D{{Key: "city", Value: "NYC"}}}})
 	raw := bson.Raw(doc)
 	b.ReportAllocs()
 	b.ResetTimer()
