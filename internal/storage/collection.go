@@ -1089,7 +1089,7 @@ func (c *bboltCollection) indexScanTx(
 	// This correctly distinguishes "foo" (prefix) from "foobar" (longer string) because
 	// the 0xFF separator byte cannot be part of a partial field encoding.
 	cur := idxB.Cursor()
-	for k, _ := cur.Seek(prefixKey); k != nil && bytes.HasPrefix(k, prefixKey); k, _ = cur.Next() {
+	for k, _ := cur.Seek(prefixKey); k != nil && hasPrefix(k, prefixKey); k, _ = cur.Next() {
 		if len(k) <= len(prefixKey) || k[len(prefixKey)] != 0xFF {
 			// Longer field value shares our byte prefix — not an exact match.
 			continue
@@ -1173,7 +1173,7 @@ func (c *bboltCollection) rangeIndexScanTx(
 
 	for k := startK; k != nil; k, _ = cur.Next() {
 		// Stop if key no longer begins with the equality prefix.
-		if len(outerPrefix) > 0 && !bytes.HasPrefix(k, outerPrefix) {
+		if len(outerPrefix) > 0 && !hasPrefix(k, outerPrefix) {
 			break
 		}
 
@@ -1287,7 +1287,7 @@ func (c *bboltCollection) rangeIndexScanUniqueTx(
 	var docs []bson.Raw
 	var arena docArena
 	for k, v := startK, startV; k != nil; k, v = cur.Next() {
-		if len(outerPrefix) > 0 && !bytes.HasPrefix(k, outerPrefix) {
+		if len(outerPrefix) > 0 && !hasPrefix(k, outerPrefix) {
 			break
 		}
 		if len(outerPrefix) > 0 {
