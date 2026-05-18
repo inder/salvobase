@@ -2768,6 +2768,7 @@ func (c *bboltScanCursor) NextBatch(batchSize int) (docs []bson.Raw, exhausted b
 		k, v = c.cur.Next()
 	}
 
+	var arena docArena
 	for k != nil {
 		raw, err := c.engine.decompress(v)
 		if err != nil {
@@ -2793,9 +2794,9 @@ func (c *bboltScanCursor) NextBatch(batchSize int) (docs []bson.Raw, exhausted b
 				return nil, false, err
 			}
 		}
-		cp := make([]byte, len(doc))
-		copy(cp, doc)
-		docs = append(docs, bson.Raw(cp))
+		// arena.copyBytes extends doc lifetime beyond the bbolt mmap region
+		// (valid only while c.tx is open) into arena-owned memory.
+		docs = append(docs, bson.Raw(arena.copyBytes(doc)))
 		c.returned++
 
 		if c.limit > 0 && c.returned >= c.limit {
