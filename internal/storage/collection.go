@@ -116,7 +116,14 @@ func (c *bboltCollection) InsertMany(docs []bson.Raw, opts InsertOptions) ([]bso
 	var insertErr error
 	var successCount int64
 
-	txErr := boltDB.Update(func(tx *bolt.Tx) error {
+	txErr := boltDB.Batch(func(tx *bolt.Tx) error {
+		// Reset outer state so a Batch retry starts clean.
+		ids = ids[:0]
+		insertErr = nil
+		successCount = 0
+		for i := range results {
+			results[i].succeeded = false
+		}
 		b := tx.Bucket([]byte(collBucket(c.coll)))
 		if b == nil {
 			var createErr error
@@ -1673,7 +1680,10 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 	var result UpdateResult
 	var pendingEvents []ChangeEvent // collected inside tx, published after commit
 
-	if err := boltDB.Update(func(tx *bolt.Tx) error {
+	if err := boltDB.Batch(func(tx *bolt.Tx) error {
+		// Reset outer state so a Batch retry starts clean.
+		result = UpdateResult{}
+		pendingEvents = pendingEvents[:0]
 		b := tx.Bucket([]byte(collBucket(c.coll)))
 		if b == nil {
 			if !opts.Upsert {
@@ -1777,7 +1787,6 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			c.engine.insertIntoIndexes(tx, c.db, c.coll, key, newDoc) //nolint:errcheck
 			result.UpsertedCount = 1
 			result.UpsertedID = newDoc.Lookup("_id")
-			c.engine.opInsert.Add(1)
 			pendingEvents = append(pendingEvents, ChangeEvent{
 				OperationType: ChangeInsert,
 				DocumentKey:   makeDocumentKey(newDoc.Lookup("_id")),
@@ -1842,6 +1851,9 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 		return result, err
 	}
 
+	if result.UpsertedCount > 0 {
+		c.engine.opInsert.Add(1)
+	}
 	c.engine.opUpdate.Add(1)
 
 	// Publish change events for committed mutations.
@@ -1863,7 +1875,10 @@ func (c *bboltCollection) replaceDocs(filter, replacement bson.Raw, opts UpdateO
 	var result UpdateResult
 	var pendingEvent *ChangeEvent // at most one event for ReplaceOne
 
-	if err := boltDB.Update(func(tx *bolt.Tx) error {
+	if err := boltDB.Batch(func(tx *bolt.Tx) error {
+		// Reset outer state so a Batch retry starts clean.
+		result = UpdateResult{}
+		pendingEvent = nil
 		b := tx.Bucket([]byte(collBucket(c.coll)))
 		if b == nil {
 			if !opts.Upsert {
@@ -2170,7 +2185,10 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 	var deleted int64
 	var deletedDocs []bson.Raw // document keys collected for change events
 
-	if err := boltDB.Update(func(tx *bolt.Tx) error {
+	if err := boltDB.Batch(func(tx *bolt.Tx) error {
+		// Reset outer state so a Batch retry starts clean.
+		deleted = 0
+		deletedDocs = deletedDocs[:0]
 		b := tx.Bucket([]byte(collBucket(c.coll)))
 		if b == nil {
 			return nil
@@ -2258,7 +2276,9 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 		return deleted, err
 	}
 
-	c.engine.opDelete.Add(1)
+	if deleted > 0 {
+		c.engine.opDelete.Add(1)
+	}
 
 	// Publish ChangeDelete events for each deleted document.
 	if len(deletedDocs) > 0 && c.engine.eventBus.HasStream(c.db, c.coll) {
@@ -2422,7 +2442,12 @@ func (c *bboltCollection) findAndModify(
 
 	var returned bson.Raw
 
-	txErr := boltDB.Update(func(tx *bolt.Tx) error {
+	var opKind string // "insert", "delete", or "update" — set inside fn, dispatched outside
+
+	txErr := boltDB.Batch(func(tx *bolt.Tx) error {
+		// Reset outer state so a Batch retry starts clean.
+		returned = nil
+		opKind = ""
 		b := tx.Bucket([]byte(collBucket(c.coll)))
 		if b == nil {
 			if opts.Upsert && !remove {
@@ -2541,7 +2566,7 @@ func (c *bboltCollection) findAndModify(
 				if opts.ReturnNew {
 					returned = newDoc
 				}
-				c.engine.opInsert.Add(1)
+				opKind = "insert"
 			}
 			return nil
 		}
@@ -2559,7 +2584,7 @@ func (c *bboltCollection) findAndModify(
 			delKey := encodeIDValue(target.doc.Lookup("_id"))
 			c.engine.removeFromIndexes(tx, c.db, c.coll, delKey, target.doc) //nolint:errcheck
 			returned = target.doc
-			c.engine.opDelete.Add(1)
+			opKind = "delete"
 			return nil
 		}
 
@@ -2613,11 +2638,20 @@ func (c *bboltCollection) findAndModify(
 		} else {
 			returned = target.doc
 		}
-		c.engine.opUpdate.Add(1)
+		opKind = "update"
 		return nil
 	})
 	if txErr != nil {
 		return nil, txErr
+	}
+
+	switch opKind {
+	case "insert":
+		c.engine.opInsert.Add(1)
+	case "delete":
+		c.engine.opDelete.Add(1)
+	case "update":
+		c.engine.opUpdate.Add(1)
 	}
 
 	return returned, nil
