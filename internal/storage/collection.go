@@ -1705,7 +1705,7 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 			key []byte
 			doc bson.Raw
 		}
-		var toUpdate []docToUpdate
+		toUpdate := make([]docToUpdate, 0, 4)
 
 		// Fast path: {_id: <scalar>} filter → O(log N) direct key lookup.
 		if idVal, ok := extractIDEquality(filter); ok {
@@ -1740,30 +1740,40 @@ func (c *bboltCollection) updateDocs(filter, update bson.Raw, opts UpdateOptions
 				copy(dc, doc)
 				toUpdate = append(toUpdate, docToUpdate{idKey, dc})
 			}
-		} else if err := b.ForEach(func(k, v []byte) error {
-			raw, err := c.engine.decompress(v)
-			if err != nil {
-				return err
+		} else {
+			// Full collection scan — Stats() hint only here, where it's actually used.
+			if kn := b.Stats().KeyN; kn > 16 {
+				est := kn / 4
+				if est > 1024 {
+					est = 1024
+				}
+				toUpdate = make([]docToUpdate, 0, est)
 			}
-			doc := bson.Raw(raw)
-			match, err := query.Filter(doc, filter)
-			if err != nil {
-				return err
-			}
-			if !match {
+			if err := b.ForEach(func(k, v []byte) error {
+				raw, err := c.engine.decompress(v)
+				if err != nil {
+					return err
+				}
+				doc := bson.Raw(raw)
+				match, err := query.Filter(doc, filter)
+				if err != nil {
+					return err
+				}
+				if !match {
+					return nil
+				}
+				kc := make([]byte, len(k))
+				copy(kc, k)
+				dc := make([]byte, len(doc))
+				copy(dc, doc)
+				toUpdate = append(toUpdate, docToUpdate{kc, bson.Raw(dc)})
+				if !multi {
+					return errStopIteration
+				}
 				return nil
+			}); err != nil && err != errStopIteration {
+				return err
 			}
-			kc := make([]byte, len(k))
-			copy(kc, k)
-			dc := make([]byte, len(doc))
-			copy(dc, doc)
-			toUpdate = append(toUpdate, docToUpdate{kc, bson.Raw(dc)})
-			if !multi {
-				return errStopIteration
-			}
-			return nil
-		}); err != nil && err != errStopIteration {
-			return err
 		}
 
 		if len(toUpdate) == 0 && opts.Upsert {
@@ -2198,7 +2208,7 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 			key []byte
 			doc bson.Raw
 		}
-		var toDelete []docInfo
+		toDelete := make([]docInfo, 0, 4)
 
 		// Fast path: {_id: <scalar>} filter → O(log N) direct key lookup.
 		if idVal, ok := extractIDEquality(filter); ok {
@@ -2233,30 +2243,40 @@ func (c *bboltCollection) deleteDocs(filter bson.Raw, multi bool) (int64, error)
 				copy(dc, doc)
 				toDelete = append(toDelete, docInfo{idKey, dc})
 			}
-		} else if err := b.ForEach(func(k, v []byte) error {
-			raw, err := c.engine.decompress(v)
-			if err != nil {
-				return err
+		} else {
+			// Full collection scan — Stats() hint only here, where it's actually used.
+			if kn := b.Stats().KeyN; kn > 16 {
+				est := kn / 4
+				if est > 1024 {
+					est = 1024
+				}
+				toDelete = make([]docInfo, 0, est)
 			}
-			doc := bson.Raw(raw)
-			match, err := query.Filter(doc, filter)
-			if err != nil {
-				return err
-			}
-			if !match {
+			if err := b.ForEach(func(k, v []byte) error {
+				raw, err := c.engine.decompress(v)
+				if err != nil {
+					return err
+				}
+				doc := bson.Raw(raw)
+				match, err := query.Filter(doc, filter)
+				if err != nil {
+					return err
+				}
+				if !match {
+					return nil
+				}
+				kc := make([]byte, len(k))
+				copy(kc, k)
+				dc := make([]byte, len(doc))
+				copy(dc, doc)
+				toDelete = append(toDelete, docInfo{kc, bson.Raw(dc)})
+				if !multi {
+					return errStopIteration
+				}
 				return nil
+			}); err != nil && err != errStopIteration {
+				return err
 			}
-			kc := make([]byte, len(k))
-			copy(kc, k)
-			dc := make([]byte, len(doc))
-			copy(dc, doc)
-			toDelete = append(toDelete, docInfo{kc, bson.Raw(dc)})
-			if !multi {
-				return errStopIteration
-			}
-			return nil
-		}); err != nil && err != errStopIteration {
-			return err
 		}
 
 		// Collect secondary-index buckets once for the delete loop below
