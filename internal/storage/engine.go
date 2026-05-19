@@ -111,6 +111,7 @@ func (e *BBoltEngine) openDBLocked(name string) (*bolt.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("openDB %s: %w", name, err)
 	}
+	db.MaxBatchDelay = 1 * time.Millisecond // 10ms default tuned for HDDs; SSDs sync in <1ms
 	e.dbs[name] = db
 	return db, nil
 }
