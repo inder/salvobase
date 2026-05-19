@@ -2720,6 +2720,7 @@ type bboltScanCursor struct {
 	filter     bson.Raw
 	projection bson.Raw
 	engine     *BBoltEngine
+	arena      docArena
 	skip       int64
 	limit      int64
 	skipped    int64
@@ -2768,7 +2769,11 @@ func (c *bboltScanCursor) NextBatch(batchSize int) (docs []bson.Raw, exhausted b
 		k, v = c.cur.Next()
 	}
 
-	var arena docArena
+	// Reset the arena so the backing slab is reused across getMore calls.
+	// Safe: marshalResponse copies arena-backed bson.Raw slices into the wire
+	// buffer via bsoncore.AppendDocumentElement before this handler returns, so
+	// no live reference into the backing array survives to the next call.
+	c.arena.buf = c.arena.buf[:0]
 	for k != nil {
 		raw, err := c.engine.decompress(v)
 		if err != nil {
@@ -2796,7 +2801,7 @@ func (c *bboltScanCursor) NextBatch(batchSize int) (docs []bson.Raw, exhausted b
 		}
 		// arena.copyBytes extends doc lifetime beyond the bbolt mmap region
 		// (valid only while c.tx is open) into arena-owned memory.
-		docs = append(docs, bson.Raw(arena.copyBytes(doc)))
+		docs = append(docs, bson.Raw(c.arena.copyBytes(doc)))
 		c.returned++
 
 		if c.limit > 0 && c.returned >= c.limit {
