@@ -57,7 +57,13 @@ Improvements over MongoDB Community:
 	// Storage flags
 	cmd.Flags().StringVar(&cfg.DataDir, "datadir", "./data", "Directory for database files")
 	cmd.Flags().StringVar(&cfg.Compression, "compression", "none", "Document compression: none, snappy, zstd")
-	cmd.Flags().BoolVar(&cfg.SyncOnWrite, "syncOnWrite", true, "Sync writes to disk before acknowledging")
+	cmd.Flags().BoolVar(&cfg.SyncOnWrite, "syncOnWrite", true,
+		"Call fdatasync after every batch commit (durability). When false (NoSync mode), "+
+			"writes are acknowledged before they hit disk — equivalent to MongoDB's j:false. "+
+			"Eliminates the fdatasync hot path (~40% CPU on write-heavy workloads) at the cost "+
+			"of losing any writes still buffered in the OS page cache if the host crashes or "+
+			"panics. Intended for dev, benchmarks, and ephemeral workloads only — Salvobase "+
+			"is single-node and has no replication, so a host crash with NoSync = data loss.")
 
 	// Auth flags
 	cmd.Flags().BoolVar(&cfg.NoAuth, "noauth", false, "Disable authentication (DO NOT USE IN PRODUCTION)")
@@ -103,6 +109,11 @@ func run(cfg server.Config) error {
 
 	if cfg.NoAuth {
 		log.Warn("AUTHENTICATION IS DISABLED — do not run in production without auth")
+	}
+
+	if !cfg.SyncOnWrite {
+		log.Warn("SYNC ON WRITE IS DISABLED — fdatasync skipped after batch commits; " +
+			"recent writes may be lost on host crash or kernel panic (equivalent to MongoDB j:false)")
 	}
 
 	// Create and start server
