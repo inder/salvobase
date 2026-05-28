@@ -101,7 +101,12 @@ func (e *BBoltEngine) openDBLocked(name string) (*bolt.DB, error) {
 	}
 	path := filepath.Join(e.dataDir, name+".db")
 	opts := &bolt.Options{
-		Timeout:         1 * time.Second,
+		Timeout: 1 * time.Second,
+		// NoSync skips fdatasync after each batch commit. When set, writes are
+		// durable only as far as the OS page cache — a process crash is fine,
+		// but a host crash or kernel panic can lose recent writes. Surfaced as
+		// --syncOnWrite=false on the CLI and as the syncOnWrite YAML key.
+		// See issue #676.
 		NoSync:          !e.syncOnWrite,
 		NoGrowSync:      true,
 		InitialMmapSize: 64 * 1024 * 1024, // 64 MB initial mmap — reduces remapping overhead
