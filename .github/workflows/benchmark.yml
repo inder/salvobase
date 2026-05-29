@@ -113,53 +113,59 @@ jobs:
           COMMIT=$(git rev-parse --short HEAD)
           mkdir -p benchmarks/results
 
+          # Per-night 3× sampling — single-runner noise on shared GitHub runners has
+          # been measured at 6pp stddev on the Workload A ratio. Sampling 3× per
+          # combination lets downstream tools (print_ratios.py, check_perf_gap.py)
+          # report median ± stddev and gate alerts on real signal vs jitter. See #715.
           for WORKLOAD in A B C D E F; do
             for THREADS in 1 4 8 16; do
-              echo "--- Workload ${WORKLOAD} / ${THREADS} threads ---"
+              for SAMPLE in 1 2 3; do
+                echo "--- Workload ${WORKLOAD} / ${THREADS} threads / sample ${SAMPLE}/3 ---"
 
-              # Salvobase — tee raw output to a debug file so failures are diagnosable
-              RECORD_COUNT=$RECORD_COUNT \
-              OPERATION_COUNT=$OPERATION_COUNT \
-              TARGET_URL=mongodb://localhost:27017 \
-              WORKLOAD=$WORKLOAD \
-              THREADS=$THREADS \
-                bash scripts/bench/run_ycsb.sh \
-                2>/tmp/ycsb_stderr_salvobase_${WORKLOAD}_${THREADS}.txt \
-                | tee /tmp/ycsb_raw_salvobase_${WORKLOAD}_${THREADS}.txt \
-                | python3 scripts/bench/parse_ycsb.py \
-                  --target salvobase \
-                  --workload "$WORKLOAD" \
-                  --threads "$THREADS" \
-                  --commit "$COMMIT" \
-                  --date "$DATE" \
-                >> "benchmarks/results/${DATE}.jsonl" \
-                || { echo "WARN: salvobase W${WORKLOAD}/T${THREADS} parse failed"; \
-                     echo "=== stderr ===" >&2; \
-                     cat /tmp/ycsb_stderr_salvobase_${WORKLOAD}_${THREADS}.txt >&2; \
-                     echo "=== raw stdout ===" >&2; \
-                     cat /tmp/ycsb_raw_salvobase_${WORKLOAD}_${THREADS}.txt >&2; }
+                # Salvobase — tee raw output to a debug file so failures are diagnosable
+                RECORD_COUNT=$RECORD_COUNT \
+                OPERATION_COUNT=$OPERATION_COUNT \
+                TARGET_URL=mongodb://localhost:27017 \
+                WORKLOAD=$WORKLOAD \
+                THREADS=$THREADS \
+                  bash scripts/bench/run_ycsb.sh \
+                  2>/tmp/ycsb_stderr_salvobase_${WORKLOAD}_${THREADS}_${SAMPLE}.txt \
+                  | tee /tmp/ycsb_raw_salvobase_${WORKLOAD}_${THREADS}_${SAMPLE}.txt \
+                  | python3 scripts/bench/parse_ycsb.py \
+                    --target salvobase \
+                    --workload "$WORKLOAD" \
+                    --threads "$THREADS" \
+                    --commit "$COMMIT" \
+                    --date "$DATE" \
+                  >> "benchmarks/results/${DATE}.jsonl" \
+                  || { echo "WARN: salvobase W${WORKLOAD}/T${THREADS}/S${SAMPLE} parse failed"; \
+                       echo "=== stderr ===" >&2; \
+                       cat /tmp/ycsb_stderr_salvobase_${WORKLOAD}_${THREADS}_${SAMPLE}.txt >&2; \
+                       echo "=== raw stdout ===" >&2; \
+                       cat /tmp/ycsb_raw_salvobase_${WORKLOAD}_${THREADS}_${SAMPLE}.txt >&2; }
 
-              # MongoDB Community
-              RECORD_COUNT=$RECORD_COUNT \
-              OPERATION_COUNT=$OPERATION_COUNT \
-              TARGET_URL=mongodb://localhost:27018 \
-              WORKLOAD=$WORKLOAD \
-              THREADS=$THREADS \
-                bash scripts/bench/run_ycsb.sh \
-                2>/tmp/ycsb_stderr_mongodb_${WORKLOAD}_${THREADS}.txt \
-                | tee /tmp/ycsb_raw_mongodb_${WORKLOAD}_${THREADS}.txt \
-                | python3 scripts/bench/parse_ycsb.py \
-                  --target mongodb \
-                  --workload "$WORKLOAD" \
-                  --threads "$THREADS" \
-                  --commit "$COMMIT" \
-                  --date "$DATE" \
-                >> "benchmarks/results/${DATE}.jsonl" \
-                || { echo "WARN: mongodb W${WORKLOAD}/T${THREADS} parse failed"; \
-                     echo "=== stderr ===" >&2; \
-                     cat /tmp/ycsb_stderr_mongodb_${WORKLOAD}_${THREADS}.txt >&2; \
-                     echo "=== raw stdout ===" >&2; \
-                     cat /tmp/ycsb_raw_mongodb_${WORKLOAD}_${THREADS}.txt >&2; }
+                # MongoDB Community
+                RECORD_COUNT=$RECORD_COUNT \
+                OPERATION_COUNT=$OPERATION_COUNT \
+                TARGET_URL=mongodb://localhost:27018 \
+                WORKLOAD=$WORKLOAD \
+                THREADS=$THREADS \
+                  bash scripts/bench/run_ycsb.sh \
+                  2>/tmp/ycsb_stderr_mongodb_${WORKLOAD}_${THREADS}_${SAMPLE}.txt \
+                  | tee /tmp/ycsb_raw_mongodb_${WORKLOAD}_${THREADS}_${SAMPLE}.txt \
+                  | python3 scripts/bench/parse_ycsb.py \
+                    --target mongodb \
+                    --workload "$WORKLOAD" \
+                    --threads "$THREADS" \
+                    --commit "$COMMIT" \
+                    --date "$DATE" \
+                  >> "benchmarks/results/${DATE}.jsonl" \
+                  || { echo "WARN: mongodb W${WORKLOAD}/T${THREADS}/S${SAMPLE} parse failed"; \
+                       echo "=== stderr ===" >&2; \
+                       cat /tmp/ycsb_stderr_mongodb_${WORKLOAD}_${THREADS}_${SAMPLE}.txt >&2; \
+                       echo "=== raw stdout ===" >&2; \
+                       cat /tmp/ycsb_raw_mongodb_${WORKLOAD}_${THREADS}_${SAMPLE}.txt >&2; }
+              done
             done
           done
 
@@ -168,10 +174,13 @@ jobs:
           DATE=$(date -u +%Y-%m-%d)
           FILE="benchmarks/results/${DATE}.jsonl"
           FAIL=0
+          # Each workload should have 4 thread counts × 2 targets × 3 samples = 24 rows.
+          # Threshold of 6 (≥ 2 targets × 3 samples for at least one thread count) lets
+          # transient parse failures slip through without failing the whole nightly run.
           for WL in A B C D F; do  # E excluded — scan not yet implemented
             COUNT=$(grep -c "\"workload\":\"${WL}\"" "$FILE" 2>/dev/null || echo 0)
-            if [ "$COUNT" -lt 2 ]; then
-              echo "ERROR: Workload ${WL} has only ${COUNT} result lines (expected ≥2)"
+            if [ "$COUNT" -lt 6 ]; then
+              echo "ERROR: Workload ${WL} has only ${COUNT} result lines (expected ≥6)"
               FAIL=1
             else
               echo "OK: Workload ${WL} — ${COUNT} lines"
