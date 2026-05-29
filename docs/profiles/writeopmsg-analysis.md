@@ -14,7 +14,7 @@
 |-----------|-----:|----------------:|---------------:|
 | Total `WriteOpMsg` (cumulative) | 4.79s | 100.00% | 28.33% |
 | `syscall.write` (incl. `rawsyscalln` kernel time) | 4.77s |  99.58% | 28.21% |
-| `WriteOpMsg` flat (header assembly + `copy(buf, body)`) | 0.01s |   0.21% |  0.06% |
+| `WriteOpMsg` flat (header assembly + pool fetch) | 0.02s |   0.42% |  0.12% |
 | BSON marshaling | 0.00s |   0.00% |  0.00% |
 
 Hypothesis A (BSON marshaling) is false. `OpMsgMessage.Body` is already an encoded `bson.Raw` slice by the time it reaches `WriteOpMsg`; the function does no marshaling, only a single `copy` into a pooled assembly buffer followed by one `net.Conn.Write`.
@@ -41,7 +41,7 @@ WriteOpMsg (4.79s cum, 0.01s flat)
               → syscall.rawsyscalln (4.77s flat)
 ```
 
-No branch enters BSON code. The 0.01s flat in `WriteOpMsg` is the in-Go work: four `binary.LittleEndian.PutUint32` calls, one byte store, and one `copy(buf[offset:], body)` (see `internal/wire/op_msg.go:237-275`).
+No branch enters BSON code. The in-Go work in `WriteOpMsg` is ~10–20 ms (see footnote on sampling rounding below) across four `binary.LittleEndian.PutUint32` calls, one byte store, and one `copy(buf[offset:], body)` (`internal/wire/op_msg.go:237-275`). `pprof -top` rounds the function-level flat to one 10 ms sample; `pprof -list` attributes two distinct 10 ms samples to lines 240 (`getOpMsgBuf`) and 256 (header `PutUint32`). Either way it is at the noise floor.
 
 ## Why workload A is sufficient
 
@@ -72,7 +72,7 @@ The kernel time in `syscall.rawsyscalln` is the cost of:
 - Driving the TCP state machine (sequence numbers, ACK tracking, congestion window).
 - Waking `kevent` (which separately accounts for 3.06s in the global flat profile) to schedule the next read.
 
-At 100k ops / 30s = 3,333 responses/s/server (split across 16 connections), the per-syscall cost works out to ~48 µs per `write` — consistent with a healthy darwin loopback TCP stack. There is no pathology here. The cost is largely **irreducible at the wire layer**.
+At 100k ops / 30.16s ≈ 3,316 responses/s aggregated across 16 connections, the **per-syscall CPU time** (not wall-clock latency) is 4.77s / 100k = ~48 µs. That is the kernel-mode CPU charged to one `write(2)` — not the round-trip latency of one client op, which is closer to 1 / 3,316 / s ≈ 301 µs wall-clock and includes scheduler, kevent, and userspace work. The 48 µs CPU figure is consistent with a healthy darwin loopback TCP stack; there is no pathology here. The cost is largely **irreducible at the wire layer**.
 
 ## Recommended follow-on
 
@@ -91,4 +91,4 @@ go tool pprof -focus=WriteOpMsg -tree -cum docs/profiles/workload-a-16t-v2.txt
 go tool pprof -focus=WriteOpMsg -list 'WriteOpMsg$' docs/profiles/workload-a-16t-v2.txt
 ```
 
-The `-list` view splits the 10ms flat cost as ~10ms at line 240 (`getOpMsgBuf`, the pool fetch) and ~10ms at line 256 (header `PutUint32`) — sampling noise smears the attribution slightly, but the headline is unchanged: Go-side cost is at the noise floor and 4.77s sits squarely on line 270's `w.Write(buf)`.
+The `-list` view splits the in-Go cost as ~10 ms at line 240 (`getOpMsgBuf`, the pool fetch) and ~10 ms at line 256 (header `PutUint32`), totalling ~20 ms. `pprof -top` rounds the function-level flat down to a single 10 ms bucket — same data, different rounding. Sampling noise smears attribution slightly, but the headline is unchanged: Go-side cost is at the noise floor and 4.77s sits squarely on line 270's `w.Write(buf)`.
