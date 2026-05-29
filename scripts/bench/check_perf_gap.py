@@ -8,7 +8,13 @@ Runs after every nightly benchmark. Three conditions:
   Condition 1: 0 < gap ≤ 0.10  → file/update issue every 3 days
   Condition 2: gap ≤ 0  → north star achieved → file achievement issue, close p0
 
-gap = north_star - current_3run_median_ratio
+gap = north_star - current_3_night_median_ratio
+
+Per-night sampling (see #715):
+  benchmark.yml emits 3 result rows per (workload, threads, target) per night.
+  This script aggregates samples → per-night median first, then computes the
+  per-night ratio. Condition 0 is variance-gated: if the current 3-night median
+  is within 2σ of the trailing 7-night median, the alert is suppressed.
 
 Usage:
   python3 scripts/bench/check_perf_gap.py \
@@ -18,11 +24,11 @@ Usage:
 """
 
 import sys
-import os
 import json
 import argparse
 import subprocess
 import statistics
+from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -35,6 +41,13 @@ LABEL_P0 = "priority:critical,area:performance,area:benchmark,agent:available,co
 LABEL_C1 = "priority:medium,area:performance,area:benchmark,agent:available,complexity:s,trust:newcomer-ok"
 LABEL_ACHIEVED = "area:performance,area:benchmark,trust:maintainer-only"
 
+# Variance gate parameters. See `memory/project_bench_noise_floor.md` and #715.
+CURRENT_WINDOW_NIGHTS = 3
+TRAILING_WINDOW_NIGHTS = 7
+SIGMA_THRESHOLD = 2.0
+# Min trailing nights below which the gate bypasses (insufficient history).
+MIN_TRAILING_FOR_GATE = 3
+
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -46,8 +59,12 @@ def load_north_star(path: str) -> float:
     return float(val)
 
 
-def load_results(results_dir: str, max_files: int = 5) -> list:
-    """Load JSONL files from the last max_files days, newest first."""
+def load_results(results_dir: str, max_files: int = 14) -> list:
+    """Load JSONL files from the last max_files days, newest first.
+
+    Need at least CURRENT_WINDOW_NIGHTS + TRAILING_WINDOW_NIGHTS nights to gate;
+    pad by 4 to absorb gaps where a nightly run was skipped or had no valid pairs.
+    """
     p = Path(results_dir)
     files = sorted(p.glob("*.jsonl"), reverse=True)[:max_files]
     rows = []
@@ -63,44 +80,163 @@ def load_results(results_dir: str, max_files: int = 5) -> list:
     return rows
 
 
-def compute_median_ratio(rows: list, last_n_dates: int = 3) -> tuple:
+def compute_per_night(rows: list) -> tuple[dict, dict]:
     """
-    Returns (overall_median_ratio, per_workload_median_dict).
-    Uses last N unique dates to smooth noise.
-    Only workloads in VALID_WORKLOADS are included.
+    Aggregate raw sample rows into per-night ratios.
+
+    Returns (night_overall, night_per_wl):
+      night_overall: dict[date_str -> overall_ratio]   (median across all wl/thread ratios)
+      night_per_wl:  dict[date_str -> dict[wl -> per-workload median ratio]]
+
+    Each per-night value is built by:
+      1. median ops_per_sec across samples per (workload, threads, target)
+      2. ratio = salvobase / mongodb per (workload, threads)
+      3. per_wl[wl] = median of all per-thread ratios for that workload
+      4. overall = median of all (workload, threads) ratios
     """
-    dates = sorted({r["date"] for r in rows}, reverse=True)[:last_n_dates]
+    # date -> (wl, threads, target) -> [ops_per_sec, ...]
+    grouped: dict = defaultdict(lambda: defaultdict(list))
+    for r in rows:
+        wl = r.get("workload", "")
+        if wl not in VALID_WORKLOADS:
+            continue
+        date = r.get("date", "")
+        if not date:
+            continue
+        key = (wl, r.get("threads", 0), r.get("target", ""))
+        ops = r.get("ops_per_sec", 0)
+        if ops and ops > 0:
+            grouped[date][key].append(ops)
 
-    ratios_by_workload: dict = {}
+    night_overall: dict = {}
+    night_per_wl: dict = {}
 
-    for date in dates:
-        date_rows = [r for r in rows if r["date"] == date]
-        by_key: dict = {}
-        for r in date_rows:
-            wl = r.get("workload", "")
-            if wl not in VALID_WORKLOADS:
-                continue
-            key = f"{wl}-{r.get('threads', 0)}"
-            target = r.get("target", "")
-            if key not in by_key:
-                by_key[key] = {}
-            by_key[key][target] = r.get("ops_per_sec", 0)
+    for date, key_to_samples in grouped.items():
+        # Median per (wl, threads, target) across samples
+        agg = {k: statistics.median(v) for k, v in key_to_samples.items() if v}
 
-        for key, targets in by_key.items():
+        # Pivot: (wl, threads) -> {target: ops}
+        by_wt: dict = defaultdict(dict)
+        for (wl, threads, target), ops in agg.items():
+            by_wt[(wl, threads)][target] = ops
+
+        # ratio per (wl, threads)
+        ratios_by_wl: dict = defaultdict(list)
+        for (wl, threads), targets in by_wt.items():
             sb = targets.get("salvobase", 0)
             mg = targets.get("mongodb", 0)
-            if mg > 0 and sb > 0:
-                wl = key.split("-")[0]
-                ratio = sb / mg
-                ratios_by_workload.setdefault(wl, []).append(ratio)
+            if sb > 0 and mg > 0:
+                ratios_by_wl[wl].append(sb / mg)
 
-    all_ratios = [r for ratios in ratios_by_workload.values() for r in ratios]
-    if not all_ratios:
+        if not ratios_by_wl:
+            continue
+
+        per_wl = {wl: statistics.median(rs) for wl, rs in ratios_by_wl.items()}
+        all_ratios = [r for rs in ratios_by_wl.values() for r in rs]
+        night_per_wl[date] = per_wl
+        night_overall[date] = statistics.median(all_ratios)
+
+    return night_overall, night_per_wl
+
+
+def compute_median_ratio(
+    rows: list, last_n_dates: int = CURRENT_WINDOW_NIGHTS
+) -> tuple:
+    """
+    Returns (overall_median_ratio, per_workload_median_dict) over the last N
+    unique dates. Aggregates samples → per-night first to neutralize noise.
+    """
+    night_overall, night_per_wl = compute_per_night(rows)
+    dates = sorted(night_overall.keys(), reverse=True)[:last_n_dates]
+    if not dates:
         return None, {}
 
-    per_wl = {wl: statistics.median(rs) for wl, rs in ratios_by_workload.items()}
-    overall = statistics.median(all_ratios)
+    overall = statistics.median([night_overall[d] for d in dates])
+
+    per_wl_collected: dict = defaultdict(list)
+    for d in dates:
+        for wl, ratio in night_per_wl[d].items():
+            per_wl_collected[wl].append(ratio)
+    per_wl = {wl: statistics.median(rs) for wl, rs in per_wl_collected.items()}
     return overall, per_wl
+
+
+def variance_gate(
+    rows: list,
+    current_n: int = CURRENT_WINDOW_NIGHTS,
+    trailing_n: int = TRAILING_WINDOW_NIGHTS,
+    sigma: float = SIGMA_THRESHOLD,
+) -> tuple[bool, str]:
+    """
+    Decide whether a Condition 0 alert should fire given the history.
+
+    Returns (should_alert, human-readable reason).
+
+    Logic:
+      - Need at least `current_n` nights — otherwise we can't even compute current.
+      - Need at least MIN_TRAILING_FOR_GATE prior nights — otherwise we don't
+        trust the stddev estimate; bypass gate (alert proceeds).
+      - Otherwise: alert only if current median is more than `sigma`·stddev
+        BELOW the trailing median. Sideways and upward moves are silenced
+        (upward "regressions" mean the gap closed — not something to alert on,
+        and Conditions 1/2 will pick them up via the gap calculation upstream).
+
+    Uses `statistics.pstdev` (population stddev) because the trailing window IS
+    the population we care about — we are not sampling from a larger distribution.
+    """
+    night_overall, _ = compute_per_night(rows)
+    dates = sorted(night_overall.keys(), reverse=True)
+
+    if len(dates) < current_n:
+        return True, (
+            f"only {len(dates)} night(s) of data; need {current_n} to compute "
+            f"current median — bypassing gate"
+        )
+
+    current_dates = dates[:current_n]
+    trailing_dates = dates[current_n:current_n + trailing_n]
+
+    if len(trailing_dates) < MIN_TRAILING_FOR_GATE:
+        return True, (
+            f"trailing window has only {len(trailing_dates)} night(s) "
+            f"(< {MIN_TRAILING_FOR_GATE}) — bypassing gate, alert proceeds"
+        )
+
+    current_vals = [night_overall[d] for d in current_dates]
+    trailing_vals = [night_overall[d] for d in trailing_dates]
+
+    current_med = statistics.median(current_vals)
+    trailing_med = statistics.median(trailing_vals)
+    trailing_std = statistics.pstdev(trailing_vals)
+
+    # Degenerate case: zero stddev → trailing window is identical → any drop is "significant"
+    if trailing_std == 0:
+        if current_med < trailing_med:
+            return True, (
+                f"trailing 7-night median {trailing_med*100:.1f}% (σ=0); "
+                f"current 3-night median {current_med*100:.1f}% is below — alert proceeds"
+            )
+        return False, (
+            f"trailing 7-night median {trailing_med*100:.1f}% (σ=0); "
+            f"current 3-night median {current_med*100:.1f}% — no drop, no alert"
+        )
+
+    threshold = trailing_med - sigma * trailing_std
+    sigmas_below = (trailing_med - current_med) / trailing_std
+
+    if current_med < threshold:
+        return True, (
+            f"current 3-night median {current_med*100:.1f}% is "
+            f"{sigmas_below:.2f}σ below trailing 7-night median "
+            f"{trailing_med*100:.1f}% (σ={trailing_std*100:.1f}pp) — significant regression"
+        )
+
+    return False, (
+        f"current 3-night median {current_med*100:.1f}% is "
+        f"{sigmas_below:+.2f}σ of trailing 7-night median "
+        f"{trailing_med*100:.1f}% (σ={trailing_std*100:.1f}pp) — "
+        f"within {sigma}σ noise floor, no significant change"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +338,8 @@ If this is actively being worked on:
 ```
 
 ---
-*Filed by `check_perf_gap.py` (nightly benchmark). Updates every run while gap > 10pp.*
+*Filed by `check_perf_gap.py` (nightly benchmark). Updates every run while gap > 10pp \
+AND the move clears the 2σ noise-floor gate. See #715 for variance-gating logic.*
 *Last updated: {now}*
 """
     return title, body
@@ -273,8 +410,20 @@ This is a `trust:maintainer-only` issue — only the founder agent should close 
 # Condition handlers
 # ---------------------------------------------------------------------------
 
-def handle_condition_0(median_ratio: float, north_star: float, per_wl: dict, dry_run: bool):
-    """Gap > 10pp — upsert p0 issue every run."""
+def handle_condition_0(
+    median_ratio: float,
+    north_star: float,
+    per_wl: dict,
+    rows: list,
+    dry_run: bool,
+):
+    """Gap > 10pp — upsert p0 issue every run, gated on variance."""
+    should_alert, reason = variance_gate(rows)
+    print(f"  variance gate: {'ALERT' if should_alert else 'SILENCE'} — {reason}")
+    if not should_alert:
+        # Don't file, don't comment, don't update. Just trace and exit clean.
+        return
+
     title, body = p0_body(median_ratio, north_star, per_wl)
     existing = find_open_issue("close gap to north star", "priority:critical")
 
@@ -287,7 +436,8 @@ def handle_condition_0(median_ratio: float, north_star: float, per_wl: dict, dry
         comment = (
             f"**Updated {datetime.now(timezone.utc).strftime('%Y-%m-%d')}:** "
             f"Ratio {median_ratio*100:.1f}% · Gap {gap_pp:.1f}pp · "
-            f"Worst: {min(per_wl, key=per_wl.get)} at {min(per_wl.values())*100:.1f}%"
+            f"Worst: {min(per_wl, key=per_wl.get)} at {min(per_wl.values())*100:.1f}% · "
+            f"Gate: {reason}"
         )
         comment_on_issue(existing["number"], comment)
     else:
@@ -389,8 +539,8 @@ def main():
     print()
 
     if gap > 0.10:
-        print("→ Condition 0: EMERGENCY — gap > 10pp. Upserting p0 issue.")
-        handle_condition_0(median_ratio, north_star, per_wl, args.dry_run)
+        print("→ Condition 0: gap > 10pp. Evaluating variance gate before upserting p0.")
+        handle_condition_0(median_ratio, north_star, per_wl, rows, args.dry_run)
     elif gap > 0:
         print("→ Condition 1: Normal — gap ≤ 10pp. Filing/updating every 3 days.")
         handle_condition_1(median_ratio, north_star, per_wl, args.dry_run)

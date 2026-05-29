@@ -3,12 +3,19 @@
 print_ratios.py — Read a JSONL results file and print a Markdown table of
 salvobase/mongodb performance ratios grouped by workload and thread count.
 
+Per-night sampling note (see #715):
+  benchmark.yml runs each (workload, threads, target) combination 3 times. This
+  script aggregates those samples into per-night median + stddev before computing
+  the salvobase/mongodb ratio, so the reported number reflects central tendency
+  rather than a single noisy observation.
+
 Usage:
   python3 scripts/bench/print_ratios.py benchmarks/results/2026-03-14.jsonl
 """
 
 import sys
 import json
+import statistics
 from collections import defaultdict
 
 
@@ -27,29 +34,61 @@ def load_jsonl(path):
 
 def build_lookup(rows):
     """
-    Returns dict: (workload, threads, target) -> {ops_per_sec, p50_ms, p99_ms}
+    Returns dict: (workload, threads, target) -> dict with aggregated
+    {ops_med, ops_std, p50_med, p99_med, n} across all samples seen.
     """
-    lookup = {}
+    grouped = defaultdict(lambda: {"ops": [], "p50": [], "p99": []})
     for r in rows:
         key = (r["workload"], r["threads"], r["target"])
-        lookup[key] = r
+        grouped[key]["ops"].append(r["ops_per_sec"])
+        grouped[key]["p50"].append(r["p50_ms"])
+        grouped[key]["p99"].append(r["p99_ms"])
+
+    lookup = {}
+    for key, vals in grouped.items():
+        n = len(vals["ops"])
+        lookup[key] = {
+            "ops_med": statistics.median(vals["ops"]),
+            "ops_std": statistics.stdev(vals["ops"]) if n >= 2 else 0.0,
+            "p50_med": statistics.median(vals["p50"]),
+            "p99_med": statistics.median(vals["p99"]),
+            "n": n,
+        }
     return lookup
 
 
-def ratio_str(a, b, higher_is_better=True):
+def ratio_cell(sb, mg, metric, higher_is_better=True):
     """
-    Return ratio string with directional arrow.
-    higher_is_better=True  → ratio > 1 means salvobase wins (green arrow up)
-    higher_is_better=False → ratio < 1 means salvobase wins (latency)
+    Compute ratio with first-order error propagation. For r = a/b,
+        σ_r/r ≈ sqrt((σ_a/a)² + (σ_b/b)²)
+    Returns string like "1.25x ± 0.10 ▲" or "—" when data is missing.
     """
-    if b == 0:
+    a = sb[f"{metric}_med"]
+    b = mg[f"{metric}_med"]
+    if b == 0 or a == 0:
         return "N/A"
     r = a / b
+
+    # Only ops has stddev tracked. For p99 we just show the median ratio.
+    if metric == "ops":
+        sigma_a = sb["ops_std"]
+        sigma_b = mg["ops_std"]
+        # First-order error propagation: σ_r/r ≈ √((σ_a/a)² + (σ_b/b)²)
+        rel_var = 0.0
+        if a > 0:
+            rel_var += (sigma_a / a) ** 2
+        if b > 0:
+            rel_var += (sigma_b / b) ** 2
+        sigma_r = r * (rel_var ** 0.5)
+        err_part = f" ± {sigma_r:.2f}"
+    else:
+        err_part = ""
+
     if higher_is_better:
         arrow = "▲" if r >= 1.0 else "▼"
     else:
         arrow = "▲" if r <= 1.0 else "▼"
-    return f"{r:.2f}x {arrow}"
+    return f"{r:.2f}x{err_part} {arrow}"
 
 
 def main():
@@ -69,10 +108,18 @@ def main():
     workloads = sorted(set(r["workload"] for r in rows))
     thread_counts = sorted(set(r["threads"] for r in rows))
 
+    # Surface the per-night sample count so readers know whether stddev is meaningful.
+    sample_counts = sorted({v["n"] for v in lookup.values()})
+
     print()
     print("## Salvobase vs MongoDB Community — Performance Ratios")
     print()
     print(f"Results from: `{path}`")
+    if sample_counts:
+        if len(sample_counts) == 1:
+            print(f"Samples per combination: **{sample_counts[0]}** (median + stddev)")
+        else:
+            print(f"Samples per combination: **{min(sample_counts)}–{max(sample_counts)}** (varies)")
     print()
 
     # OPS table
@@ -89,7 +136,7 @@ def main():
             sb = lookup.get((wl, t, "salvobase"))
             mg = lookup.get((wl, t, "mongodb"))
             if sb and mg:
-                cells.append(ratio_str(sb["ops_per_sec"], mg["ops_per_sec"], higher_is_better=True))
+                cells.append(ratio_cell(sb, mg, "ops", higher_is_better=True))
             else:
                 cells.append("—")
         print(f"| {wl} | " + " | ".join(cells) + " |")
@@ -108,18 +155,18 @@ def main():
             sb = lookup.get((wl, t, "salvobase"))
             mg = lookup.get((wl, t, "mongodb"))
             if sb and mg:
-                cells.append(ratio_str(sb["p99_ms"], mg["p99_ms"], higher_is_better=False))
+                cells.append(ratio_cell(sb, mg, "p99", higher_is_better=False))
             else:
                 cells.append("—")
         print(f"| {wl} | " + " | ".join(cells) + " |")
 
     print()
 
-    # Raw numbers
-    print("### Raw Numbers")
+    # Raw numbers — aggregated per-night
+    print("### Raw Numbers (per-night median across samples)")
     print()
-    raw_header = "| Workload | Threads | Target | OPS | P50 (ms) | P99 (ms) |"
-    raw_sep = "| --- | --- | --- | --- | --- | --- |"
+    raw_header = "| Workload | Threads | Target | OPS (med) | OPS (σ) | P50 (ms) | P99 (ms) | n |"
+    raw_sep = "| --- | --- | --- | --- | --- | --- | --- | --- |"
     print(raw_header)
     print(raw_sep)
 
@@ -129,7 +176,9 @@ def main():
                 r = lookup.get((wl, t, target))
                 if r:
                     print(
-                        f"| {wl} | {t} | {target} | {r['ops_per_sec']:,.0f} | {r['p50_ms']:.3f} | {r['p99_ms']:.3f} |"
+                        f"| {wl} | {t} | {target} | "
+                        f"{r['ops_med']:,.0f} | {r['ops_std']:,.0f} | "
+                        f"{r['p50_med']:.3f} | {r['p99_med']:.3f} | {r['n']} |"
                     )
 
     print()
