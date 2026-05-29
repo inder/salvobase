@@ -5,26 +5,33 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
+	"sync"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
 )
 
-// opMsgBufBuckets defines the size tiers (in bytes) that WriteOpMsg pulls
-// response buffers from. A request asking for N bytes is rounded up to the
-// smallest bucket that fits, then served from that bucket's sync.Pool. Sizes
-// above the largest bucket fall through to a one-shot allocation.
-//
-// The buckets are tuned to MongoDB driver workloads:
-//   - 512   — single-document responses (ping, getMore acks, hello)
-//   - 4096  — typical find/aggregate single-batch results
-//   - 16384 — larger batched responses (bulk inserts, multi-doc aggregates)
-//   - 65536 — wide aggregate frames before we'd rather not waste pool memory
-var opMsgBufBuckets = [...]int{512, 4096, 16384, 65536}
+// opMsgPrefixSize is the fixed byte count of the OP_MSG bytes that precede the
+// body: header(16) + flagBits(4) + section kind(1) = 21.
+const opMsgPrefixSize = HeaderSize + 4 + 1
 
-var opMsgBufPool = newBucketBufPool(opMsgBufBuckets[:])
+// opMsgWritevPool holds reusable scratch for the writev iovec WriteOpMsg
+// constructs every call: a fixed 21-byte prefix buffer, a 2-element iovec
+// backing array, and the net.Buffers slice header that views it. All three
+// pieces co-locate in opMsgWritev so a single sync.Pool Get/Put covers
+// them. Without pooling the Buffers slice header, escape analysis through
+// net.Buffers.WriteTo's interface call forces it onto the heap every
+// response (~24 B / 1 alloc); pooling the backing array alone is not
+// sufficient because the slice header itself is what escapes.
+type opMsgWritev struct {
+	prefix [opMsgPrefixSize]byte
+	iov    [2][]byte
+	bufs   net.Buffers // alias of iov[:], reset every call
+}
 
-func getOpMsgBuf(n int) ([]byte, *[]byte) { return opMsgBufPool.Get(n) }
-func putOpMsgBuf(handle *[]byte)          { opMsgBufPool.Put(handle) }
+var opMsgWritevPool = sync.Pool{
+	New: func() any { return new(opMsgWritev) },
+}
 
 // OpMsgMessage represents an OP_MSG wire protocol message (opcode 2013).
 // OP_MSG is the primary message format used by MongoDB 3.6+ drivers.
@@ -224,7 +231,19 @@ func readDocumentSequence(r io.Reader) (DocumentSeq, error) {
 	return seq, nil
 }
 
-// WriteOpMsg encodes and writes an OP_MSG response to w.
+// WriteOpMsg encodes the OP_MSG prefix and writes an OP_MSG response to w as
+// a vector of two iovecs: the 21-byte fixed prefix (header + flagBits +
+// section-kind byte 0x00) and the BSON body. When w is a *net.TCPConn — the
+// production path via Connection.conn — net.Buffers issues a single
+// writev(2) syscall and the body is referenced directly from caller memory;
+// no user-space memcpy of the body occurs. When w is anything else (tests
+// using bytes.Buffer or io.Discard), net.Buffers falls back to two sequential
+// Write calls and the receiver still sees the same byte stream.
+//
+// Lifetime: body must remain valid until this call returns. Callers that pull
+// body from a pool (commands.Dispatcher) release after WriteOpMsg returns,
+// which is also when the writev(2) syscall has completed — the contract is
+// the same as before the net.Buffers change.
 //
 // Message layout:
 //
@@ -235,40 +254,43 @@ func readDocumentSequence(r io.Reader) (DocumentSeq, error) {
 //
 // messageLength = 16 + 4 + 1 + len(body)
 func WriteOpMsg(w io.Writer, requestID, responseTo int32, flagBits uint32, body bson.Raw) error {
-	msgLen := int32(HeaderSize + 4 + 1 + len(body))
+	msgLen := int32(opMsgPrefixSize + len(body))
 
-	buf, handle := getOpMsgBuf(int(msgLen))
-	defer putOpMsgBuf(handle)
+	wv, ok := opMsgWritevPool.Get().(*opMsgWritev)
+	if !ok || wv == nil {
+		wv = new(opMsgWritev)
+	}
+	// Nil the iovec entries before returning the struct to the pool so we
+	// don't leave a dangling reference to the caller's body slice in the
+	// pooled entry. On the WriteTo error path the body would otherwise
+	// stay reachable from the pool until the next Get overwrites it,
+	// blocking GC of the body's backing array.
+	defer func() {
+		wv.iov[0] = nil
+		wv.iov[1] = nil
+		opMsgWritevPool.Put(wv)
+	}()
 
-	// Slice down to the actual message length — getOpMsgBuf may have returned
-	// a larger bucket. We only Write buf, never the original full-size slice,
-	// otherwise trailing garbage past msgLen would hit the wire.
-	buf = buf[:msgLen]
-	offset := 0
+	prefix := wv.prefix[:]
 
-	// Header
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(msgLen))
-	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(requestID))
-	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(responseTo))
-	offset += 4
-	binary.LittleEndian.PutUint32(buf[offset:], uint32(OpMsg))
-	offset += 4
-
-	// flagBits
-	binary.LittleEndian.PutUint32(buf[offset:], flagBits)
-	offset += 4
-
+	// Header (16 bytes)
+	binary.LittleEndian.PutUint32(prefix[0:], uint32(msgLen))
+	binary.LittleEndian.PutUint32(prefix[4:], uint32(requestID))
+	binary.LittleEndian.PutUint32(prefix[8:], uint32(responseTo))
+	binary.LittleEndian.PutUint32(prefix[12:], uint32(OpMsg))
+	// flagBits (4 bytes)
+	binary.LittleEndian.PutUint32(prefix[16:], flagBits)
 	// Section kind 0 (body)
-	buf[offset] = 0x00
-	offset++
+	prefix[20] = 0x00
 
-	// Body BSON document
-	copy(buf[offset:], body)
-
-	_, err := w.Write(buf)
-	if err != nil {
+	// net.Buffers.WriteTo consumes the leading entries of the slice as it
+	// writes (on the io.Writer fallback path) by advancing *v in place;
+	// reset wv.bufs to a fresh 2-entry view every call so a partially-
+	// consumed view from the previous response can't leak.
+	wv.iov[0] = prefix
+	wv.iov[1] = []byte(body)
+	wv.bufs = wv.iov[:]
+	if _, err := wv.bufs.WriteTo(w); err != nil {
 		return fmt.Errorf("WriteOpMsg: %w", err)
 	}
 	return nil

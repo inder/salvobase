@@ -328,66 +328,15 @@ func TestReadBSONDoc(t *testing.T) {
 	}
 }
 
-// TestGetOpMsgBufBucketSelection verifies that getOpMsgBuf rounds requested
-// sizes up to the smallest bucket that fits, and falls back to a fresh
-// allocation for sizes above the largest bucket.
-func TestGetOpMsgBufBucketSelection(t *testing.T) {
-	cases := []struct {
-		req        int
-		wantBucket int  // expected bucket size (cap of returned slice)
-		wantPooled bool // expected whether handle is non-nil
-	}{
-		{1, 512, true},
-		{512, 512, true},
-		{513, 4096, true},
-		{4096, 4096, true},
-		{4097, 16384, true},
-		{16384, 16384, true},
-		{16385, 65536, true},
-		{65536, 65536, true},
-		{65537, 65537, false}, // over-bucket: cap == requested size, not pooled
-		{1 << 20, 1 << 20, false},
-	}
-
-	for _, tc := range cases {
-		buf, handle := getOpMsgBuf(tc.req)
-		if (handle != nil) != tc.wantPooled {
-			t.Errorf("req=%d: pooled got %v, want %v", tc.req, handle != nil, tc.wantPooled)
-		}
-		if cap(buf) != tc.wantBucket {
-			t.Errorf("req=%d: cap got %d, want %d", tc.req, cap(buf), tc.wantBucket)
-		}
-		// Returned slice length should equal cap so callers can slice down freely.
-		if len(buf) != cap(buf) {
-			t.Errorf("req=%d: len %d != cap %d", tc.req, len(buf), cap(buf))
-		}
-		putOpMsgBuf(handle)
-	}
-}
-
-// TestOpMsgBufReuseCapability checks that putOpMsgBuf followed by getOpMsgBuf
-// hands the same backing array back. sync.Pool is allowed to drop entries
-// during GC, but in a tight loop without GC we should see reuse.
-func TestOpMsgBufReuseCapability(t *testing.T) {
-	first, handle := getOpMsgBuf(64)
-	if handle == nil {
-		t.Fatalf("expected pooled buffer for size 64")
-	}
-	firstPtr := &first[:1][0]
-	putOpMsgBuf(handle)
-
-	second, _ := getOpMsgBuf(64)
-	secondPtr := &second[:1][0]
-	if firstPtr != secondPtr {
-		t.Logf("note: pool returned a different buffer (sync.Pool may drop entries; not a hard failure)")
-	}
-}
-
-// TestWriteOpMsgInBucketZeroAllocs asserts that the steady-state WriteOpMsg
-// path allocates zero bytes for in-bucket response sizes. This is the whole
-// point of issue #528 — every modern driver hits OP_MSG, so an alloc per
-// response is multiplied by request rate.
-func TestWriteOpMsgInBucketZeroAllocs(t *testing.T) {
+// TestWriteOpMsgSteadyStateAllocs asserts that the steady-state WriteOpMsg
+// path allocates zero bytes per response. Every modern driver hits OP_MSG,
+// so an alloc per response is multiplied by request rate.
+//
+// After the switch to net.Buffers (#716) the 21-byte prefix and the
+// 2-element iovec slice are both reused from opMsgWritevPool — the body
+// is referenced from caller memory, not copied — so no allocation should
+// remain on the hot path.
+func TestWriteOpMsgSteadyStateAllocs(t *testing.T) {
 	body := marshalDoc(t, bson.D{
 		{Key: "ok", Value: float64(1)},
 		{Key: "n", Value: int32(1)},
@@ -405,86 +354,73 @@ func TestWriteOpMsgInBucketZeroAllocs(t *testing.T) {
 	})
 
 	if allocs != 0 {
-		t.Errorf("WriteOpMsg should allocate 0 bytes for in-bucket sizes, got %.2f allocs/op", allocs)
+		t.Errorf("WriteOpMsg should allocate 0 bytes/op (prefix + iovec pooled, body referenced), got %.2f allocs/op", allocs)
 	}
 }
 
-// TestWriteOpMsgOverBucketWorks asserts that messages larger than the largest
-// bucket still encode correctly (they just don't pool).
-func TestWriteOpMsgOverBucketWorks(t *testing.T) {
-	// Build a body that pushes total message size over 65536 bytes.
+// TestWriteOpMsgLargeBody asserts that responses with a body larger than the
+// previous bucket pool's largest tier (65536 bytes) still encode and round-
+// trip correctly. The net.Buffers path has no size-tiered fast path — the
+// body is always referenced as an iovec — so a multi-iovec writev must still
+// produce a correctly framed OP_MSG.
+func TestWriteOpMsgLargeBody(t *testing.T) {
+	// Build a body that pushes total message size over the old 65536 ceiling.
 	d := make(bson.D, 5000)
 	for i := 0; i < len(d); i++ {
 		d[i] = bson.E{Key: bson.NewObjectID().Hex(), Value: int32(i)}
 	}
 	body := marshalDoc(t, d)
 
-	expectedLen := HeaderSize + 4 + 1 + len(body)
-	if expectedLen <= opMsgBufBuckets[len(opMsgBufBuckets)-1] {
-		t.Skipf("test fixture too small to exercise over-bucket path (msgLen=%d, max bucket=%d)",
-			expectedLen, opMsgBufBuckets[len(opMsgBufBuckets)-1])
+	if HeaderSize+4+1+len(body) <= 65536 {
+		t.Fatalf("test fixture too small to exercise the large-body path (msgLen=%d)",
+			HeaderSize+4+1+len(body))
 	}
 
 	msg := roundTripBody(t, 1, 0, body)
 	if !bytes.Equal(msg.Body, body) {
-		t.Error("over-bucket body mismatch after round-trip")
+		t.Error("large body mismatch after round-trip")
 	}
 }
 
-// TestWriteOpMsgPooledBufferDoesNotLeakTrailingBytes guards against a foot-gun:
-// if a pooled buffer carries garbage past msgLen and we Write the full bucket
-// instead of buf[:msgLen], the wire output will contain trailing junk bytes.
-//
-// We force the unsafe path deterministically: pull a buffer from the pool,
-// pre-fill it with a known marker, hand it back, then call WriteOpMsg with a
-// payload sized to land in that same bucket. The output length must equal
-// msgLen — if WriteOpMsg ever wrote the full bucket, we'd see the marker bytes
-// trailing the message.
-func TestWriteOpMsgPooledBufferDoesNotLeakTrailingBytes(t *testing.T) {
-	// Bucket 1 is 4096 bytes. Force a primed buffer into that pool.
-	primed, handle := getOpMsgBuf(1024) // lands in bucket 1 (4096)
-	if handle == nil {
-		t.Fatal("expected pooled buffer for size 1024")
-	}
-	if cap(primed) != 4096 {
-		t.Fatalf("expected 4096-byte bucket, got cap %d", cap(primed))
-	}
-	// Fill with a marker that is NOT a valid BSON byte sequence at msgLen+0.
-	for i := range primed {
-		primed[i] = 0xAB
-	}
-	putOpMsgBuf(handle)
-
-	// Now write a small message. msgLen will be much less than 4096, so the
-	// pool will hand the primed buffer back and the writer must see only the
-	// freshly-written prefix.
-	smallBody := marshalDoc(t, bson.D{{Key: "ok", Value: float64(1)}})
-	expectedLen := HeaderSize + 4 + 1 + len(smallBody)
-	if expectedLen >= 4096 {
-		t.Fatalf("test fixture too large: msgLen %d would not land in bucket 1", expectedLen)
-	}
+// TestWriteOpMsgPrefixBodySeparation asserts that the wire bytes following
+// the 21-byte prefix are exactly the caller's body bytes — i.e. that the
+// new net.Buffers path doesn't accidentally clobber body bytes with prefix
+// bytes (or vice versa). We capture an expected snapshot of the body
+// BEFORE the write, then assert the wire's body region matches that
+// snapshot regardless of any post-write mutation to the caller's slice.
+func TestWriteOpMsgPrefixBodySeparation(t *testing.T) {
+	body := marshalDoc(t, bson.D{{Key: "ok", Value: float64(1)}})
+	expectedBody := append([]byte(nil), body...)
 
 	var buf bytes.Buffer
-	if err := WriteOpMsg(&buf, 2, 0, 0, smallBody); err != nil {
+	if err := WriteOpMsg(&buf, 7, 0, 0, body); err != nil {
 		t.Fatalf("WriteOpMsg: %v", err)
 	}
-	if buf.Len() != expectedLen {
-		t.Errorf("written length: got %d, want %d (pooled buffer leaked trailing bytes)",
-			buf.Len(), expectedLen)
+	wire := buf.Bytes()
+
+	if len(wire) != opMsgPrefixSize+len(body) {
+		t.Fatalf("wire length: got %d, want %d", len(wire), opMsgPrefixSize+len(body))
 	}
-	// Belt and suspenders: no 0xAB marker should appear past the body's last byte.
-	if bytes.Contains(buf.Bytes(), []byte{0xAB, 0xAB, 0xAB, 0xAB}) {
-		t.Error("output contains primed marker bytes — trailing pooled garbage was written")
+	if !bytes.Equal(wire[opMsgPrefixSize:], expectedBody) {
+		t.Errorf("body region of wire output does not match caller's body — aliasing leak between prefix and body\n got:  %x\n want: %x", wire[opMsgPrefixSize:], expectedBody)
 	}
-	msg := parseOpMsgFromBytes(t, buf.Bytes())
-	if !bytes.Equal(msg.Body, smallBody) {
-		t.Error("body mismatch after small write reusing primed pooled buffer")
+
+	// Belt and suspenders: mutate the caller's body in place AFTER the
+	// write returns and confirm the captured wire bytes are untouched.
+	// (bytes.Buffer copies on Write, so this defends against a future
+	// io.Writer that retains slice references rather than copying.)
+	for i := range body {
+		body[i] ^= 0xFF
+	}
+	if !bytes.Equal(wire[opMsgPrefixSize:], expectedBody) {
+		t.Error("wire body changed after caller mutated body slice — buffer is aliasing caller memory beyond the WriteOpMsg call")
 	}
 }
 
 // BenchmarkWriteOpMsg measures the steady-state cost of encoding an OP_MSG
-// response across the bucket sizes. The intent is to surface allocation
-// regressions: in-bucket sizes must report 0 allocs/op.
+// response across response sizes. After #716 the body is referenced rather
+// than copied, so per-byte cost is no longer size-dependent on the Go side —
+// the benchmark exercises the prefix-pool and net.Buffers fast paths.
 func BenchmarkWriteOpMsg(b *testing.B) {
 	cases := []struct {
 		name string
@@ -494,7 +430,7 @@ func BenchmarkWriteOpMsg(b *testing.B) {
 		{"medium_2KB", 2048},
 		{"large_8KB", 8192},
 		{"xlarge_32KB", 32768},
-		{"over_bucket_128KB", 128 * 1024},
+		{"huge_128KB", 128 * 1024},
 	}
 
 	for _, tc := range cases {

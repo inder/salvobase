@@ -61,10 +61,11 @@ func (c *Context) runReleases() {
 // marshalBufPool holds *[]byte slice handles reused as scratch for response
 // marshaling. Each command's response goes through marshalResponse which
 // pulls a slice, appends its BSON encoding via bsoncore, and returns a
-// bson.Raw aliasing those bytes. The slice is held until the wire layer
-// has copied the bytes (wire.WriteOpMsg copies into its own outer pool
-// buffer at op_msg.go:303), at which point Context.runReleases returns
-// it to the pool.
+// bson.Raw aliasing those bytes. The slice is held until the wire layer has
+// finished using the bytes — wire.WriteOpMsg references the body directly
+// via net.Buffers/writev rather than copying, so the buffer must remain
+// valid until WriteOpMsg returns; at that point Context.runReleases is
+// invoked and the slice goes back to the pool.
 //
 // Initial capacity (512 B) is sized for the most common command on a
 // steady-state connection — a hello/ismaster response. The pool grows
@@ -235,7 +236,8 @@ func (d *Dispatcher) registerAll() {
 // Returns the response bson.Raw and a release function. The bson.Raw may
 // alias a buffer pulled from marshalBufPool; the caller MUST invoke the
 // release function exactly once after the response has been consumed
-// (typically wire.WriteOpMsg, which copies the bytes into its own pool).
+// (typically after wire.WriteOpMsg returns — the wire layer references the
+// body via writev rather than copying, so the buffer must outlive that call).
 // The release function is always non-nil and safe to call even if the
 // response was a fresh allocation (e.g. an error path).
 //
@@ -525,8 +527,8 @@ func lookupRawField(doc bson.Raw, key string) bson.Raw {
 // marshalResponse marshals a bson.D into a buffer pulled from marshalBufPool
 // and returns a bson.Raw aliasing that buffer's bytes. The buffer is released
 // when ctx.runReleases is invoked (Dispatch returns runReleases as the
-// release function — the server invokes it after wire.WriteOpMsg has copied
-// the response onto the wire).
+// release function — the server invokes it after wire.WriteOpMsg returns,
+// which is when the writev that referenced the buffer has completed).
 //
 // Ownership: the returned bson.Raw remains valid until release runs. Any
 // reader (e.g. prependOK, integration helpers) must finish reading before
