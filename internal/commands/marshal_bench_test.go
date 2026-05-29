@@ -53,10 +53,11 @@ func findResponseDoc() bson.D {
 // The benchmarks below compare the pre-PR marshalResponse (a plain
 // bson.Marshal call, baseline) against the pooled implementation. They
 // deliberately do NOT include a simulated wire-layer copy: in production
-// wire.WriteOpMsg writes into an already-pooled outer buffer (op_msg.go:303),
-// which does not allocate. The cost we want to attribute to the marshal
-// step is exactly the cost of producing a bson.Raw the wire layer can
-// consume — so that's what we measure.
+// wire.WriteOpMsg references the body directly via net.Buffers/writev
+// (post #716), so there is no per-response outer-buffer alloc to fold in.
+// The cost we want to attribute to the marshal step is exactly the cost
+// of producing a bson.Raw the wire layer can consume — so that's what
+// we measure.
 //
 // Each bench runs:
 //   1. baseline: bson.Marshal returns a freshly-cloned []byte (1 alloc)

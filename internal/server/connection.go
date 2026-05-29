@@ -153,8 +153,9 @@ func (c *Connection) handleOpMsg(msg *wire.OpMsgMessage) error {
 	}
 
 	// Write the response, then release the response buffer back to the pool.
-	// WriteOpMsg copies bytes into its own outer-buffer pool, so release after
-	// the write returns is safe regardless of write success.
+	// WriteOpMsg references body via writev (no body memcpy); the bytes are
+	// guaranteed in the kernel send buffer by the time WriteOpMsg returns,
+	// so releasing after the write is safe regardless of write success.
 	writeErr := wire.WriteOpMsg(c.conn, newRequestID(), msg.Hdr.RequestID, 0, resp)
 	release()
 	return writeErr
