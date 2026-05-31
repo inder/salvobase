@@ -1,0 +1,192 @@
+name: Profile Capture (Workload A)
+
+# On-demand pprof CPU + heap profile capture against current master.
+# Triggered manually; does not run on schedule. Use this to refresh
+# docs/profiles/workload-a-16t-vN.txt baselines after a perf optimization
+# lands. Captures on ubuntu-latest x86_64 so the result is directly
+# comparable to the v1/v2 profiles already in the repo.
+#
+# Workload A (50/50 read/update), 16 client threads, 100k records, 100k ops.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_tag:
+        description: "Profile version tag (e.g. v3) — used in artifact filenames"
+        required: true
+        default: "v3"
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  RECORD_COUNT: "100000"
+  OPERATION_COUNT: "100000"
+  THREADS: "16"
+  WORKLOAD: "A"
+
+jobs:
+  capture:
+    name: Capture pprof profiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build salvobase
+        run: go build -o ./bin/salvobase ./cmd/mongod
+
+      - name: Start salvobase
+        run: |
+          mkdir -p /tmp/salvobase-data
+          nohup ./bin/salvobase \
+            --datadir /tmp/salvobase-data \
+            --port 27017 \
+            --httpPort 27080 \
+            --bind_ip 0.0.0.0 \
+            --noauth \
+            > /tmp/salvobase.log 2>&1 &
+          echo $! > /tmp/salvobase.pid
+          for i in $(seq 1 30); do
+            if wget -qO- http://localhost:27080/health >/dev/null 2>&1; then
+              echo "salvobase ready after ${i}x1s"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Install go-ycsb
+        run: |
+          git clone --depth=1 https://github.com/pingcap/go-ycsb.git /tmp/go-ycsb
+          cd /tmp/go-ycsb && go build -o /usr/local/bin/go-ycsb ./cmd/go-ycsb
+
+      - name: Load 100k records
+        run: |
+          TARGET_URL=mongodb://localhost:27017 \
+          WORKLOAD=$WORKLOAD \
+          THREADS=$THREADS \
+          RECORD_COUNT=$RECORD_COUNT \
+          OPERATION_COUNT=$OPERATION_COUNT \
+            bash scripts/bench/run_ycsb.sh \
+            > /tmp/load.log 2>&1 || true
+          # The above script also runs the workload; we want load-then-profile.
+          # The script's combined behavior is acceptable for warming the bbolt
+          # working set before the dedicated profile run below.
+
+      - name: Capture CPU profile during Workload A run
+        run: |
+          # Start a 30s CPU profile capture in the background, then drive load
+          # for 30s+ via go-ycsb against the same dataset.
+          mkdir -p /tmp/profiles
+          curl -sS --max-time 45 -o /tmp/profiles/cpu.pprof \
+            "http://localhost:27080/debug/pprof/profile?seconds=30" &
+          CURL_PID=$!
+
+          # Drive load. Use a fresh namespace so this is independent of the
+          # warm-up run above. 100k ops at 16 threads typically runs ~30-60s
+          # on ubuntu-latest, which is the right shape for a 30s CPU sample.
+          DB_NAME="profile_run_$(date +%s)"
+          cat > /tmp/wla.properties <<'EOF'
+          workload=core
+          readallfields=true
+          fieldcount=10
+          fieldlength=100
+          readproportion=0.5
+          updateproportion=0.5
+          readmodifywriteproportion=0
+          scanproportion=0
+          insertproportion=0
+          requestdistribution=zipfian
+          EOF
+          go-ycsb load mongodb -P /tmp/wla.properties \
+            -p mongodb.url=mongodb://localhost:27017 \
+            -p mongodb.namespace=${DB_NAME}.usertable \
+            -p recordcount=${RECORD_COUNT} \
+            -p threadcount=${THREADS} > /tmp/profile_load.log 2>&1
+          go-ycsb run mongodb -P /tmp/wla.properties \
+            -p mongodb.url=mongodb://localhost:27017 \
+            -p mongodb.namespace=${DB_NAME}.usertable \
+            -p recordcount=${RECORD_COUNT} \
+            -p operationcount=${OPERATION_COUNT} \
+            -p threadcount=${THREADS} > /tmp/profile_run.log 2>&1
+
+          # Wait for the pprof capture to finish (max 45s).
+          wait $CURL_PID
+          ls -la /tmp/profiles/cpu.pprof
+          file /tmp/profiles/cpu.pprof
+
+      - name: Capture heap/alloc profile
+        run: |
+          curl -sS -o /tmp/profiles/heap.pprof \
+            "http://localhost:27080/debug/pprof/heap"
+          curl -sS -o /tmp/profiles/allocs.pprof \
+            "http://localhost:27080/debug/pprof/allocs"
+          ls -la /tmp/profiles/
+
+      - name: Generate text summaries
+        run: |
+          VERSION="${{ github.event.inputs.version_tag }}"
+          {
+            echo "# CPU profile — Workload A, 16 threads, 100k ops"
+            echo
+            echo "## go tool pprof -top -cum (top 30)"
+            echo '```'
+            go tool pprof -top -cum -nodecount=30 /tmp/profiles/cpu.pprof 2>&1 | head -60
+            echo '```'
+            echo
+            echo "## go tool pprof -top (flat, top 30)"
+            echo '```'
+            go tool pprof -top -nodecount=30 /tmp/profiles/cpu.pprof 2>&1 | head -60
+            echo '```'
+          } > /tmp/profiles/cpu-summary.md
+
+          {
+            echo "# Allocation profile — Workload A, 16 threads, 100k ops"
+            echo
+            echo "## go tool pprof -alloc_objects -top (top 30)"
+            echo '```'
+            go tool pprof -alloc_objects -top -nodecount=30 /tmp/profiles/allocs.pprof 2>&1 | head -60
+            echo '```'
+            echo
+            echo "## go tool pprof -alloc_space -top (top 30)"
+            echo '```'
+            go tool pprof -alloc_space -top -nodecount=30 /tmp/profiles/allocs.pprof 2>&1 | head -60
+            echo '```'
+          } > /tmp/profiles/alloc-summary.md
+
+          # Re-gzip the raw profile files to match the existing .txt convention
+          # used by docs/profiles/workload-a-16t-v2.txt (gzipped pprof binary).
+          gzip -kf /tmp/profiles/cpu.pprof
+          gzip -kf /tmp/profiles/allocs.pprof
+          mv /tmp/profiles/cpu.pprof.gz /tmp/profiles/workload-a-16t-${VERSION}.txt
+          mv /tmp/profiles/allocs.pprof.gz /tmp/profiles/workload-a-16t-${VERSION}-alloc.txt
+          ls -la /tmp/profiles/
+
+      - name: Stop salvobase
+        if: always()
+        run: |
+          if [ -f /tmp/salvobase.pid ]; then
+            kill $(cat /tmp/salvobase.pid) 2>/dev/null || true
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pprof-profiles-${{ github.event.inputs.version_tag }}
+          path: |
+            /tmp/profiles/workload-a-16t-*.txt
+            /tmp/profiles/cpu-summary.md
+            /tmp/profiles/alloc-summary.md
+          retention-days: 30
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: salvobase-log
+          path: /tmp/salvobase.log
+          retention-days: 7
