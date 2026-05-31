@@ -294,3 +294,235 @@ func mustMarshalForBench(d bson.D) bson.Raw {
 	raw, _ := bson.Marshal(d)
 	return raw
 }
+
+// ----------------------------------------------------------------------------
+// extractAndStripMeta — fast path vs slow path equivalence + benchmarks.
+// The slow path (extractAndStripMetaSlow) lives in connection.go as the pre-
+// optimization reference implementation. The fast path is the production
+// byte-splice walker that avoids the bson.D round-trip on every OP_MSG.
+// ----------------------------------------------------------------------------
+
+// typicalOpMsgCmd builds a representative command document that a Mongo driver
+// would send: a real command name + a few real fields + the standard
+// metadata fields that get stripped. Used by tests and benchmarks.
+func typicalOpMsgCmd(t testing.TB) bson.Raw {
+	t.Helper()
+	lsid, err := bson.Marshal(bson.D{
+		{Key: "id", Value: bson.Binary{Subtype: 0x04, Data: bytes.Repeat([]byte{0xAB}, 16)}},
+	})
+	if err != nil {
+		t.Fatalf("marshal lsid: %v", err)
+	}
+	clusterTime, err := bson.Marshal(bson.D{
+		{Key: "clusterTime", Value: bson.Timestamp{T: 1700000000, I: 1}},
+	})
+	if err != nil {
+		t.Fatalf("marshal clusterTime: %v", err)
+	}
+	readPref, err := bson.Marshal(bson.D{{Key: "mode", Value: "primary"}})
+	if err != nil {
+		t.Fatalf("marshal readPref: %v", err)
+	}
+	readConcern, err := bson.Marshal(bson.D{{Key: "level", Value: "local"}})
+	if err != nil {
+		t.Fatalf("marshal readConcern: %v", err)
+	}
+	// Fixture covers all 8 stripped field names so the byte-equality test acts
+	// as a regression net for changes to the strip list itself.
+	raw, err := bson.Marshal(bson.D{
+		{Key: "find", Value: "users"},
+		{Key: "filter", Value: bson.D{{Key: "active", Value: true}}},
+		{Key: "limit", Value: int32(10)},
+		{Key: "lsid", Value: bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: lsid}},
+		{Key: "$clusterTime", Value: bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: clusterTime}},
+		{Key: "$readPreference", Value: bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: readPref}},
+		{Key: "$readConcern", Value: bson.RawValue{Type: bson.TypeEmbeddedDocument, Value: readConcern}},
+		{Key: "txnNumber", Value: int64(7)},
+		{Key: "startTransaction", Value: true},
+		{Key: "autocommit", Value: false},
+		{Key: "$db", Value: "appdb"},
+	})
+	if err != nil {
+		t.Fatalf("marshal cmd: %v", err)
+	}
+	return raw
+}
+
+// newTestConn returns a Connection stub good enough for extractAndStripMeta
+// (which only touches c.session — never c.conn, c.server, etc.).
+func newTestConn() *Connection {
+	return &Connection{}
+}
+
+func TestExtractAndStripMeta_MatchesSlowPath(t *testing.T) {
+	cmd := typicalOpMsgCmd(t)
+
+	cFast := newTestConn()
+	dbFast, cleanFast := extractAndStripMeta(cmd, cFast)
+
+	cSlow := newTestConn()
+	dbSlow, cleanSlow := extractAndStripMetaSlow(cmd, cSlow)
+
+	if dbFast != dbSlow {
+		t.Fatalf("db differs: fast=%q slow=%q", dbFast, dbSlow)
+	}
+	if dbFast != "appdb" {
+		t.Fatalf("db: got %q, want \"appdb\"", dbFast)
+	}
+	if !bytes.Equal(cleanFast, cleanSlow) {
+		t.Fatalf("cleaned cmd bytes differ\nfast: %x\nslow: %x", cleanFast, cleanSlow)
+	}
+
+	// Session state must match between fast and slow paths.
+	if cFast.session == nil || cSlow.session == nil {
+		t.Fatalf("expected session populated in both paths: fast=%v slow=%v", cFast.session, cSlow.session)
+	}
+	if cFast.session.TxnNumber != cSlow.session.TxnNumber {
+		t.Fatalf("session.TxnNumber differs: fast=%d slow=%d", cFast.session.TxnNumber, cSlow.session.TxnNumber)
+	}
+	if cFast.session.TxnNumber != 7 {
+		t.Fatalf("session.TxnNumber: got %d, want 7", cFast.session.TxnNumber)
+	}
+	if cFast.session.InTransaction != cSlow.session.InTransaction {
+		t.Fatalf("session.InTransaction differs: fast=%v slow=%v", cFast.session.InTransaction, cSlow.session.InTransaction)
+	}
+	if !cFast.session.InTransaction {
+		t.Fatalf("session.InTransaction: got false, want true")
+	}
+	if !reflect.DeepEqual(cFast.session.ID, cSlow.session.ID) {
+		t.Fatalf("session.ID differs: fast=%x slow=%x", cFast.session.ID, cSlow.session.ID)
+	}
+
+	// Cleaned cmd must round-trip and contain only the non-meta fields.
+	var parsed bson.D
+	if err := bson.Unmarshal(cleanFast, &parsed); err != nil {
+		t.Fatalf("cleaned cmd does not parse: %v", err)
+	}
+	wantKeys := map[string]bool{"find": true, "filter": true, "limit": true}
+	stripped := map[string]bool{
+		"$db": true, "lsid": true, "$clusterTime": true, "$readPreference": true,
+		"$readConcern": true, "txnNumber": true, "startTransaction": true, "autocommit": true,
+	}
+	for _, e := range parsed {
+		if stripped[e.Key] {
+			t.Errorf("cleaned cmd unexpectedly retained meta field %q", e.Key)
+		}
+		if !wantKeys[e.Key] {
+			t.Errorf("cleaned cmd contains unexpected key %q", e.Key)
+		}
+		delete(wantKeys, e.Key)
+	}
+	for k := range wantKeys {
+		t.Errorf("cleaned cmd missing expected key %q", k)
+	}
+}
+
+func TestExtractAndStripMeta_NoMetaFields_RoundTrips(t *testing.T) {
+	// A command with no metadata fields at all — every element must survive.
+	cmd, err := bson.Marshal(bson.D{
+		{Key: "ping", Value: int32(1)},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	cFast := newTestConn()
+	dbFast, cleanFast := extractAndStripMeta(cmd, cFast)
+	cSlow := newTestConn()
+	dbSlow, cleanSlow := extractAndStripMetaSlow(cmd, cSlow)
+
+	if dbFast != "admin" || dbSlow != "admin" {
+		t.Fatalf("expected admin db default, got fast=%q slow=%q", dbFast, dbSlow)
+	}
+	if !bytes.Equal(cleanFast, cleanSlow) {
+		t.Fatalf("cleaned bytes differ\nfast: %x\nslow: %x", cleanFast, cleanSlow)
+	}
+}
+
+func TestExtractAndStripMeta_OnlyMetaFields_ProducesEmptyDoc(t *testing.T) {
+	// Document containing nothing but metadata — output must be a valid
+	// 5-byte empty BSON document.
+	cmd, err := bson.Marshal(bson.D{
+		{Key: "$db", Value: "x"},
+		{Key: "autocommit", Value: true},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	cFast := newTestConn()
+	db, clean := extractAndStripMeta(cmd, cFast)
+	if db != "x" {
+		t.Fatalf("db: got %q, want \"x\"", db)
+	}
+	emptyDoc := bson.Raw{0x05, 0x00, 0x00, 0x00, 0x00}
+	if !bytes.Equal(clean, emptyDoc) {
+		t.Fatalf("expected empty BSON doc, got %x", clean)
+	}
+}
+
+func TestExtractAndStripMeta_TooShort_ReturnsAdminAndPassthrough(t *testing.T) {
+	short := bson.Raw{0x01, 0x02}
+	c := newTestConn()
+	db, clean := extractAndStripMeta(short, c)
+	if db != "admin" {
+		t.Fatalf("db: got %q, want \"admin\"", db)
+	}
+	if !bytes.Equal(clean, short) {
+		t.Fatalf("expected passthrough of short input, got %x", clean)
+	}
+}
+
+func TestExtractAndStripMeta_MalformedInterior_DoesNotProduceCorruption(t *testing.T) {
+	// Valid envelope, claims an 0x02 (string) element with a 100-byte payload
+	// that doesn't exist. The fast path must NOT emit a longer-than-input
+	// document; on ReadElement failure it must pass the original cmd through.
+	corrupt := bson.Raw{
+		0x0C, 0x00, 0x00, 0x00, // length = 12
+		0x02,       // type = string
+		0x78, 0x00, // key = "x"
+		0x64, 0x00, 0x00, 0x00, // string length = 100 (lies)
+		0x00, // doc terminator
+	}
+	c := newTestConn()
+	db, clean := extractAndStripMeta(corrupt, c)
+	if db != "admin" {
+		t.Fatalf("db: got %q, want \"admin\"", db)
+	}
+	if len(clean) > len(corrupt) {
+		t.Fatalf("fast path silently produced a longer-than-input doc on corrupt interior (would propagate corruption)")
+	}
+}
+
+// BenchmarkExtractAndStripMeta_FastPath measures the new bsoncore byte-splice
+// walker. DoD for #730: ≥30% reduction in allocations vs the slow-path
+// reference below.
+//
+// A fresh Connection is constructed per iteration: extractAndStripMeta lazily
+// allocates c.session on first call, and reusing c across iterations would
+// amortize that allocation to zero from iteration 2 onward — understating the
+// steady-state per-request cost (which is what handleOpMsg actually pays,
+// since c.session is a *connection*-lifetime field but every new TCP
+// connection starts with c.session == nil).
+func BenchmarkExtractAndStripMeta_FastPath(b *testing.B) {
+	cmd := typicalOpMsgCmd(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c := newTestConn()
+		_, _ = extractAndStripMeta(cmd, c)
+	}
+}
+
+// BenchmarkExtractAndStripMeta_SlowPath_Reference is the pre-optimization
+// implementation (bson.D builder + bson.Marshal round-trip), retained as the
+// A/B baseline. The fast path must show substantially fewer allocations.
+func BenchmarkExtractAndStripMeta_SlowPath_Reference(b *testing.B) {
+	cmd := typicalOpMsgCmd(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		c := newTestConn()
+		_, _ = extractAndStripMetaSlow(cmd, c)
+	}
+}

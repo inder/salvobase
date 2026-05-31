@@ -326,16 +326,49 @@ func (c *Connection) close() {
 // extractAndStripMeta removes well-known metadata fields from an OP_MSG command
 // document and returns (db, cleanedCmd).
 // MongoDB drivers inject: $db, lsid, $clusterTime, $readPreference, txnNumber, startTransaction, autocommit
+//
+// Fast path: walks the document element-by-element via bsoncore.ReadElement
+// (which returns slice views, no allocation) and appends the bytes of every
+// non-stripped element verbatim into a single pre-sized output buffer. The
+// length prefix is patched at the end. This avoids the bson.D round-trip the
+// previous implementation paid on every OP_MSG (v3 profile attributed 4.9% of
+// allocated objects + 15.77% cum bytes to extractAndStripMeta + injectField;
+// PR #732 fixed injectField, this fixes the other half).
+//
+// On a malformed document the function falls back to returning the original
+// cmd unchanged with whatever db has been extracted so far ("admin" if $db has
+// not yet been seen) — matching the original error semantics.
 func extractAndStripMeta(cmd bson.Raw, c *Connection) (string, bson.Raw) {
-	elems, err := cmd.Elements()
-	if err != nil {
+	// Minimal validation: 4-byte length prefix + at least the trailing 0x00,
+	// and the length field must equal the slice length.
+	if len(cmd) < 5 || cmd[len(cmd)-1] != 0x00 {
+		return "admin", cmd
+	}
+	if int(binary.LittleEndian.Uint32(cmd[:4])) != len(cmd) {
 		return "admin", cmd
 	}
 
 	db := "admin"
-	stripped := make(bson.D, 0, len(elems))
+	// Output is at most as large as input (we only strip, never add). Pre-sizing
+	// to len(cmd) keeps the append loop allocation-free.
+	out := make([]byte, 4, len(cmd))
 
-	for _, elem := range elems {
+	elements := cmd[4 : len(cmd)-1]
+	for len(elements) > 0 {
+		coreElem, after, ok := bsoncore.ReadElement(elements)
+		if !ok {
+			// Malformed interior — return whatever db we have and pass the
+			// original cmd through; the dispatcher will reject it downstream.
+			return db, cmd
+		}
+		elements = after
+
+		// bson.RawElement is the same underlying []byte as bsoncore.Element
+		// but its Value() returns bson.RawValue, keeping the switch arms
+		// identical to the slow path (compares against bson.TypeXxx constants
+		// and assigns bson.Raw to commands.Session.ID).
+		elem := bson.RawElement(coreElem)
+
 		switch elem.Key() {
 		case "$db":
 			if s, ok := elem.Value().StringValueOK(); ok {
@@ -372,6 +405,67 @@ func extractAndStripMeta(cmd bson.Raw, c *Connection) (string, bson.Raw) {
 			}
 		case "autocommit":
 			// Ignore — we auto-commit everything.
+		default:
+			// coreElem is a bsoncore.Element ([]byte view) covering exactly
+			// [type][key\x00][value]. Copy verbatim into the output buffer.
+			out = append(out, coreElem...)
+		}
+	}
+
+	// Trailing 0x00 doc terminator, then patch the length prefix.
+	out = append(out, 0x00)
+	binary.LittleEndian.PutUint32(out[0:4], uint32(len(out)))
+	return db, out
+}
+
+// extractAndStripMetaSlow is the pre-optimization reference implementation kept
+// solely to verify that extractAndStripMeta produces byte-identical output for
+// the cleaned command and identical side effects for session state. Tests
+// compare fast/slow outputs and benchmarks A/B them. Not called by production
+// code — handleOpMsg always uses the fast path above.
+func extractAndStripMetaSlow(cmd bson.Raw, c *Connection) (string, bson.Raw) {
+	elems, err := cmd.Elements()
+	if err != nil {
+		return "admin", cmd
+	}
+
+	db := "admin"
+	stripped := make(bson.D, 0, len(elems))
+
+	for _, elem := range elems {
+		switch elem.Key() {
+		case "$db":
+			if s, ok := elem.Value().StringValueOK(); ok {
+				db = s
+			}
+		case "lsid":
+			if doc, ok := elem.Value().DocumentOK(); ok {
+				if c.session == nil {
+					c.session = &commands.Session{}
+				}
+				c.session.ID = doc
+				if idVal, err := doc.LookupErr("id"); err == nil {
+					c.session.LSID = fmt.Sprintf("%v", idVal)
+				}
+			}
+		case "$clusterTime", "$readPreference", "$readConcern":
+		case "txnNumber":
+			if c.session == nil {
+				c.session = &commands.Session{}
+			}
+			switch elem.Value().Type {
+			case bson.TypeInt64:
+				c.session.TxnNumber = elem.Value().Int64()
+			case bson.TypeInt32:
+				c.session.TxnNumber = int64(elem.Value().Int32())
+			}
+		case "startTransaction":
+			if c.session != nil {
+				if b, ok := elem.Value().BooleanOK(); ok && b {
+					c.session.InTransaction = true
+				}
+			}
+		case "autocommit":
 		default:
 			stripped = append(stripped, bson.E{Key: elem.Key(), Value: elem.Value()})
 		}
