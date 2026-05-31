@@ -25,6 +25,12 @@ type BBoltEngine struct {
 	mu  sync.RWMutex
 	dbs map[string]*bolt.DB // open bbolt databases, keyed by db name
 
+	// collExists caches db+"\x00"+coll keys for collections confirmed to exist.
+	// Eliminates the per-request write transaction in Collection() for the common
+	// case where the collection was created at startup or on first access.
+	// Invalidated by DropCollection, DropDatabase, and RenameCollection (source side).
+	collExists sync.Map
+
 	cursors  *cursorStore
 	users    *userStore
 	eventBus *EventBus
@@ -57,6 +63,7 @@ func metaIdxKey(coll, idx string) []byte { return []byte(coll + "." + idx) }
 func metaIdxPrefix(coll string) []byte   { return []byte(coll + ".") }
 func userKey(db, username string) []byte { return []byte(db + "\x00" + username) }
 func userPrefix(db string) []byte        { return []byte(db + "\x00") }
+func collKey(db, coll string) string     { return db + "\x00" + coll }
 
 // NewBBoltEngine creates (or opens) a BBolt-backed storage engine.
 func NewBBoltEngine(dataDir, compression string, syncOnWrite bool) (*BBoltEngine, error) {
@@ -167,6 +174,15 @@ func (e *BBoltEngine) DropDatabase(name string) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("DropDatabase: remove %s: %w", name, err)
 	}
+	// Evict all cached collection entries for the dropped database so that
+	// Collection() re-creates buckets if the database is later recreated.
+	prefix := name + "\x00"
+	e.collExists.Range(func(k, _ any) bool {
+		if strings.HasPrefix(k.(string), prefix) {
+			e.collExists.Delete(k)
+		}
+		return true
+	})
 	return nil
 }
 
@@ -240,7 +256,7 @@ func (e *BBoltEngine) CreateCollection(db, coll string, opts CreateCollectionOpt
 	if err != nil {
 		return err
 	}
-	return boltDB.Update(func(tx *bolt.Tx) error {
+	if err := boltDB.Update(func(tx *bolt.Tx) error {
 		meta, err := tx.CreateBucketIfNotExists([]byte(bucketMetaCollections))
 		if err != nil {
 			return fmt.Errorf("CreateCollection: meta bucket: %w", err)
@@ -253,7 +269,11 @@ func (e *BBoltEngine) CreateCollection(db, coll string, opts CreateCollectionOpt
 		}
 		_, err = tx.CreateBucketIfNotExists([]byte(collBucket(coll)))
 		return err
-	})
+	}); err != nil {
+		return err
+	}
+	e.collExists.Store(collKey(db, coll), struct{}{})
+	return nil
 }
 
 // UpdateCollectionOptions updates the validator and validation settings for an
@@ -319,7 +339,7 @@ func (e *BBoltEngine) DropCollection(db, coll string) error {
 	if err != nil {
 		return err
 	}
-	return boltDB.Update(func(tx *bolt.Tx) error {
+	if err := boltDB.Update(func(tx *bolt.Tx) error {
 		// Remove collection bucket
 		_ = tx.DeleteBucket([]byte(collBucket(coll)))
 
@@ -356,7 +376,11 @@ func (e *BBoltEngine) DropCollection(db, coll string) error {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	e.collExists.Delete(collKey(db, coll))
+	return nil
 }
 
 // ListCollections returns the CollectionInfo for every collection registered in
@@ -407,12 +431,17 @@ func (e *BBoltEngine) HasCollection(db, coll string) bool {
 
 // Collection returns a handle to the named collection, creating it implicitly if needed.
 func (e *BBoltEngine) Collection(db, coll string) (Collection, error) {
-	// Ensure the db and collection exist
+	// Fast path: skip the write transaction for collections confirmed to exist.
+	// collExists is populated on first successful access and invalidated on drop/rename.
+	if _, ok := e.collExists.Load(collKey(db, coll)); ok {
+		return &bboltCollection{db: db, coll: coll, engine: e}, nil
+	}
+
+	// Slow path: ensure db and collection exist, creating buckets if needed.
 	boltDB, err := e.openDB(db)
 	if err != nil {
 		return nil, err
 	}
-	// Ensure collection bucket + metadata exist
 	err = boltDB.Update(func(tx *bolt.Tx) error {
 		meta, err := tx.CreateBucketIfNotExists([]byte(bucketMetaCollections))
 		if err != nil {
@@ -434,6 +463,7 @@ func (e *BBoltEngine) Collection(db, coll string) (Collection, error) {
 	if err != nil {
 		return nil, err
 	}
+	e.collExists.Store(collKey(db, coll), struct{}{})
 	return &bboltCollection{db: db, coll: coll, engine: e}, nil
 }
 
@@ -446,9 +476,14 @@ func (e *BBoltEngine) RenameCollection(fromDB, fromColl, toDB, toColl string, dr
 
 	// Same database rename
 	if fromDB == toDB {
-		return fromBoltDB.Update(func(tx *bolt.Tx) error {
+		if err := fromBoltDB.Update(func(tx *bolt.Tx) error {
 			return renameSameDB(tx, fromColl, toColl, dropTarget)
-		})
+		}); err != nil {
+			return err
+		}
+		e.collExists.Delete(collKey(fromDB, fromColl))
+		e.collExists.Store(collKey(toDB, toColl), struct{}{})
+		return nil
 	}
 
 	// Cross-database: read all docs from source, write to target, delete source
@@ -529,7 +564,7 @@ func (e *BBoltEngine) RenameCollection(fromDB, fromColl, toDB, toColl string, dr
 	}
 
 	// Drop source collection
-	return fromBoltDB.Update(func(tx *bolt.Tx) error {
+	if err := fromBoltDB.Update(func(tx *bolt.Tx) error {
 		_ = tx.DeleteBucket([]byte(collBucket(fromColl)))
 		meta := tx.Bucket([]byte(bucketMetaCollections))
 		if meta != nil {
@@ -550,7 +585,12 @@ func (e *BBoltEngine) RenameCollection(fromDB, fromColl, toDB, toColl string, dr
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	e.collExists.Delete(collKey(fromDB, fromColl))
+	e.collExists.Store(collKey(toDB, toColl), struct{}{})
+	return nil
 }
 
 func renameSameDB(tx *bolt.Tx, fromColl, toColl string, dropTarget bool) error {
@@ -748,6 +788,9 @@ func (e *BBoltEngine) CreateIndex(db, coll string, spec IndexSpec) (string, erro
 	}); err != nil {
 		return "", err
 	}
+	// CreateIndex implicitly creates the collection bucket — warm the cache so
+	// subsequent Collection() calls skip the slow write-transaction path.
+	e.collExists.Store(collKey(db, coll), struct{}{})
 	return spec.Name, nil
 }
 

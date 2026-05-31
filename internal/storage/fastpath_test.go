@@ -287,3 +287,70 @@ func TestDeleteByIndexScan(t *testing.T) {
 		t.Errorf("remaining: got %d, want 5", total)
 	}
 }
+
+// TestCollExistsCacheInvalidation verifies that collExists is correctly
+// invalidated across drop, rename, and DropDatabase operations so the
+// fast path never serves a stale handle to a non-existent bucket.
+func TestCollExistsCacheInvalidation(t *testing.T) {
+	t.Run("drop then recreate", func(t *testing.T) {
+		e := newTestEngine(t)
+		// Warm the cache via Collection() slow path.
+		if _, err := e.Collection("db1", "col1"); err != nil {
+			t.Fatalf("Collection: %v", err)
+		}
+		if _, ok := e.collExists.Load(collKey("db1", "col1")); !ok {
+			t.Fatal("expected collExists entry after first Collection() call")
+		}
+		// Drop the collection — cache must be evicted.
+		if err := e.DropCollection("db1", "col1"); err != nil {
+			t.Fatalf("DropCollection: %v", err)
+		}
+		if _, ok := e.collExists.Load(collKey("db1", "col1")); ok {
+			t.Fatal("expected collExists to be evicted after DropCollection")
+		}
+		// Recreate via Collection() — must succeed (slow path re-creates bucket).
+		if _, err := e.Collection("db1", "col1"); err != nil {
+			t.Fatalf("Collection after drop: %v", err)
+		}
+		if _, ok := e.collExists.Load(collKey("db1", "col1")); !ok {
+			t.Fatal("expected collExists entry after recreate")
+		}
+	})
+
+	t.Run("same-db rename invalidates source caches old name", func(t *testing.T) {
+		e := newTestEngine(t)
+		if _, err := e.Collection("db2", "src"); err != nil {
+			t.Fatalf("Collection: %v", err)
+		}
+		if err := e.RenameCollection("db2", "src", "db2", "dst", false); err != nil {
+			t.Fatalf("RenameCollection: %v", err)
+		}
+		if _, ok := e.collExists.Load(collKey("db2", "src")); ok {
+			t.Fatal("expected old name evicted from collExists after rename")
+		}
+		if _, ok := e.collExists.Load(collKey("db2", "dst")); !ok {
+			t.Fatal("expected new name in collExists after rename")
+		}
+	})
+
+	t.Run("DropDatabase evicts all collections for that db", func(t *testing.T) {
+		e := newTestEngine(t)
+		for _, coll := range []string{"a", "b", "c"} {
+			if _, err := e.Collection("db3", coll); err != nil {
+				t.Fatalf("Collection db3.%s: %v", coll, err)
+			}
+		}
+		if err := e.DropDatabase("db3"); err != nil {
+			t.Fatalf("DropDatabase: %v", err)
+		}
+		for _, coll := range []string{"a", "b", "c"} {
+			if _, ok := e.collExists.Load(collKey("db3", coll)); ok {
+				t.Fatalf("expected db3.%s evicted after DropDatabase", coll)
+			}
+		}
+		// Recreate — Collection() must work (slow path).
+		if _, err := e.Collection("db3", "a"); err != nil {
+			t.Fatalf("Collection after DropDatabase: %v", err)
+		}
+	})
+}
