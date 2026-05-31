@@ -446,6 +446,27 @@ func (e *BBoltEngine) Collection(db, coll string) (Collection, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Read-check: if both buckets already exist skip the write transaction and
+	// its fdatasync cost. This is the common case after a restart when collExists
+	// is cold but the data is already on disk.
+	// View errors are intentionally ignored: a read failure falls through to
+	// the write path which will surface the real error.
+	var alreadyExists bool
+	_ = boltDB.View(func(tx *bolt.Tx) error {
+		meta := tx.Bucket([]byte(bucketMetaCollections))
+		if meta != nil && meta.Get(metaCollKey(coll)) != nil {
+			if tx.Bucket([]byte(collBucket(coll))) != nil {
+				alreadyExists = true
+			}
+		}
+		return nil
+	})
+	if alreadyExists {
+		e.collExists.Store(collKey(db, coll), struct{}{})
+		return &bboltCollection{db: db, coll: coll, engine: e}, nil
+	}
+
 	err = boltDB.Update(func(tx *bolt.Tx) error {
 		meta, err := tx.CreateBucketIfNotExists([]byte(bucketMetaCollections))
 		if err != nil {

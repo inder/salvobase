@@ -288,6 +288,66 @@ func TestDeleteByIndexScan(t *testing.T) {
 	}
 }
 
+// TestCollectionReadCheckPath verifies that Collection() uses the read-only
+// View before the write Update on the slow path, so a restart over existing
+// data warms the cache without paying an fdatasync.
+func TestCollectionReadCheckPath(t *testing.T) {
+	dir := t.TempDir()
+
+	// First engine: create the collection on disk.
+	e1, err := NewBBoltEngine(dir, "none", false)
+	if err != nil {
+		t.Fatalf("NewBBoltEngine (e1): %v", err)
+	}
+	if _, err := e1.Collection("testdb", "col1"); err != nil {
+		t.Fatalf("e1.Collection: %v", err)
+	}
+	if err := e1.Close(); err != nil {
+		t.Fatalf("e1.Close: %v", err)
+	}
+
+	// Second engine: same dir, cold collExists cache.
+	e2, err := NewBBoltEngine(dir, "none", false)
+	if err != nil {
+		t.Fatalf("NewBBoltEngine (e2): %v", err)
+	}
+	t.Cleanup(func() { _ = e2.Close() })
+
+	// Cache must be empty at this point.
+	if _, ok := e2.collExists.Load(collKey("testdb", "col1")); ok {
+		t.Fatal("expected empty collExists on fresh engine")
+	}
+
+	// Open the underlying boltDB so we can snapshot write stats before
+	// Collection() touches it (openDB is idempotent).
+	boltDB, err := e2.openDB("testdb")
+	if err != nil {
+		t.Fatalf("openDB: %v", err)
+	}
+	before := boltDB.Stats().TxStats.Write
+
+	// Collection() slow path: read-check finds both buckets, no write tx needed.
+	if _, err := e2.Collection("testdb", "col1"); err != nil {
+		t.Fatalf("e2.Collection: %v", err)
+	}
+
+	// No write transaction should have been committed: the read-check path
+	// skips boltDB.Update entirely when both buckets already exist.
+	if after := boltDB.Stats().TxStats.Write; after != before {
+		t.Errorf("write count changed: before=%d after=%d — write tx ran when read-check should have been sufficient", before, after)
+	}
+
+	// Cache must now be warm.
+	if _, ok := e2.collExists.Load(collKey("testdb", "col1")); !ok {
+		t.Fatal("expected collExists warm after read-check slow path")
+	}
+
+	// Second access must hit the fast path (cache already warm).
+	if _, err := e2.Collection("testdb", "col1"); err != nil {
+		t.Fatalf("e2.Collection (second): %v", err)
+	}
+}
+
 // TestCollExistsCacheInvalidation verifies that collExists is correctly
 // invalidated across drop, rename, and DropDatabase operations so the
 // fast path never serves a stale handle to a non-existent bucket.
