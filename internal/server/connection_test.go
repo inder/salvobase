@@ -216,8 +216,8 @@ func TestInjectField_MalformedInterior_FallsThroughSafely(t *testing.T) {
 	// 0x02 (string) element with a 100-byte payload that doesn't exist.
 	corrupt := bson.Raw{
 		0x0C, 0x00, 0x00, 0x00, // length = 12
-		0x02,                   // type = string
-		0x78, 0x00,             // key = "x"
+		0x02,       // type = string
+		0x78, 0x00, // key = "x"
 		0x64, 0x00, 0x00, 0x00, // string length = 100 (lies — there are no payload bytes)
 		0x00, // doc terminator
 	}
