@@ -56,6 +56,11 @@ jobs:
               echo "salvobase ready after ${i}x1s"
               break
             fi
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: salvobase never became healthy" >&2
+              cat /tmp/salvobase.log >&2 || true
+              exit 1
+            fi
             sleep 1
           done
 
@@ -64,32 +69,12 @@ jobs:
           git clone --depth=1 https://github.com/pingcap/go-ycsb.git /tmp/go-ycsb
           cd /tmp/go-ycsb && go build -o /usr/local/bin/go-ycsb ./cmd/go-ycsb
 
-      - name: Load 100k records
+      - name: Prepare workload properties and load dataset
         run: |
-          TARGET_URL=mongodb://localhost:27017 \
-          WORKLOAD=$WORKLOAD \
-          THREADS=$THREADS \
-          RECORD_COUNT=$RECORD_COUNT \
-          OPERATION_COUNT=$OPERATION_COUNT \
-            bash scripts/bench/run_ycsb.sh \
-            > /tmp/load.log 2>&1 || true
-          # The above script also runs the workload; we want load-then-profile.
-          # The script's combined behavior is acceptable for warming the bbolt
-          # working set before the dedicated profile run below.
-
-      - name: Capture CPU profile during Workload A run
-        run: |
-          # Start a 30s CPU profile capture in the background, then drive load
-          # for 30s+ via go-ycsb against the same dataset.
           mkdir -p /tmp/profiles
-          curl -sS --max-time 45 -o /tmp/profiles/cpu.pprof \
-            "http://localhost:27080/debug/pprof/profile?seconds=30" &
-          CURL_PID=$!
-
-          # Drive load. Use a fresh namespace so this is independent of the
-          # warm-up run above. 100k ops at 16 threads typically runs ~30-60s
-          # on ubuntu-latest, which is the right shape for a 30s CPU sample.
-          DB_NAME="profile_run_$(date +%s)"
+          # Generate the properties file with no leading whitespace — bash
+          # heredocs with quoted EOF preserve indentation literally, and
+          # go-ycsb would treat "          workload" as the key.
           cat > /tmp/wla.properties <<'EOF'
           workload=core
           readallfields=true
@@ -102,11 +87,32 @@ jobs:
           insertproportion=0
           requestdistribution=zipfian
           EOF
+          # Strip leading whitespace introduced by YAML block scalar indent.
+          sed -i 's/^[[:space:]]*//' /tmp/wla.properties
+          echo "--- properties ---"
+          cat /tmp/wla.properties
+          echo "------------------"
+
+          DB_NAME="profile_run_$(date +%s)"
+          echo "$DB_NAME" > /tmp/profile_db_name
           go-ycsb load mongodb -P /tmp/wla.properties \
             -p mongodb.url=mongodb://localhost:27017 \
             -p mongodb.namespace=${DB_NAME}.usertable \
             -p recordcount=${RECORD_COUNT} \
             -p threadcount=${THREADS} > /tmp/profile_load.log 2>&1
+
+      - name: Capture CPU profile during Workload A run
+        run: |
+          DB_NAME=$(cat /tmp/profile_db_name)
+          # Fire the 30s CPU sample in the background, then drive the run phase
+          # synchronously. The run phase is where we want CPU attribution —
+          # firing the sample AFTER load ensures the 30s window overlaps the
+          # steady-state read/update mix, not the bulk insert path.
+          # -f: fail on HTTP errors so a 500 doesn't get gzipped silently.
+          curl -fsS --max-time 45 -o /tmp/profiles/cpu.pprof \
+            "http://localhost:27080/debug/pprof/profile?seconds=30" &
+          CURL_PID=$!
+
           go-ycsb run mongodb -P /tmp/wla.properties \
             -p mongodb.url=mongodb://localhost:27017 \
             -p mongodb.namespace=${DB_NAME}.usertable \
@@ -114,17 +120,31 @@ jobs:
             -p operationcount=${OPERATION_COUNT} \
             -p threadcount=${THREADS} > /tmp/profile_run.log 2>&1
 
-          # Wait for the pprof capture to finish (max 45s).
           wait $CURL_PID
           ls -la /tmp/profiles/cpu.pprof
           file /tmp/profiles/cpu.pprof
+          # Hard-fail if the file is not the expected pprof binary format.
+          # pprof binaries are gzip-wrapped protobuf; `file` reports them as
+          # "gzip compressed data" or just "data" depending on the runner.
+          if ! file /tmp/profiles/cpu.pprof | grep -qE 'gzip compressed data|data$'; then
+            echo "ERROR: cpu.pprof is not a valid pprof binary" >&2
+            head -c 500 /tmp/profiles/cpu.pprof >&2 || true
+            exit 1
+          fi
 
       - name: Capture heap/alloc profile
         run: |
-          curl -sS -o /tmp/profiles/heap.pprof \
+          # -f so HTTP errors fail the step instead of being silently saved.
+          curl -fsS -o /tmp/profiles/heap.pprof \
             "http://localhost:27080/debug/pprof/heap"
-          curl -sS -o /tmp/profiles/allocs.pprof \
+          curl -fsS -o /tmp/profiles/allocs.pprof \
             "http://localhost:27080/debug/pprof/allocs"
+          for f in heap allocs; do
+            if ! file /tmp/profiles/${f}.pprof | grep -qE 'gzip compressed data|data$'; then
+              echo "ERROR: ${f}.pprof is not a valid pprof binary" >&2
+              exit 1
+            fi
+          done
           ls -la /tmp/profiles/
 
       - name: Generate text summaries
