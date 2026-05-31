@@ -178,7 +178,11 @@ func (e *BBoltEngine) DropDatabase(name string) error {
 	// Collection() re-creates buckets if the database is later recreated.
 	prefix := name + "\x00"
 	e.collExists.Range(func(k, _ any) bool {
-		if strings.HasPrefix(k.(string), prefix) {
+		key, ok := k.(string)
+		if !ok {
+			panic(fmt.Sprintf("collExists: non-string key %T", k))
+		}
+		if strings.HasPrefix(key, prefix) {
 			e.collExists.Delete(k)
 		}
 		return true
