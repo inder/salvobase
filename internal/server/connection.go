@@ -2,6 +2,8 @@ package server
 
 import (
 	"bufio"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/x/bsonx/bsoncore"
 	"go.uber.org/zap"
 
 	"github.com/inder/salvobase/internal/commands"
@@ -384,15 +387,45 @@ func extractAndStripMeta(cmd bson.Raw, c *Connection) (string, bson.Raw) {
 // injectField adds or replaces a field in a bson.Raw document.
 // Used to merge document sequences (Section Type 1) back into the command body.
 // value must be a valid BSON-encoded array.
+//
+// Fast path (no-existing-key): operates directly on BSON bytes — rewrites the
+// length prefix, splices in `{type=array}{key}\x00{value}` before the trailing
+// 0x00, and appends a new trailer. Avoids the bson.Unmarshal → bson.D →
+// bson.Marshal round-trip that drove ~13% of all allocation under Workload A
+// (v3 profile: 751 MB / 30s cum from injectField → bson.Unmarshal). The slow
+// path (key already present) preserves the original round-trip semantics for
+// in-place replacement.
+//
+// For OP_MSG document sequences the fast path is always taken: the driver
+// never duplicates "documents"/"updates"/"deletes" in both the body and a
+// Section Type 1, so the key being injected is guaranteed absent from doc.
 func injectField(doc bson.Raw, key string, value bson.Raw) bson.Raw {
+	// Defensive bounds check — a BSON document is at minimum 5 bytes
+	// (4-byte length + 0x00 trailer).
+	if len(doc) < 5 || doc[len(doc)-1] != 0x00 {
+		return doc
+	}
+
+	// Fast path: key not present → append at the end without round-tripping
+	// through bson.D. Take this path *only* on the specific
+	// `bsoncore.ErrElementNotFound` sentinel. LookupErr can also return
+	// `ErrEmptyKey` (empty key string) or `InsufficientBytesError` (malformed
+	// interior); routing those into the byte-splice would either write a
+	// zero-length cstring or extend an already-corrupt document. Fall through
+	// to the slow path in those cases — bson.Unmarshal will reject malformed
+	// input and the function will return `doc` unchanged.
+	if _, err := doc.LookupErr(key); errors.Is(err, bsoncore.ErrElementNotFound) {
+		return appendBSONArrayField(doc, key, value)
+	}
+
+	// Slow path: key exists → replace in place via bson.D round-trip. This
+	// path is not exercised by OP_MSG document sequences in practice but
+	// remains for semantic compatibility with the prior implementation.
 	var d bson.D
 	if err := bson.Unmarshal(doc, &d); err != nil {
 		return doc
 	}
-
 	arrVal := bson.RawValue{Type: bson.TypeArray, Value: value}
-
-	// Check if field already exists and update it.
 	for i, elem := range d {
 		if elem.Key == key {
 			d[i].Value = arrVal
@@ -403,14 +436,43 @@ func injectField(doc bson.Raw, key string, value bson.Raw) bson.Raw {
 			return raw
 		}
 	}
+	// Unreachable: LookupErr said key was present.
+	return doc
+}
 
-	// Append the field.
-	d = append(d, bson.E{Key: key, Value: arrVal})
-	raw, err := bson.Marshal(d)
-	if err != nil {
-		return doc
-	}
-	return raw
+// appendBSONArrayField appends a BSON array field {key: value} to a BSON doc
+// without parsing it. value must already be a BSON-encoded array document.
+//
+// Layout produced (BSON spec):
+//
+//	[int32 length][...original elements...][0x04 type][key bytes][0x00 cstring NUL][value bytes][0x00 doc terminator]
+//
+// Bytes added vs the input: 1 (type) + len(key) + 1 (cstring NUL) + len(value).
+// The original trailing 0x00 is overwritten by the type byte; a new 0x00 is
+// re-appended at the end.
+func appendBSONArrayField(doc bson.Raw, key string, value bson.Raw) bson.Raw {
+	keyBytes := []byte(key)
+	// Bytes added: 1 (type) + len(key) + 1 (key terminator) + len(value).
+	// The old trailing 0x00 is removed and a new one re-appended → net zero.
+	addedBytes := 1 + len(keyBytes) + 1 + len(value)
+	newLen := len(doc) + addedBytes
+
+	out := make([]byte, newLen)
+	// Copy original content minus its trailing 0x00.
+	copy(out, doc[:len(doc)-1])
+	pos := len(doc) - 1
+	out[pos] = byte(bson.TypeArray)
+	pos++
+	copy(out[pos:], keyBytes)
+	pos += len(keyBytes)
+	out[pos] = 0x00 // key cstring terminator
+	pos++
+	copy(out[pos:], value)
+	// Final byte is already 0x00 from make().
+
+	// Overwrite the 4-byte little-endian length prefix.
+	binary.LittleEndian.PutUint32(out[0:4], uint32(newLen))
+	return out
 }
 
 // bsonRawArray serializes a []bson.Raw as a BSON array.
