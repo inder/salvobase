@@ -8,13 +8,19 @@ Runs after every nightly benchmark. Three conditions:
   Condition 1: 0 < gap ≤ 0.10  → file/update issue every 3 days
   Condition 2: gap ≤ 0  → north star achieved → file achievement issue, close p0
 
-gap = north_star - current_3_night_median_ratio
+gap = north_star - worst_workload_3_night_median_ratio  (see #737)
+
+Per-workload gate (see #737):
+  Overall median masks bad workloads when others beat MongoDB. Routing uses the
+  worst per-workload median so the p0 issue fires whenever ANY workload is more
+  than 10pp behind. Overall median is still printed/displayed for context.
 
 Per-night sampling (see #715):
   benchmark.yml emits 3 result rows per (workload, threads, target) per night.
   This script aggregates samples → per-night median first, then computes the
-  per-night ratio. Condition 0 is variance-gated: if the current 3-night median
-  is within 2σ of the trailing 7-night median, the alert is suppressed.
+  per-night ratio. Condition 0 is variance-gated: if the current 3-night
+  overall median is within 2σ of the trailing 7-night median, the alert is
+  suppressed.
 
 Usage:
   python3 scripts/bench/check_perf_gap.py \
@@ -161,6 +167,41 @@ def compute_median_ratio(
     return overall, per_wl
 
 
+def determine_routing(
+    median_ratio: float | None,
+    per_wl: dict[str, float],
+    north_star: float,
+) -> tuple[int, float, float, str | None]:
+    """
+    Decide which condition to route to (#737).
+
+    Returns (condition_idx, gap, worst_ratio, worst_wl).
+
+      condition_idx: 0 (gap > 10pp), 1 (0 < gap ≤ 10pp), 2 (gap ≤ 0)
+      gap         : north_star - worst_ratio
+      worst_ratio : min(per_wl.values()) — the binding constraint
+      worst_wl    : workload name with the minimum ratio (None if per_wl empty)
+
+    Falls back to median_ratio when per_wl is empty (defensive — should only
+    happen when paired salvobase/mongodb data is missing).
+    """
+    if per_wl:
+        worst_wl = min(per_wl, key=per_wl.get)
+        worst_ratio = per_wl[worst_wl]
+    else:
+        worst_ratio = median_ratio if median_ratio is not None else 0.0
+        worst_wl = None
+
+    gap = north_star - worst_ratio
+    if gap > 0.10:
+        cond = 0
+    elif gap > 0:
+        cond = 1
+    else:
+        cond = 2
+    return cond, gap, worst_ratio, worst_wl
+
+
 def variance_gate(
     rows: list,
     current_n: int = CURRENT_WINDOW_NIGHTS,
@@ -297,20 +338,43 @@ def _wl_table(per_wl: dict, north_star: float) -> str:
     return "\n".join(rows)
 
 
-def p0_body(median_ratio: float, north_star: float, per_wl: dict) -> tuple:
-    gap_pp = (north_star - median_ratio) * 100
-    current_pct = median_ratio * 100
+def p0_body(
+    median_ratio: float,
+    north_star: float,
+    per_wl: dict[str, float],
+    worst_wl: str | None = None,
+    worst_ratio: float | None = None,
+) -> tuple:
+    """Render the p0 issue title + body.
+
+    worst_wl / worst_ratio default to the routing decision from
+    determine_routing — pass them explicitly to keep title text in sync with
+    the gate that fired. If both are None, fall back to computing from per_wl,
+    or to overall-median wording when per_wl is empty.
+    """
+    overall_pct = median_ratio * 100
     target_pct = north_star * 100
-    worst_wl = min(per_wl, key=per_wl.get) if per_wl else "N/A"
-    worst_pct = per_wl.get(worst_wl, 0) * 100
+    if worst_wl is None or worst_ratio is None:
+        if per_wl:
+            worst_wl = min(per_wl, key=per_wl.get)
+            worst_ratio = per_wl[worst_wl]
+        else:
+            worst_wl = None
+            worst_ratio = median_ratio
+    worst_pct = worst_ratio * 100
+    gap_pp = target_pct - worst_pct
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    headline = (f"worst workload {worst_wl} at {worst_pct:.1f}%"
+                if worst_wl else f"overall median {worst_pct:.1f}%")
 
     title = (f"perf: close gap to north star — "
-             f"currently {current_pct:.1f}% of {target_pct:.0f}% target")
+             f"{headline} of {target_pct:.0f}% target")
     body = f"""## Performance Gap — Priority 0
 
-**Signal:** Salvobase is at **{current_pct:.1f}%** of MongoDB throughput. \
-North star: **{target_pct:.0f}%**. Gap: **{gap_pp:.1f} percentage points**.
+**Signal:** {('Workload **' + worst_wl + '**') if worst_wl else 'Overall median'} \
+is at **{worst_pct:.1f}%** of MongoDB throughput \
+(overall median across workloads: {overall_pct:.1f}%). \
+North star: **{target_pct:.0f}%**. Worst-workload gap: **{gap_pp:.1f} percentage points**.
 
 ### Per-Workload Breakdown (3-run median)
 
@@ -345,20 +409,39 @@ AND the move clears the 2σ noise-floor gate. See #715 for variance-gating logic
     return title, body
 
 
-def c1_body(median_ratio: float, north_star: float, per_wl: dict) -> tuple:
-    gap_pp = (north_star - median_ratio) * 100
-    current_pct = median_ratio * 100
+def c1_body(
+    median_ratio: float,
+    north_star: float,
+    per_wl: dict[str, float],
+    worst_wl: str | None = None,
+    worst_ratio: float | None = None,
+) -> tuple:
+    overall_pct = median_ratio * 100
     target_pct = north_star * 100
+    if worst_wl is None or worst_ratio is None:
+        if per_wl:
+            worst_wl = min(per_wl, key=per_wl.get)
+            worst_ratio = per_wl[worst_wl]
+        else:
+            worst_wl = None
+            worst_ratio = median_ratio
+    worst_pct = worst_ratio * 100
+    gap_pp = target_pct - worst_pct
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    headline = (f"worst workload {worst_wl} at {worst_pct:.1f}%"
+                if worst_wl else f"overall median {worst_pct:.1f}%")
+    signal_label = (f"Worst workload **{worst_wl}** at **{worst_pct:.1f}%**"
+                    if worst_wl else f"Overall median at **{worst_pct:.1f}%**")
 
     title = (f"perf: approaching north star — "
-             f"{current_pct:.1f}% of {target_pct:.0f}% target")
+             f"{headline} of {target_pct:.0f}% target")
     wl_lines = "\n".join(f"- Workload {wl}: {v*100:.1f}%"
                          for wl, v in sorted(per_wl.items()))
     body = f"""## Performance Within 10pp of North Star
 
-**Signal:** Salvobase is at **{current_pct:.1f}%** of MongoDB throughput. \
-North star: **{target_pct:.0f}%**. Gap: **{gap_pp:.1f}pp** — within striking distance.
+**Signal:** {signal_label} of MongoDB throughput \
+(overall median across workloads: {overall_pct:.1f}%). \
+North star: **{target_pct:.0f}%**. Worst-workload gap: **{gap_pp:.1f}pp** — within striking distance.
 
 ### Per-Workload (3-run median)
 
@@ -381,16 +464,23 @@ Close when 3-day median ≥ {target_pct:.0f}% — north star will then advance t
     return title, body
 
 
-def achieved_body(median_ratio: float, north_star: float) -> tuple:
+def achieved_body(median_ratio: float, north_star: float, per_wl: dict | None = None) -> tuple:
     current_pct = median_ratio * 100
     target_pct = north_star * 100
     next_target = north_star + 0.05
+    if per_wl:
+        worst_wl = min(per_wl, key=per_wl.get)
+        worst_pct = per_wl[worst_wl] * 100
+        worst_line = (f"\n\nWorst workload: **{worst_wl}** at **{worst_pct:.1f}%** — "
+                      f"every workload now meets the bar.")
+    else:
+        worst_line = ""
 
     title = f"perf: north star achieved — {current_pct:.1f}% ≥ {target_pct:.0f}% target"
     body = f"""## North Star Achieved
 
 Salvobase has reached **{current_pct:.1f}%** of MongoDB throughput, \
-meeting the **{target_pct:.0f}%** north star.
+meeting the **{target_pct:.0f}%** north star.{worst_line}
 
 ### Founder action required
 
@@ -416,6 +506,8 @@ def handle_condition_0(
     per_wl: dict,
     rows: list,
     dry_run: bool,
+    worst_wl: str | None = None,
+    worst_ratio: float | None = None,
 ):
     """Gap > 10pp — upsert p0 issue every run, gated on variance."""
     should_alert, reason = variance_gate(rows)
@@ -424,7 +516,7 @@ def handle_condition_0(
         # Don't file, don't comment, don't update. Just trace and exit clean.
         return
 
-    title, body = p0_body(median_ratio, north_star, per_wl)
+    title, body = p0_body(median_ratio, north_star, per_wl, worst_wl, worst_ratio)
     existing = find_open_issue("close gap to north star", "priority:critical")
 
     if dry_run:
@@ -432,11 +524,13 @@ def handle_condition_0(
         return
 
     if existing:
-        gap_pp = (north_star - median_ratio) * 100
+        wpct = (worst_ratio if worst_ratio is not None else median_ratio) * 100
+        wname = worst_wl if worst_wl else "overall"
+        gap_pp = north_star * 100 - wpct
         comment = (
             f"**Updated {datetime.now(timezone.utc).strftime('%Y-%m-%d')}:** "
-            f"Ratio {median_ratio*100:.1f}% · Gap {gap_pp:.1f}pp · "
-            f"Worst: {min(per_wl, key=per_wl.get)} at {min(per_wl.values())*100:.1f}% · "
+            f"Worst {wname} at {wpct:.1f}% · Gap {gap_pp:.1f}pp · "
+            f"Overall median {median_ratio*100:.1f}% · "
             f"Gate: {reason}"
         )
         comment_on_issue(existing["number"], comment)
@@ -444,7 +538,14 @@ def handle_condition_0(
         create_issue(title, LABEL_P0, body)
 
 
-def handle_condition_1(median_ratio: float, north_star: float, per_wl: dict, dry_run: bool):
+def handle_condition_1(
+    median_ratio: float,
+    north_star: float,
+    per_wl: dict,
+    dry_run: bool,
+    worst_wl: str | None = None,
+    worst_ratio: float | None = None,
+):
     """Gap 0–10pp — file/update issue every 3 days."""
     # First, close any lingering p0 issue (we've improved past the 10pp threshold)
     existing_p0 = find_open_issue("close gap to north star", "priority:critical")
@@ -456,7 +557,7 @@ def handle_condition_1(median_ratio: float, north_star: float, per_wl: dict, dry
         else:
             print(f"[DRY RUN] Would close p0 issue #{existing_p0['number']}")
 
-    title, body = c1_body(median_ratio, north_star, per_wl)
+    title, body = c1_body(median_ratio, north_star, per_wl, worst_wl, worst_ratio)
     existing = find_open_issue("approaching north star", "priority:medium")
 
     if existing and updated_within(existing, 3):
@@ -468,17 +569,25 @@ def handle_condition_1(median_ratio: float, north_star: float, per_wl: dict, dry
         return
 
     if existing:
-        gap_pp = (north_star - median_ratio) * 100
+        wpct = (worst_ratio if worst_ratio is not None else median_ratio) * 100
+        wname = worst_wl if worst_wl else "overall"
+        gap_pp = north_star * 100 - wpct
         comment = (
             f"**Updated {datetime.now(timezone.utc).strftime('%Y-%m-%d')}:** "
-            f"Ratio {median_ratio*100:.1f}% · Gap {gap_pp:.1f}pp"
+            f"Worst {wname} at {wpct:.1f}% · Gap {gap_pp:.1f}pp · "
+            f"Overall median {median_ratio*100:.1f}%"
         )
         comment_on_issue(existing["number"], comment)
     else:
         create_issue(title, LABEL_C1, body)
 
 
-def handle_condition_2(median_ratio: float, north_star: float, dry_run: bool):
+def handle_condition_2(
+    median_ratio: float,
+    north_star: float,
+    dry_run: bool,
+    per_wl: dict | None = None,
+):
     """North star hit — file achievement issue, close p0."""
     # Close p0 if open
     existing_p0 = find_open_issue("close gap to north star", "priority:critical")
@@ -495,7 +604,7 @@ def handle_condition_2(median_ratio: float, north_star: float, dry_run: bool):
         print(f"  Achievement issue #{existing_ach['number']} already open — skipping")
         return
 
-    title, body = achieved_body(median_ratio, north_star)
+    title, body = achieved_body(median_ratio, north_star, per_wl)
     if dry_run:
         print(f"[DRY RUN] Would file north-star-achieved issue: {title}")
         return
@@ -530,23 +639,29 @@ def main():
         print("check_perf_gap: no paired salvobase/mongodb results — skipping", file=sys.stderr)
         sys.exit(0)
 
-    gap = north_star - median_ratio
+    cond, gap, worst_ratio, worst_wl = determine_routing(median_ratio, per_wl, north_star)
 
-    print(f"North star:   {north_star*100:.0f}%")
-    print(f"Median ratio: {median_ratio*100:.1f}%")
-    print(f"Gap:          {gap*100:.1f}pp")
-    print(f"Per workload: { {k: f'{v*100:.1f}%' for k, v in sorted(per_wl.items())} }")
+    print(f"North star:    {north_star*100:.0f}%")
+    print(f"Overall median:{median_ratio*100:6.1f}%")
+    print(f"Worst workload:{worst_ratio*100:6.1f}% ({worst_wl})")
+    print(f"Worst-wl gap:  {gap*100:6.1f}pp")
+    print(f"Per workload:  { {k: f'{v*100:.1f}%' for k, v in sorted(per_wl.items())} }")
     print()
 
-    if gap > 0.10:
-        print("→ Condition 0: gap > 10pp. Evaluating variance gate before upserting p0.")
-        handle_condition_0(median_ratio, north_star, per_wl, rows, args.dry_run)
-    elif gap > 0:
-        print("→ Condition 1: Normal — gap ≤ 10pp. Filing/updating every 3 days.")
-        handle_condition_1(median_ratio, north_star, per_wl, args.dry_run)
+    if cond == 0:
+        print(f"→ Condition 0: worst-wl gap > 10pp ({worst_wl}). "
+              f"Evaluating variance gate before upserting p0.")
+        handle_condition_0(median_ratio, north_star, per_wl, rows, args.dry_run,
+                           worst_wl, worst_ratio)
+    elif cond == 1:
+        print(f"→ Condition 1: Normal — worst-wl gap ≤ 10pp ({worst_wl}). "
+              f"Filing/updating every 3 days.")
+        handle_condition_1(median_ratio, north_star, per_wl, args.dry_run,
+                           worst_wl, worst_ratio)
     else:
-        print("→ Condition 2: NORTH STAR ACHIEVED. Filing achievement issue.")
-        handle_condition_2(median_ratio, north_star, args.dry_run)
+        print("→ Condition 2: NORTH STAR ACHIEVED on every workload. "
+              "Filing achievement issue.")
+        handle_condition_2(median_ratio, north_star, args.dry_run, per_wl)
 
 
 if __name__ == "__main__":
