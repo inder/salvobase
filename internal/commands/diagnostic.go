@@ -16,65 +16,12 @@ import (
 // serverStartTime records when this process started.
 var serverStartTime = time.Now()
 
-// processObjectID is a stable ObjectID representing this server process.
-var processObjectID = bson.NewObjectID()
-
 // handlePing handles the "ping" command.
 func handlePing(ctx *Context, _ bson.Raw) (bson.Raw, error) {
 	return BuildOKResponse(), nil
 }
 
-// handleHello handles "hello", "isMaster", and "ismaster" commands.
-// This is the handshake command that drivers call first to discover server capabilities.
-func handleHello(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
-	now := time.Now().UTC()
-
-	d := bson.D{
-		{Key: "isWritablePrimary", Value: true},
-		{Key: "topologyVersion", Value: bson.D{
-			{Key: "processId", Value: processObjectID},
-			{Key: "counter", Value: int64(0)},
-		}},
-		{Key: "maxBsonObjectSize", Value: wire.MaxBSONObjectSize},
-		{Key: "maxMessageSizeBytes", Value: wire.MaxMessageSizeBytes},
-		{Key: "maxWriteBatchSize", Value: wire.MaxWriteBatchSize},
-		{Key: "localTime", Value: bson.DateTime(now.UnixMilli())},
-		{Key: "logicalSessionTimeoutMinutes", Value: wire.LogicalSessionTimeoutMinutes},
-		{Key: "connectionId", Value: ctx.ConnID},
-		{Key: "minWireVersion", Value: wire.MinWireVersion},
-		{Key: "maxWireVersion", Value: wire.MaxWireVersion},
-		{Key: "readOnly", Value: false},
-	}
-
-	// Legacy isMaster compatibility fields.
-	// extractCommandName returns lowercase, so "ismaster" covers both "isMaster" and "ismaster".
-	cmdName, _ := extractCommandName(cmd)
-	if cmdName == "ismaster" {
-		d = append(d, bson.E{Key: "ismaster", Value: true})
-	}
-
-	// Advertise supported SASL mechanisms when the client sends saslSupportedMechs.
-	// Format: "db.username" — drivers use this to pick the auth mechanism.
-	// Per MongoDB spec, look up the user and return only mechanisms they have credentials for.
-	if saslField := lookupStringField(cmd, "saslSupportedMechs"); saslField != "" {
-		mechs := bson.A{}
-		if parts := strings.SplitN(saslField, ".", 2); len(parts) == 2 {
-			user, ok, err := ctx.Engine.Users().GetUser(parts[0], parts[1])
-			if err == nil && ok {
-				if user.StoredKey != nil {
-					mechs = append(mechs, "SCRAM-SHA-256")
-				}
-				if user.StoredKeySHA1 != nil {
-					mechs = append(mechs, "SCRAM-SHA-1")
-				}
-			}
-		}
-		d = append(d, bson.E{Key: "saslSupportedMechs", Value: mechs})
-	}
-
-	d = append(d, bson.E{Key: "ok", Value: float64(1)})
-	return marshalResponse(ctx, d), nil
-}
+// handleHello lives in hello.go.
 
 // handleBuildInfo handles the "buildInfo"/"buildinfo" command.
 func handleBuildInfo(ctx *Context, _ bson.Raw) (bson.Raw, error) {
