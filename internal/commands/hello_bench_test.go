@@ -29,12 +29,18 @@ var isMasterCmdRaw = func() bson.Raw {
 	return bson.Raw(raw)
 }()
 
-// helloResponseDocLegacy reproduces the bson.D the pre-PR handler built. Used
-// as the bench baseline so the ratio between the two is meaningful — and as
-// the canonical "expected wire" in the equivalence test.
+// helloResponseDocLegacy is the canonical MongoDB 7.0-equivalent wire form
+// expressed as a bson.D. It is both the bench baseline (mirrors the pre-PR
+// builder shape so the ratio between the two paths is meaningful) and the
+// expected output in the wire-equivalence test.
+//
+// connectionId is int32 because MongoDB Server's hello uses
+// BSONObjBuilder::appendNumber, which dispatches to int32 when the value fits
+// in [INT_MIN, INT_MAX] (verified in #744 against r7.0.0 source). Real
+// connection IDs always fit.
 //
 // connID and the localTime DateTime are supplied so the test can pin them.
-func helloResponseDocLegacy(connID int64, t time.Time) bson.D {
+func helloResponseDocLegacy(connID int32, t time.Time) bson.D {
 	return bson.D{
 		{Key: "isWritablePrimary", Value: true},
 		{Key: "topologyVersion", Value: bson.D{
@@ -62,7 +68,7 @@ func BenchmarkHandleHello_Legacy(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := helloResponseDocLegacy(ctx.ConnID, time.Now().UTC())
+		d := helloResponseDocLegacy(int32(ctx.ConnID), time.Now().UTC())
 		_ = marshalResponse(ctx, d)
 		ctx.runReleases()
 	}
@@ -135,7 +141,7 @@ func TestHandleHello_WireEquivalent(t *testing.T) {
 				t.Fatalf("unmarshal: %v", err)
 			}
 
-			want := helloResponseDocLegacy(ctx.ConnID, before)
+			want := helloResponseDocLegacy(int32(ctx.ConnID), before)
 			if tc.wantIsMa {
 				// Legacy flag is appended *after* readOnly and *before* ok.
 				okIdx := len(want) - 1
