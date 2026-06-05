@@ -23,7 +23,7 @@ func helloResponseDoc() bson.D {
 		{Key: "maxWriteBatchSize", Value: int32(100000)},
 		{Key: "localTime", Value: bson.DateTime(now.UnixMilli())},
 		{Key: "logicalSessionTimeoutMinutes", Value: int32(30)},
-		{Key: "connectionId", Value: int64(42)},
+		{Key: "connectionId", Value: int32(42)},
 		{Key: "minWireVersion", Value: int32(0)},
 		{Key: "maxWireVersion", Value: int32(21)},
 		{Key: "readOnly", Value: false},

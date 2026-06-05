@@ -121,8 +121,11 @@ func handleHello(ctx *Context, cmd bson.Raw) (bson.Raw, error) {
 	// Middle: logicalSessionTimeoutMinutes.
 	buf = append(buf, helloMiddle...)
 
-	// Dynamic: connectionId.
-	buf = bsoncore.AppendInt64Element(buf, "connectionId", ctx.ConnID)
+	// Dynamic: connectionId. MongoDB 7.0's hello handler uses BSONObjBuilder
+	// appendNumber, which emits int32 when the value fits in [INT_MIN, INT_MAX]
+	// — connection IDs are monotonically incrementing per-mongod and will
+	// always fit in practice. Match that wire shape exactly.
+	buf = bsoncore.AppendInt32Element(buf, "connectionId", int32(ctx.ConnID))
 
 	// Suffix: minWireVersion .. readOnly.
 	buf = append(buf, helloSuffix...)
