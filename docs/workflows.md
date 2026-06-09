@@ -134,12 +134,12 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 
 ### `profile-capture.yml` — Profile Capture (Workload A)
 **Trigger:** Manual only (`workflow_dispatch` with `version_tag` input, e.g. `v3`)
-**What it does:** On-demand pprof CPU + heap/alloc capture against master, run on `ubuntu-latest` so results are directly comparable to the v1/v2 baselines in `docs/profiles/`. Builds salvobase, starts it with `--noauth`, loads a 100k-record dataset, fires a 30s `/debug/pprof/profile` curl in the background while go-ycsb drives Workload A (50/50 read/update, 16 threads, 100k ops), then pulls `/debug/pprof/heap` and `/debug/pprof/allocs`. Validates each capture is a real pprof binary (gzipped protobuf or raw `data`) and hard-fails if not. Emits text summaries via `go tool pprof -top -cum` and re-gzips the raw profiles as `workload-a-16t-${version_tag}.txt` / `workload-a-16t-${version_tag}-alloc.txt` to match the existing `.txt`-but-actually-gzip-pprof convention. Uploads as a 30-day artifact named `pprof-profiles-${version_tag}`.
+**What it does:** On-demand pprof CPU + heap/alloc capture against master, run on `ubuntu-latest` so results are directly comparable to the v1/v2 baselines in `docs/profiles/`. Builds salvobase, starts it with `--noauth`, loads a 100k-record dataset, backgrounds a 30s `/debug/pprof/profile` curl, runs go-ycsb Workload A (50/50 read/update, 16 threads, 100k ops) synchronously, then waits on the curl PID so the 30s CPU window overlaps the steady-state mix rather than the bulk-insert phase. Then pulls `/debug/pprof/heap` and `/debug/pprof/allocs`. Validates each capture is a real pprof binary (gzipped protobuf or raw `data`) and hard-fails if not. Emits text summaries via `go tool pprof -top -cum` and re-gzips the raw profiles as `workload-a-16t-${version_tag}.txt` / `workload-a-16t-${version_tag}-alloc.txt` to match the existing `.txt`-but-actually-gzip-pprof convention. Uploads as a 30-day artifact named `pprof-profiles-${version_tag}`.
 
 **Use this to:** refresh the perf baselines after a salvobase optimization lands. Download the artifact, drop the `workload-a-16t-vN.txt` file into `docs/profiles/`, and commit it. Treat the bundled `cpu-summary.md` / `alloc-summary.md` as a starting point for the analysis doc.
 
 **Secrets:** `GITHUB_TOKEN`
-**Failure:** On step failure also uploads `/tmp/salvobase.log` for 7 days so server-side panics are recoverable.
+**Failure:** On job failure (`if: failure()`) uploads `/tmp/salvobase.log` for 7 days so server-side panics are recoverable.
 
 ---
 
