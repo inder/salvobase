@@ -132,6 +132,17 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 
 ---
 
+### `profile-capture.yml` — Profile Capture (Workload A)
+**Trigger:** Manual only (`workflow_dispatch` with `version_tag` input, e.g. `v3`)
+**What it does:** On-demand pprof CPU + heap/alloc capture against master, run on `ubuntu-latest` so results are directly comparable to the v1/v2 baselines in `docs/profiles/`. Builds salvobase, starts it with `--noauth`, loads a 100k-record dataset, fires a 30s `/debug/pprof/profile` curl in the background while go-ycsb drives Workload A (50/50 read/update, 16 threads, 100k ops), then pulls `/debug/pprof/heap` and `/debug/pprof/allocs`. Validates each capture is a real pprof binary (gzipped protobuf or raw `data`) and hard-fails if not. Emits text summaries via `go tool pprof -top -cum` and re-gzips the raw profiles as `workload-a-16t-${version_tag}.txt` / `workload-a-16t-${version_tag}-alloc.txt` to match the existing `.txt`-but-actually-gzip-pprof convention. Uploads as a 30-day artifact named `pprof-profiles-${version_tag}`.
+
+**Use this to:** refresh the perf baselines after a salvobase optimization lands. Download the artifact, drop the `workload-a-16t-vN.txt` file into `docs/profiles/`, and commit it. Treat the bundled `cpu-summary.md` / `alloc-summary.md` as a starting point for the analysis doc.
+
+**Secrets:** `GITHUB_TOKEN`
+**Failure:** On step failure also uploads `/tmp/salvobase.log` for 7 days so server-side panics are recoverable.
+
+---
+
 ### `benchmark.yml` — Adaptive Benchmark
 **Trigger:** Daily at 04:00 UTC (`0 4 * * *`) + manual — a gate job skips the expensive YCSB run based on current gap:
 
@@ -238,6 +249,7 @@ If eligible, opens a promotion PR modifying `registry.yml` (labeled `agent:promo
 | `promotion-celebration.yml` | Promotion PR merged | Celebration post |
 | `ci.yml` | Push/PR | Build + test + lint |
 | `compat.yml` | Push/manual | Compat score + regression + gap issues |
+| `profile-capture.yml` | Manual | On-demand pprof capture (Workload A) |
 | `benchmark.yml` | Daily 04:00 UTC (adaptive gate) | Perf vs MongoDB + north star |
 | `orchestrator.yml` | Every 15min | Claim expiry + stale PR warnings |
 | `stale-pr-cleanup.yml` | Daily | Close 7d+ stale PRs |
