@@ -1,0 +1,144 @@
+{"workload": "A", "target": "salvobase", "threads": 1, "ops_per_sec": 1750.8, "p50_ms": 1.077, "p99_ms": 5.663, "commit": "78b8463", "date": "2026-08-25", "duration_s": 11.411}
+{"workload": "A", "target": "mongodb", "threads": 1, "ops_per_sec": 2832.6, "p50_ms": 0.34, "p99_ms": 0.508, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.531}
+{"workload": "A", "target": "salvobase", "threads": 1, "ops_per_sec": 1708.4, "p50_ms": 1.083, "p99_ms": 5.483, "commit": "78b8463", "date": "2026-08-25", "duration_s": 11.678}
+{"workload": "A", "target": "mongodb", "threads": 1, "ops_per_sec": 2800.9, "p50_ms": 0.341, "p99_ms": 0.565, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.571}
+{"workload": "A", "target": "salvobase", "threads": 1, "ops_per_sec": 1740.0, "p50_ms": 1.077, "p99_ms": 5.655, "commit": "78b8463", "date": "2026-08-25", "duration_s": 11.498}
+{"workload": "A", "target": "mongodb", "threads": 1, "ops_per_sec": 2856.6, "p50_ms": 0.339, "p99_ms": 0.466, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.5}
+{"workload": "A", "target": "salvobase", "threads": 4, "ops_per_sec": 3201.9, "p50_ms": 1.191, "p99_ms": 5.931, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.125}
+{"workload": "A", "target": "mongodb", "threads": 4, "ops_per_sec": 7006.6, "p50_ms": 0.52, "p99_ms": 1.089, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.428}
+{"workload": "A", "target": "salvobase", "threads": 4, "ops_per_sec": 3100.1, "p50_ms": 1.224, "p99_ms": 5.811, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.231}
+{"workload": "A", "target": "mongodb", "threads": 4, "ops_per_sec": 7028.9, "p50_ms": 0.524, "p99_ms": 1.158, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.424}
+{"workload": "A", "target": "salvobase", "threads": 4, "ops_per_sec": 3121.0, "p50_ms": 1.21, "p99_ms": 5.883, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.205}
+{"workload": "A", "target": "mongodb", "threads": 4, "ops_per_sec": 7014.8, "p50_ms": 0.525, "p99_ms": 1.139, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.427}
+{"workload": "A", "target": "salvobase", "threads": 8, "ops_per_sec": 5198.9, "p50_ms": 1.413, "p99_ms": 7.131, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.925}
+{"workload": "A", "target": "mongodb", "threads": 8, "ops_per_sec": 8585.6, "p50_ms": 0.844, "p99_ms": 2.375, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.167}
+{"workload": "A", "target": "salvobase", "threads": 8, "ops_per_sec": 5381.7, "p50_ms": 1.369, "p99_ms": 6.751, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.861}
+{"workload": "A", "target": "mongodb", "threads": 8, "ops_per_sec": 8447.2, "p50_ms": 0.835, "p99_ms": 2.753, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.185}
+{"workload": "A", "target": "salvobase", "threads": 8, "ops_per_sec": 5148.4, "p50_ms": 1.401, "p99_ms": 6.655, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.944}
+{"workload": "A", "target": "mongodb", "threads": 8, "ops_per_sec": 8538.2, "p50_ms": 0.826, "p99_ms": 2.477, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.173}
+{"workload": "A", "target": "salvobase", "threads": 16, "ops_per_sec": 6925.2, "p50_ms": 2.044, "p99_ms": 9.623, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.447}
+{"workload": "A", "target": "mongodb", "threads": 16, "ops_per_sec": 8887.7, "p50_ms": 1.483, "p99_ms": 5.939, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.126}
+{"workload": "A", "target": "salvobase", "threads": 16, "ops_per_sec": 7069.8, "p50_ms": 2.025, "p99_ms": 9.279, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.416}
+{"workload": "A", "target": "mongodb", "threads": 16, "ops_per_sec": 9108.8, "p50_ms": 1.566, "p99_ms": 4.959, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.099}
+{"workload": "A", "target": "salvobase", "threads": 16, "ops_per_sec": 6253.1, "p50_ms": 2.2, "p99_ms": 10.199, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.601}
+{"workload": "A", "target": "mongodb", "threads": 16, "ops_per_sec": 9448.6, "p50_ms": 1.511, "p99_ms": 5.031, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.06}
+{"workload": "B", "target": "salvobase", "threads": 1, "ops_per_sec": 2380.3, "p50_ms": 1.107, "p99_ms": 6.535, "commit": "78b8463", "date": "2026-08-25", "duration_s": 4.201}
+{"workload": "B", "target": "mongodb", "threads": 1, "ops_per_sec": 2798.3, "p50_ms": 0.353, "p99_ms": 0.793, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.574}
+{"workload": "B", "target": "salvobase", "threads": 1, "ops_per_sec": 2423.2, "p50_ms": 1.111, "p99_ms": 4.255, "commit": "78b8463", "date": "2026-08-25", "duration_s": 4.127}
+{"workload": "B", "target": "mongodb", "threads": 1, "ops_per_sec": 2789.0, "p50_ms": 0.357, "p99_ms": 0.78, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.585}
+{"workload": "B", "target": "salvobase", "threads": 1, "ops_per_sec": 2498.4, "p50_ms": 1.091, "p99_ms": 4.095, "commit": "78b8463", "date": "2026-08-25", "duration_s": 4.003}
+{"workload": "B", "target": "mongodb", "threads": 1, "ops_per_sec": 2789.6, "p50_ms": 0.352, "p99_ms": 0.529, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.586}
+{"workload": "B", "target": "salvobase", "threads": 4, "ops_per_sec": 7141.2, "p50_ms": 1.282, "p99_ms": 5.411, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.401}
+{"workload": "B", "target": "mongodb", "threads": 4, "ops_per_sec": 6308.0, "p50_ms": 0.582, "p99_ms": 1.566, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.586}
+{"workload": "B", "target": "salvobase", "threads": 4, "ops_per_sec": 7087.6, "p50_ms": 1.287, "p99_ms": 6.715, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.411}
+{"workload": "B", "target": "mongodb", "threads": 4, "ops_per_sec": 6969.4, "p50_ms": 0.535, "p99_ms": 1.162, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.436}
+{"workload": "B", "target": "salvobase", "threads": 4, "ops_per_sec": 6839.1, "p50_ms": 1.299, "p99_ms": 5.751, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.463}
+{"workload": "B", "target": "mongodb", "threads": 4, "ops_per_sec": 6858.7, "p50_ms": 0.542, "p99_ms": 1.357, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.459}
+{"workload": "B", "target": "salvobase", "threads": 8, "ops_per_sec": 9312.7, "p50_ms": 1.634, "p99_ms": 5.763, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.075}
+{"workload": "B", "target": "mongodb", "threads": 8, "ops_per_sec": 8790.5, "p50_ms": 0.814, "p99_ms": 2.323, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.139}
+{"workload": "B", "target": "salvobase", "threads": 8, "ops_per_sec": 9553.5, "p50_ms": 1.637, "p99_ms": 6.119, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.047}
+{"workload": "B", "target": "mongodb", "threads": 8, "ops_per_sec": 7252.5, "p50_ms": 0.975, "p99_ms": 3.985, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.381}
+{"workload": "B", "target": "salvobase", "threads": 8, "ops_per_sec": 9057.2, "p50_ms": 1.65, "p99_ms": 7.315, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.105}
+{"workload": "B", "target": "mongodb", "threads": 8, "ops_per_sec": 8674.4, "p50_ms": 0.836, "p99_ms": 2.869, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.154}
+{"workload": "B", "target": "salvobase", "threads": 16, "ops_per_sec": 10607.0, "p50_ms": 2.478, "p99_ms": 10.527, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "B", "target": "mongodb", "threads": 16, "ops_per_sec": 9065.7, "p50_ms": 1.543, "p99_ms": 6.343, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.104}
+{"workload": "B", "target": "salvobase", "threads": 16, "ops_per_sec": 10669.1, "p50_ms": 2.322, "p99_ms": 9.799, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "B", "target": "mongodb", "threads": 16, "ops_per_sec": 8999.0, "p50_ms": 1.586, "p99_ms": 5.295, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.112}
+{"workload": "B", "target": "salvobase", "threads": 16, "ops_per_sec": 10311.8, "p50_ms": 2.51, "p99_ms": 10.711, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "B", "target": "mongodb", "threads": 16, "ops_per_sec": 9235.0, "p50_ms": 1.514, "p99_ms": 5.243, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.085}
+{"workload": "C", "target": "salvobase", "threads": 1, "ops_per_sec": 2989.3, "p50_ms": 0.305, "p99_ms": 0.721, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.344}
+{"workload": "C", "target": "mongodb", "threads": 1, "ops_per_sec": 2879.0, "p50_ms": 0.338, "p99_ms": 0.437, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.474}
+{"workload": "C", "target": "salvobase", "threads": 1, "ops_per_sec": 3155.3, "p50_ms": 0.298, "p99_ms": 0.607, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.169}
+{"workload": "C", "target": "mongodb", "threads": 1, "ops_per_sec": 2773.6, "p50_ms": 0.344, "p99_ms": 0.572, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.606}
+{"workload": "C", "target": "salvobase", "threads": 1, "ops_per_sec": 3028.8, "p50_ms": 0.304, "p99_ms": 0.701, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.301}
+{"workload": "C", "target": "mongodb", "threads": 1, "ops_per_sec": 2853.2, "p50_ms": 0.34, "p99_ms": 0.49, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.505}
+{"workload": "C", "target": "salvobase", "threads": 4, "ops_per_sec": 7976.8, "p50_ms": 0.45, "p99_ms": 1.265, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.254}
+{"workload": "C", "target": "mongodb", "threads": 4, "ops_per_sec": 7054.0, "p50_ms": 0.523, "p99_ms": 1.156, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.419}
+{"workload": "C", "target": "salvobase", "threads": 4, "ops_per_sec": 8002.1, "p50_ms": 0.443, "p99_ms": 1.292, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.25}
+{"workload": "C", "target": "mongodb", "threads": 4, "ops_per_sec": 6836.0, "p50_ms": 0.532, "p99_ms": 1.294, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.463}
+{"workload": "C", "target": "salvobase", "threads": 4, "ops_per_sec": 7170.0, "p50_ms": 0.477, "p99_ms": 1.663, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.396}
+{"workload": "C", "target": "mongodb", "threads": 4, "ops_per_sec": 6982.2, "p50_ms": 0.528, "p99_ms": 1.205, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.433}
+{"workload": "C", "target": "salvobase", "threads": 8, "ops_per_sec": 10086.3, "p50_ms": 0.673, "p99_ms": 2.337, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "C", "target": "mongodb", "threads": 8, "ops_per_sec": 7129.9, "p50_ms": 0.942, "p99_ms": 3.877, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.403}
+{"workload": "C", "target": "salvobase", "threads": 8, "ops_per_sec": 10052.1, "p50_ms": 0.671, "p99_ms": 2.323, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "C", "target": "mongodb", "threads": 8, "ops_per_sec": 8689.3, "p50_ms": 0.83, "p99_ms": 2.339, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.151}
+{"workload": "C", "target": "salvobase", "threads": 8, "ops_per_sec": 10210.6, "p50_ms": 0.669, "p99_ms": 2.325, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "C", "target": "mongodb", "threads": 8, "ops_per_sec": 8795.2, "p50_ms": 0.815, "p99_ms": 2.181, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.138}
+{"workload": "C", "target": "salvobase", "threads": 16, "ops_per_sec": 11764.9, "p50_ms": 1.068, "p99_ms": 5.319, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "C", "target": "mongodb", "threads": 16, "ops_per_sec": 9466.2, "p50_ms": 1.507, "p99_ms": 4.959, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.057}
+{"workload": "C", "target": "salvobase", "threads": 16, "ops_per_sec": 12123.7, "p50_ms": 1.059, "p99_ms": 4.955, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "C", "target": "mongodb", "threads": 16, "ops_per_sec": 9001.2, "p50_ms": 1.497, "p99_ms": 5.675, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.112}
+{"workload": "C", "target": "salvobase", "threads": 16, "ops_per_sec": 11620.7, "p50_ms": 1.091, "p99_ms": 5.003, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "C", "target": "mongodb", "threads": 16, "ops_per_sec": 9364.0, "p50_ms": 1.483, "p99_ms": 5.063, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.068}
+{"workload": "D", "target": "salvobase", "threads": 1, "ops_per_sec": 2370.5, "p50_ms": 1.087, "p99_ms": 4.843, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.979}
+{"workload": "D", "target": "mongodb", "threads": 1, "ops_per_sec": 2629.6, "p50_ms": 0.336, "p99_ms": 0.803, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.587}
+{"workload": "D", "target": "salvobase", "threads": 1, "ops_per_sec": 2409.1, "p50_ms": 1.204, "p99_ms": 3.389, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.968}
+{"workload": "D", "target": "mongodb", "threads": 1, "ops_per_sec": 2532.1, "p50_ms": 0.345, "p99_ms": 0.592, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.612}
+{"workload": "D", "target": "salvobase", "threads": 1, "ops_per_sec": 2411.3, "p50_ms": 0.3, "p99_ms": 0.6, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.781}
+{"workload": "D", "target": "mongodb", "threads": 1, "ops_per_sec": 2520.1, "p50_ms": 0.345, "p99_ms": 0.593, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.604}
+{"workload": "D", "target": "salvobase", "threads": 4, "ops_per_sec": 5973.8, "p50_ms": 0.474, "p99_ms": 1.579, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.526}
+{"workload": "D", "target": "mongodb", "threads": 4, "ops_per_sec": 6311.8, "p50_ms": 0.53, "p99_ms": 1.136, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.446}
+{"workload": "D", "target": "salvobase", "threads": 4, "ops_per_sec": 6684.1, "p50_ms": 0.429, "p99_ms": 1.197, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.365}
+{"workload": "D", "target": "mongodb", "threads": 4, "ops_per_sec": 6146.0, "p50_ms": 0.536, "p99_ms": 1.334, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.483}
+{"workload": "D", "target": "salvobase", "threads": 4, "ops_per_sec": 6569.5, "p50_ms": 0.441, "p99_ms": 1.296, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.391}
+{"workload": "D", "target": "mongodb", "threads": 4, "ops_per_sec": 6109.2, "p50_ms": 0.535, "p99_ms": 1.362, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.488}
+{"workload": "D", "target": "salvobase", "threads": 8, "ops_per_sec": 9841.6, "p50_ms": 1.301, "p99_ms": 2.559, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.003}
+{"workload": "D", "target": "mongodb", "threads": 8, "ops_per_sec": 7891.2, "p50_ms": 0.815, "p99_ms": 2.263, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.148}
+{"workload": "D", "target": "salvobase", "threads": 8, "ops_per_sec": 8268.8, "p50_ms": 0.693, "p99_ms": 2.645, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.106}
+{"workload": "D", "target": "mongodb", "threads": 8, "ops_per_sec": 7663.9, "p50_ms": 0.834, "p99_ms": 2.461, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.191}
+{"workload": "D", "target": "salvobase", "threads": 8, "ops_per_sec": 8956.9, "p50_ms": 1.49, "p99_ms": 3.715, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.038}
+{"workload": "D", "target": "mongodb", "threads": 8, "ops_per_sec": 7885.4, "p50_ms": 0.817, "p99_ms": 2.445, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.16}
+{"workload": "D", "target": "salvobase", "threads": 16, "ops_per_sec": 10147.8, "p50_ms": 1.102, "p99_ms": 4.839, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "D", "target": "mongodb", "threads": 16, "ops_per_sec": 8266.2, "p50_ms": 1.526, "p99_ms": 5.243, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.102}
+{"workload": "D", "target": "salvobase", "threads": 16, "ops_per_sec": 10256.4, "p50_ms": 1.069, "p99_ms": 4.811, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "D", "target": "mongodb", "threads": 16, "ops_per_sec": 7879.2, "p50_ms": 1.57, "p99_ms": 6.039, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.158}
+{"workload": "D", "target": "salvobase", "threads": 16, "ops_per_sec": 10073.8, "p50_ms": 1.108, "p99_ms": 4.763, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "D", "target": "mongodb", "threads": 16, "ops_per_sec": 8275.9, "p50_ms": 1.473, "p99_ms": 5.555, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.099}
+{"workload": "E", "target": "salvobase", "threads": 1, "ops_per_sec": 1016.4, "p50_ms": 126.53, "p99_ms": 240.383, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 1, "ops_per_sec": 1103.8, "p50_ms": 4.469, "p99_ms": 9.959, "commit": "78b8463", "date": "2026-08-25", "duration_s": 45.426}
+{"workload": "E", "target": "salvobase", "threads": 1, "ops_per_sec": 1002.7, "p50_ms": 128.421, "p99_ms": 238.591, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 1, "ops_per_sec": 1079.7, "p50_ms": 4.513, "p99_ms": 10.471, "commit": "78b8463", "date": "2026-08-25", "duration_s": 45.67}
+{"workload": "E", "target": "salvobase", "threads": 1, "ops_per_sec": 991.8, "p50_ms": 126.529, "p99_ms": 237.439, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 1, "ops_per_sec": 1125.1, "p50_ms": 4.349, "p99_ms": 9.455, "commit": "78b8463", "date": "2026-08-25", "duration_s": 44.765}
+{"workload": "E", "target": "salvobase", "threads": 4, "ops_per_sec": 1033.1, "p50_ms": 175.786, "p99_ms": 374.015, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 4, "ops_per_sec": 1256.1, "p50_ms": 9.482, "p99_ms": 21.743, "commit": "78b8463", "date": "2026-08-25", "duration_s": 24.063}
+{"workload": "E", "target": "salvobase", "threads": 4, "ops_per_sec": 1021.9, "p50_ms": 172.613, "p99_ms": 333.567, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 4, "ops_per_sec": 1276.9, "p50_ms": 9.252, "p99_ms": 21.007, "commit": "78b8463", "date": "2026-08-25", "duration_s": 23.636}
+{"workload": "E", "target": "salvobase", "threads": 4, "ops_per_sec": 1022.5, "p50_ms": 173.049, "p99_ms": 342.271, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 4, "ops_per_sec": 1272.6, "p50_ms": 9.25, "p99_ms": 20.943, "commit": "78b8463", "date": "2026-08-25", "duration_s": 23.677}
+{"workload": "E", "target": "salvobase", "threads": 8, "ops_per_sec": 1021.4, "p50_ms": 292.378, "p99_ms": 667.135, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 8, "ops_per_sec": 1400.7, "p50_ms": 16.183, "p99_ms": 44.095, "commit": "78b8463", "date": "2026-08-25", "duration_s": 21.5}
+{"workload": "E", "target": "salvobase", "threads": 8, "ops_per_sec": 1020.8, "p50_ms": 294.13, "p99_ms": 613.375, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 8, "ops_per_sec": 1392.7, "p50_ms": 16.284, "p99_ms": 43.519, "commit": "78b8463", "date": "2026-08-25", "duration_s": 21.642}
+{"workload": "E", "target": "salvobase", "threads": 8, "ops_per_sec": 1016.0, "p50_ms": 294.716, "p99_ms": 628.223, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 8, "ops_per_sec": 1373.6, "p50_ms": 16.362, "p99_ms": 44.351, "commit": "78b8463", "date": "2026-08-25", "duration_s": 21.928}
+{"workload": "E", "target": "salvobase", "threads": 16, "ops_per_sec": 1030.2, "p50_ms": 544.739, "p99_ms": 1199.103, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 16, "ops_per_sec": 1411.1, "p50_ms": 29.652, "p99_ms": 106.431, "commit": "78b8463", "date": "2026-08-25", "duration_s": 21.276}
+{"workload": "E", "target": "salvobase", "threads": 16, "ops_per_sec": 1024.2, "p50_ms": 547.939, "p99_ms": 1220.607, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 16, "ops_per_sec": 1430.8, "p50_ms": 29.146, "p99_ms": 102.719, "commit": "78b8463", "date": "2026-08-25", "duration_s": 21.088}
+{"workload": "E", "target": "salvobase", "threads": 16, "ops_per_sec": 1019.7, "p50_ms": 547.796, "p99_ms": 1232.895, "commit": "78b8463", "date": "2026-08-25"}
+{"workload": "E", "target": "mongodb", "threads": 16, "ops_per_sec": 1394.8, "p50_ms": 29.636, "p99_ms": 112.831, "commit": "78b8463", "date": "2026-08-25", "duration_s": 21.493}
+{"workload": "F", "target": "salvobase", "threads": 1, "ops_per_sec": 2236.0, "p50_ms": 1.097, "p99_ms": 5.739, "commit": "78b8463", "date": "2026-08-25", "duration_s": 13.341}
+{"workload": "F", "target": "mongodb", "threads": 1, "ops_per_sec": 2798.5, "p50_ms": 0.343, "p99_ms": 0.564, "commit": "78b8463", "date": "2026-08-25", "duration_s": 5.293}
+{"workload": "F", "target": "salvobase", "threads": 1, "ops_per_sec": 2246.5, "p50_ms": 1.086, "p99_ms": 5.727, "commit": "78b8463", "date": "2026-08-25", "duration_s": 13.403}
+{"workload": "F", "target": "mongodb", "threads": 1, "ops_per_sec": 2772.0, "p50_ms": 0.344, "p99_ms": 0.66, "commit": "78b8463", "date": "2026-08-25", "duration_s": 5.412}
+{"workload": "F", "target": "salvobase", "threads": 1, "ops_per_sec": 2206.8, "p50_ms": 1.097, "p99_ms": 6.039, "commit": "78b8463", "date": "2026-08-25", "duration_s": 13.718}
+{"workload": "F", "target": "mongodb", "threads": 1, "ops_per_sec": 2800.4, "p50_ms": 0.344, "p99_ms": 0.605, "commit": "78b8463", "date": "2026-08-25", "duration_s": 5.348}
+{"workload": "F", "target": "salvobase", "threads": 4, "ops_per_sec": 4169.0, "p50_ms": 1.179, "p99_ms": 6.211, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.576}
+{"workload": "F", "target": "mongodb", "threads": 4, "ops_per_sec": 7077.5, "p50_ms": 0.52, "p99_ms": 1.112, "commit": "78b8463", "date": "2026-08-25", "duration_s": 2.121}
+{"workload": "F", "target": "salvobase", "threads": 4, "ops_per_sec": 4122.4, "p50_ms": 1.19, "p99_ms": 6.383, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.636}
+{"workload": "F", "target": "mongodb", "threads": 4, "ops_per_sec": 6507.0, "p50_ms": 0.548, "p99_ms": 1.527, "commit": "78b8463", "date": "2026-08-25", "duration_s": 2.303}
+{"workload": "F", "target": "salvobase", "threads": 4, "ops_per_sec": 4078.9, "p50_ms": 1.19, "p99_ms": 6.263, "commit": "78b8463", "date": "2026-08-25", "duration_s": 3.707}
+{"workload": "F", "target": "mongodb", "threads": 4, "ops_per_sec": 6775.0, "p50_ms": 0.534, "p99_ms": 1.367, "commit": "78b8463", "date": "2026-08-25", "duration_s": 2.203}
+{"workload": "F", "target": "salvobase", "threads": 8, "ops_per_sec": 6402.3, "p50_ms": 1.426, "p99_ms": 6.491, "commit": "78b8463", "date": "2026-08-25", "duration_s": 2.342}
+{"workload": "F", "target": "mongodb", "threads": 8, "ops_per_sec": 7879.4, "p50_ms": 0.889, "p99_ms": 2.985, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.893}
+{"workload": "F", "target": "salvobase", "threads": 8, "ops_per_sec": 6485.4, "p50_ms": 1.403, "p99_ms": 7.191, "commit": "78b8463", "date": "2026-08-25", "duration_s": 2.312}
+{"workload": "F", "target": "mongodb", "threads": 8, "ops_per_sec": 8649.8, "p50_ms": 0.837, "p99_ms": 2.281, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.721}
+{"workload": "F", "target": "salvobase", "threads": 8, "ops_per_sec": 6558.3, "p50_ms": 1.403, "p99_ms": 6.855, "commit": "78b8463", "date": "2026-08-25", "duration_s": 2.286}
+{"workload": "F", "target": "mongodb", "threads": 8, "ops_per_sec": 8601.7, "p50_ms": 0.835, "p99_ms": 2.359, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.743}
+{"workload": "F", "target": "salvobase", "threads": 16, "ops_per_sec": 8282.1, "p50_ms": 2.123, "p99_ms": 9.535, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.808}
+{"workload": "F", "target": "mongodb", "threads": 16, "ops_per_sec": 9061.2, "p50_ms": 1.571, "p99_ms": 5.423, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.662}
+{"workload": "F", "target": "salvobase", "threads": 16, "ops_per_sec": 8299.4, "p50_ms": 2.187, "p99_ms": 8.103, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.804}
+{"workload": "F", "target": "mongodb", "threads": 16, "ops_per_sec": 9200.5, "p50_ms": 1.563, "p99_ms": 5.127, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.635}
+{"workload": "F", "target": "salvobase", "threads": 16, "ops_per_sec": 7680.7, "p50_ms": 2.273, "p99_ms": 9.639, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.954}
+{"workload": "F", "target": "mongodb", "threads": 16, "ops_per_sec": 9222.9, "p50_ms": 1.538, "p99_ms": 5.015, "commit": "78b8463", "date": "2026-08-25", "duration_s": 1.623}
